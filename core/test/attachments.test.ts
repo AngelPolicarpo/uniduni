@@ -18,7 +18,7 @@ import { describe, it } from 'node:test';
 
 import { ManifestDb } from '../src/l0/manifest/index.ts';
 import { Swarm } from '../src/l0/swarm/index.ts';
-import { BlobManager, hashForBlobContent } from '../src/l2/blobs/index.ts';
+import { BlobManager, hashForBlobContent, modoDeRevelacao } from '../src/l2/blobs/index.ts';
 import type { Diagnostics } from '../src/l2/diagnostics/index.ts';
 import type { SearchService } from '../src/l2/search/index.ts';
 import type { QueuedSubmissionResult, SubmissionInput, WriteStatePort } from '../src/l2/communityClient/index.ts';
@@ -472,6 +472,40 @@ describe('download e revelação (§13.4, §13.6, §15.3)', () => {
     } finally {
       r.cleanup();
     }
+  });
+
+  it('§13.6 regra 1 — `folder` vale para o que `open` recusa, e executável não tem nem isso', async () => {
+    const dir = tempDir('anexos-modo');
+    const manifest = new ManifestDb(path.join(dir, 'manifest.db'));
+    const blobs = new BlobManager({ manifest, swarm: new Swarm(), dataDir: path.join(dir, 'blobs') });
+    const chave = Buffer.alloc(32, 7);
+
+    // "Todo o resto oferece somente 'Mostrar na pasta'" — a metade da regra 1 que a
+    // verificação única recusava junto com o abrir, deixando um `.bin` sem ação nenhuma.
+    const casos = [
+      { nome: 'relatorio.pdf', open: true, folder: true },
+      { nome: 'pacote.zip', open: true, folder: true }, // B73 — §15.3 gateia com caixa nativa
+      { nome: 'dados.bin', open: false, folder: true }, // `other`
+      { nome: 'instalador.exe', open: false, folder: false }, // regra 2 — nem revelar
+    ];
+    for (const [i, caso] of casos.entries()) {
+      const conteudo = crypto.randomBytes(16 + i);
+      const hashHex = hashForBlobContent(conteudo).toString('hex');
+      const alvo = path.join(dir, caso.nome);
+      fs.writeFileSync(alvo, conteudo);
+      blobs.cache.upsert({ blobsCoreKey: chave, blobIdHex: hashHex.slice(0, 32), state: 'downloaded', path: alvo, bytesDownloaded: conteudo.length });
+      assert.equal(blobs.canReveal(chave, hashHex.slice(0, 32), 'open').allowed, caso.open, `${caso.nome} · open`);
+      assert.equal(blobs.canReveal(chave, hashHex.slice(0, 32), 'folder').allowed, caso.folder, `${caso.nome} · folder`);
+      // B74 — a mesma decisão, dita à UI pelo nome do log e SEM depender do download.
+      assert.equal(modoDeRevelacao(caso.nome), caso.open ? 'open' : caso.folder ? 'folder' : 'none', `${caso.nome} · modo`);
+    }
+
+    // §13.6 regra 1: quem delimita é a extensão REAL, não o `kind` de quem enviou (T-48).
+    assert.equal(modoDeRevelacao('foto.png.exe'), 'none');
+    assert.equal(modoDeRevelacao('sem-extensao'), 'folder');
+
+    manifest.close();
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it('executável não é revelável nem depois de baixado (§13.6 regra 2)', async () => {

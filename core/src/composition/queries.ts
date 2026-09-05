@@ -27,7 +27,7 @@ import type { DecisionState } from '../l1/fold/index.ts';
 import { hierarchyTargetOf } from '../l1/fold/targets.ts';
 import { KINDS, decodeEnvelope, decodeOp, decodePayload, kindName } from '../l1/opCodec/index.ts';
 import { PERMISSION_BY_NUMBER, authorizeOverTarget, permissionFromNumber, topRank, type Permission } from '../l1/permissions/index.ts';
-import type { BlobManager } from '../l2/blobs/index.ts';
+import { modoDeRevelacao, type BlobManager, type ModoDeRevelacao } from '../l2/blobs/index.ts';
 import type { SearchPartialReason } from '../l2/search/service.ts';
 import { memberHasPermission } from '../l2/voiceCoordinator/host.ts';
 import { inactiveDaysFrom } from './hostStatus.ts';
@@ -98,6 +98,17 @@ export interface QueryAttachmentDto {
   readonly availablePeers: number;
   readonly hostAvailable: boolean;
   readonly localPath?: string;
+  /**
+   * §13.6 regra 1 (emenda de 2026-09-05, `B74`) — **o que a UI pode oferecer para este
+   * arquivo**: `open` = "Abrir" e "Mostrar na pasta"; `folder` = só "Mostrar na pasta";
+   * `none` = nenhuma das duas (executável, regra 2).
+   *
+   * A regra manda esconder a ação que o núcleo recusaria, e a UI não tem como derivá-la
+   * sozinha sem confiar no `kind` declarado pelo remetente (o ataque `T-48`) ou sem a
+   * terceira cópia da tabela de extensões. Quem decide é quem já decidia; o que mudou é
+   * que ele passou a dizer.
+   */
+  readonly revealMode: ModoDeRevelacao;
 }
 
 export type QueryReadDeps = {
@@ -317,6 +328,10 @@ export function queryReadPorts(deps: QueryReadDeps) {
       // download em curso não há par conectado a este core, e é isso que 0/false dizem.
       availablePeers: 0,
       hostAvailable: false,
+      // §13.6 — pela extensão REAL, e pelo nome do log: o arquivo local é gravado com a
+      // extensão preservada (regra 2), então a resposta é a mesma antes e depois do
+      // download — e a UI acerta os botões desde o primeiro render.
+      revealMode: modoDeRevelacao(row.name),
       ...(cache?.path != null ? { localPath: cache.path } : {}),
     };
   }

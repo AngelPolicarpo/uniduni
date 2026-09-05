@@ -2,7 +2,7 @@ import { api, cliente } from "../ipc/api";
 import { useDmStore } from "../store/dmStore";
 import { useSettingsStore } from "../store/settingsStore";
 import { useToastStore } from "../store/toastStore";
-import type { AttachmentDto } from "../ipc/dto";
+import type { AttachmentDto, StagedAttachmentDto } from "../ipc/dto";
 
 /**
  * A ponte entre a superfície IPC-R de §31.16 e a store de DM — U-33 / B60.
@@ -255,7 +255,7 @@ export async function esquecerConversa(conversationId: string): Promise<void> {
 export async function enviarMensagem(
   conversationId: string,
   content: string,
-  anexo?: AttachmentDto,
+  anexo?: StagedAttachmentDto,
   replyToId?: string,
 ): Promise<boolean> {
   try {
@@ -355,7 +355,7 @@ export async function avisarDigitacao(conversationId: string, on: boolean): Prom
  * alteração**" — o escopo de um blob é o escopo de replicação dele, e numa DM ele é a
  * conversa (§31.1). O caminho do arquivo nunca cruza o IPC-R (T-16), aqui como lá.
  */
-export async function anexarArquivo(conversationId: string): Promise<AttachmentDto | null> {
+export async function anexarArquivo(conversationId: string): Promise<StagedAttachmentDto | null> {
   try {
     const ticket = await api.filePickForAttachment(conversationId);
     return await api.blobStage(ticket.ticketId);

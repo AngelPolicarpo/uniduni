@@ -369,6 +369,7 @@ export function anexo(
     progress: number;
     availablePeers: number;
     hostAvailable: boolean;
+    revealMode?: "open" | "folder" | "none";
   },
   communityId: string,
 ): Attachment {
@@ -381,6 +382,10 @@ export function anexo(
     downloadProgress: Math.round(dto.progress * 100),
     availablePeers: dto.availablePeers,
     hostAvailable: dto.hostAvailable,
+    // §13.6 — quem decide é o núcleo. Um núcleo mais antigo não manda o campo; ler a
+    // ausência como `folder` é a leitura conservadora (mostrar na pasta nunca entrega
+    // arquivo a programa nenhum).
+    revealMode: dto.revealMode ?? "folder",
     origem: {
       communityId,
       blobsCoreKey: dto.blobsCoreKey,

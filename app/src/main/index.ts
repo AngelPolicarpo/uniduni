@@ -23,32 +23,69 @@ import fs from 'node:fs';
 import { parseDeepLink, type DeepLink } from './deeplink';
 
 // §10.8 etapa 1 — instância única; deep link com app aberto via second-instance
+/**
+ * Links parseados que ainda não chegaram a documento nenhum. **É fila, não histórico:** o
+ * que é entregue sai dela. A versão anterior só empilhava, e o `did-finish-load` a relia
+ * inteira a cada carga — então uma recarga da janela ressuscitava o convite de duas horas
+ * atrás, com a prévia abrindo sozinha em cima do que a pessoa estava fazendo.
+ */
 let deepLinkQueue: DeepLink[] = [];
+
+/** Entrega o que estiver na fila ao documento vivo, e **esvazia**. */
+function drenarDeepLinks(): void {
+  if (mainWindow === null || mainWindow.isDestroyed() || deepLinkQueue.length === 0) return;
+  const pendentes = deepLinkQueue;
+  deepLinkQueue = [];
+  for (const dl of pendentes) mainWindow.webContents.send('deeplink', dl);
+}
+
 function handleDeepLinkRaw(raw: string): void {
   const parsed = parseDeepLink(raw);
   if (parsed === null) {
     console.log(`deeplink.rejected ${raw}`);
     return;
   }
-  // §3.5(2): encaminha dado estruturado, nunca string original
+  /*
+   * §3.5(2) emendado (2026-09-05) — o dado estruturado vai ao **renderer**, e só a ele.
+   *
+   * A regra 3 manda o link apenas posicionar a UI numa confirmação, e a prévia que essa
+   * tela mostra é `invite.resolve` / `query.resolveMessageLink` pela IPC-R: o núcleo já
+   * atende os dois. O `postMessage({kind:'deeplink'})` que existia aqui não tinha
+   * consumidor do outro lado — o `utilityProcess` logava e voltava —, então o "encaminha
+   * ao núcleo" era escrita sem efeito nas duas pontas. Ver a emenda em `docs/backend-v2.md`.
+   */
   deepLinkQueue.push(parsed);
-  // Se já tem renderer, entrega; senão fica na fila até ready
-  if (mainWindow !== null) {
-    mainWindow.webContents.send('deeplink', parsed);
-  }
-  // Também encaminha ao núcleo se já estiver vivo (para preview de convite §12.3)
-  if (utility !== null) {
-    utility.postMessage({ kind: 'deeplink', parsed });
+  // Com janela viva e carregada, entrega agora; senão espera o `did-finish-load`.
+  if (mainWindow !== null && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
+    drenarDeepLinks();
   }
 }
 
+/*
+ * §10.8 etapa 1 no topo, e o probe de A13(6) **depois** — a ordem é essa de propósito.
+ *
+ * A13(6) exige que o probe de `--password-store` rode antes do lock composto, e a razão que
+ * a própria ADR dá é a etapa (2): "o processo relançado encontra o próprio lock e morre com
+ * `E_CORE_ALREADY_RUNNING`". Esse código é do `flock` de `p2p/LOCK`, que quem toma é o
+ * `utilityProcess` — e o probe roda no topo do `whenReady`, antes de `spawnUtility()`.
+ *
+ * Com a etapa (1) a ordem não pode ser essa, e não precisa ser: `safeStorage
+ * .isEncryptionAvailable()` **só responde depois do `ready`** no Linux (é o que a API
+ * documenta), então o probe não tem como preceder um `requestSingleInstanceLock` de topo de
+ * módulo; e `app.relaunch()` só sobe a instância nova **quando a atual sai** ("Relaunches
+ * the app when the current instance exits"), então ela nunca disputa o singleton com o
+ * processo que a pediu. A emenda de 2026-09-05 em A13(6) fixa isso por escrito.
+ */
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', (_e, argv) => {
     const link = argv.find((a) => a.startsWith('comunidadep2p://'));
     if (link) handleDeepLinkRaw(link);
-    if (mainWindow !== null) {
+    // `mainWindow` pode estar destruída e ainda não ter sido zerada por um `closed` que não
+    // rodou: durante o draining a referência sobrevive à janela, e tocá-la lança
+    // "Object has been destroyed" no processo main inteiro.
+    if (mainWindow !== null && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
@@ -258,6 +295,10 @@ let ipcM: MessageChannelMain | null = null;
 let ipcRForUtility: MessageChannelMain | null = null;
 /** Quit em andamento — a saída do utilityProcess é esperada, não crash (§3.3 draining). */
 let encerrando = false;
+/** §3.3 — o núcleo recusou abrir por condição definitiva; não há respawn que a resolva. */
+let nucleoBloqueado = false;
+/** O respawn de §15.2 em voo. Guardado para não nascer núcleo no meio de um quit. */
+let reinicioAgendado: ReturnType<typeof setTimeout> | null = null;
 
 // Prompt de confirmação nativa para comandos main-confirmed (§15.3)
 /**
@@ -348,6 +389,58 @@ const CAIXA_POR_COMANDO: Readonly<Record<string, { titulo: string; detalhe: stri
   },
 };
 
+/**
+ * §13.6 — as extensões que `shell.openPath` pode entregar ao handler do SO.
+ *
+ * É a tabela de §13.6 **sem** `other`: `image`, `audio`, `video`, `document` e — desde a
+ * emenda de 2026-09-05 (`B73`) — `archive`, cuja abertura §15.3 gateia pela caixa nativa
+ * ("Abrir este arquivo compactado?"). Executáveis não precisam de lista própria aqui:
+ * nenhum deles está nesta, e o que não está é recusado.
+ *
+ * Isto **duplica** a decisão que o núcleo já toma em `canReveal` (§13.6, `l2/blobs`), e a
+ * duplicação é o ponto: §3.1 declara a allowlist dentro da caixa do main, e o main é a
+ * fronteira que fala com o SO. A do núcleo continua sendo a normativa — esta é a que
+ * garante que nada chegue ao `openPath` sem passar por uma.
+ */
+const EXTENSOES_ABRIVEIS: ReadonlySet<string> = new Set([
+  // image
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'tiff', 'heic',
+  // video
+  'mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v',
+  // audio
+  'mp3', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'aac',
+  // document
+  'pdf', 'txt', 'md', 'csv', 'json', 'xml', 'odt', 'ods', 'odp', 'docx', 'xlsx', 'pptx', 'rtf',
+  // archive — §15.3 exige confirmação nativa antes de o comando chegar até aqui
+  'zip', 'tar', 'gz', 'bz2', 'xz', '7z', 'rar',
+]);
+
+function extensaoAbrivel(caminho: string): boolean {
+  const ext = path.extname(caminho).replace(/^\./, '').toLowerCase();
+  return ext !== '' && EXTENSOES_ABRIVEIS.has(ext);
+}
+
+/**
+ * Os esquemas que o main entrega ao navegador do sistema.
+ *
+ * `shell.openExternal` obedece o que o SO registrar: `file:`, `smb:`, um handler de app
+ * qualquer. O comentário aqui prometia allowlist e não havia nenhuma — qualquer `window.open`
+ * do renderer virava "o SO que decide".
+ *
+ * A lista não é escolha deste arquivo: §25.4 já fixa `http`/`https`/`mailto` para URL em
+ * mensagem, "o resto vira texto". Um link que o renderer não teria como pintar também não
+ * deve ter como abrir.
+ */
+const ESQUEMAS_EXTERNOS: ReadonlySet<string> = new Set(['http:', 'https:', 'mailto:']);
+
+function podeAbrirExternamente(url: string): boolean {
+  try {
+    return ESQUEMAS_EXTERNOS.has(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
 // --- Criação do utilityProcess com dois canais (§3.1) -----------------------------
 function spawnUtility(): void {
   const utilityPath = path.join(__dirname, '../utility/index.js');
@@ -364,6 +457,17 @@ function spawnUtility(): void {
       console.log(`núcleo pronto na fase ${m.phase}, epoch ${epoch}`);
       mainWindow?.webContents.send('core-ready', { phase: m.phase, epoch });
     } else if (m.e === 'blocked') {
+      /*
+       * §3.3 — `blocked` é **terminal**, não crash. "Lock ocupado → `E_CORE_ALREADY_RUNNING`,
+       * encerra" e "`manifest.db` à frente do binário → `E_SCHEMA_AHEAD`, encerra" são
+       * desfechos definitivos: reiniciar não muda nenhuma das duas condições.
+       *
+       * A saída que vem logo depois é `exit(3)`/`exit(1)`, e sem esta marca ela caía na
+       * lógica de respawn de §15.2 — o núcleo subia de novo, batia no mesmo lock, e a caixa
+       * "Núcleo bloqueado" aparecia mais três vezes antes de a cota de 60 s se esgotar.
+       * Quatro caixas para um problema que a primeira já descreveu inteiro.
+       */
+      nucleoBloqueado = true;
       dialog.showErrorBox('Núcleo bloqueado', `O núcleo não pôde iniciar (${m.code}). ${m.message ?? ''}`);
     } else if (m.e === 'crashed') {
       console.error('núcleo crashou:', m.message);
@@ -466,8 +570,30 @@ function spawnUtility(): void {
         }
       }
     } else if (msg.q === 'shell.reveal' && msg.id !== undefined && typeof msg.path === 'string') {
-      void shell.openPath(msg.path);
-      ipcM!.port1.postMessage({ id: msg.id, ok: true, data: null });
+      /*
+       * §15.7 `shell.open{path, mode}` — **o `mode` é parte do pedido, e era ignorado.**
+       * "Mostrar na pasta" abria o arquivo: `openPath` para os dois modos fazia a ação
+       * menos invasiva das duas virar a mais invasiva, justamente na que a pessoa escolhe
+       * quando não quer abrir. `folder` é `showItemInFolder`.
+       *
+       * A allowlist de §13.6 é do núcleo (`canReveal`, que recusa executável e tudo fora de
+       * image/audio/video/document com `E_TYPE_NOT_OPENABLE`) e continua sendo — mas §3.1
+       * põe "shell.openPath (só com allowlist de tipo, §13.6)" dentro da caixa do main, e
+       * era a única linha daquela caixa sem verificação nenhuma aqui. Um `openPath` que
+       * obedece qualquer caminho que chegue pela IPC-M é uma etapa a menos entre um núcleo
+       * com defeito e o handler do SO; conferir a extensão custa nada e fecha a etapa.
+       */
+      const modo = msg.mode === 'folder' ? 'folder' : 'open';
+      if (modo === 'folder') {
+        shell.showItemInFolder(msg.path);
+        ipcM!.port1.postMessage({ id: msg.id, ok: true, data: null });
+      } else if (extensaoAbrivel(msg.path)) {
+        void shell.openPath(msg.path);
+        ipcM!.port1.postMessage({ id: msg.id, ok: true, data: null });
+      } else {
+        console.warn(`[main] shell.open recusado — tipo fora da allowlist de §13.6: ${path.extname(msg.path)}`);
+        ipcM!.port1.postMessage({ id: msg.id, ok: false, code: 'E_TYPE_NOT_OPENABLE' });
+      }
     }
     // §15.7 `capture.decision` — a resposta do núcleo sobre uma sessão de tela.
     const decisao = e.data as { a?: string; sessionId?: string; allowed?: boolean; sourceTypes?: string[]; audio?: boolean };
@@ -519,6 +645,13 @@ function spawnUtility(): void {
       app.quit();
       return;
     }
+    // §3.3 — o núcleo recusou abrir por condição definitiva (lock ocupado, schema à frente).
+    // Reiniciar só repetiria a recusa e a caixa de erro; o app não tem o que fazer sem núcleo.
+    if (nucleoBloqueado) {
+      encerrando = true;
+      app.quit();
+      return;
+    }
     const limpo = code === 0;
     if (!limpo) {
       // G6 §15.2 + §3.3: reinicia até 3 vezes em 60s com backoff 1s/4s/10s
@@ -538,8 +671,22 @@ function spawnUtility(): void {
     // Notifica renderer que epoch mudou (§15.2) — o IpcClient falha pendentes e refaz subs.
     epoch++;
     const backoff = limpo ? 50 : ([1000, 4000, 10_000][utilityRestarts - 1] ?? 10_000);
-    setTimeout(() => spawnUtility(), backoff);
-    if (mainWindow !== null) {
+    /*
+     * **O reinício agendado tem de saber que o app está saindo.** O backoff chega a 10 s, e
+     * fechar a janela dentro dessa janela punha um núcleo NOVO no mundo depois de
+     * `encerrando = true`: ele abria os bancos, tomava o lock de §10.8 — e ninguém mais lhe
+     * mandaria `shutdown`, porque o `window-all-closed` já tinha mandado (para o `utility`
+     * que era `null`). O `app.quit()` do prazo de 8 s o matava por cima, sem snapshot e sem
+     * soltar o lock pelo caminho limpo. Guardar o handle e conferir `encerrando` na hora de
+     * disparar fecha os dois lados da corrida.
+     */
+    if (reinicioAgendado !== null) clearTimeout(reinicioAgendado);
+    reinicioAgendado = setTimeout(() => {
+      reinicioAgendado = null;
+      if (encerrando || nucleoBloqueado) return;
+      spawnUtility();
+    }, backoff);
+    if (mainWindow !== null && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('core-epoch', { epoch });
     }
   });
@@ -686,10 +833,9 @@ function createWindow(): void {
     } else {
       entregarPortaAoRenderer();
     }
-    // Entrega deep links pendentes
-    for (const dl of deepLinkQueue) {
-      mainWindow!.webContents.send('deeplink', dl);
-    }
+    // Entrega os deep links pendentes — e a fila esvazia, senão toda recarga reabriria a
+    // prévia de um convite que já foi tratado (ver `drenarDeepLinks`).
+    drenarDeepLinks();
   });
 
   mainWindow.on('close', (e) => {
@@ -750,7 +896,19 @@ function createWindow(): void {
           getSources: (opts) => desktopCapturer.getSources(opts as Parameters<typeof desktopCapturer.getSources>[0]),
           seletorDoSistema: () => seletorDoSistema(),
         },
-        callback,
+        (concessao) => {
+          /*
+           * §17.5/`T-41` — **a declaração vale por UMA captura.** Ela é o endereço da
+           * pergunta que este handler acabou de fazer ao núcleo; guardá-la depois de
+           * respondida deixaria um segundo `getDisplayMedia` sem `declareCaptureSession`
+           * herdar a autorização do primeiro, e a ordem que §17.5 exige (`share.start` → o
+           * host autoriza → declarar → capturar) passaria a ter um degrau opcional. O
+           * núcleo ainda recusaria a sessão morta com `gone`, mas a ordem é a barreira, e
+           * ela é daqui. Quem transmite de novo declara de novo — é o que `tela.ts` faz.
+           */
+          sessaoDeCapturaDeclarada = null;
+          callback(concessao);
+        },
       );
     },
     /**
@@ -765,11 +923,19 @@ function createWindow(): void {
      */
   );
 
-  // §13.6: shell.openPath só com allowlist de tipo (BENCHMARK REQUIRED fora, stub seguro)
+  // §3.1 — janela nova nenhuma; o que sai vai ao navegador do sistema, e só nos esquemas
+  // da allowlist. Ver `podeAbrirExternamente`: o "com allowlist" que este comentário
+  // prometia não existia em lugar nenhum.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    // Só permite navegação externa via shell.openExternal com allowlist
-    void shell.openExternal(url);
+    if (podeAbrirExternamente(url)) void shell.openExternal(url);
+    else console.warn(`[main] navegação externa recusada — esquema fora da allowlist: ${url.slice(0, 64)}`);
     return { action: 'deny' };
+  });
+
+  // A janela morre antes do processo (draining de §3.3 dura até 8 s). Sem zerar a
+  // referência, todo `mainWindow !== null` adiante virava acesso a objeto destruído.
+  mainWindow.on('closed', () => {
+    mainWindow = null;
   });
 }
 
@@ -806,23 +972,58 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    // §3.3 draining — o núcleo fecha cores com snapshot e responde `{e:'drained'}`;
-    // sem resposta em 8 s, sai do mesmo jeito (segurar o fechamento é pior, §18.7).
-    encerrando = true;
-    let saiu = false;
-    const sairUmaVez = (): void => {
-      if (!saiu) {
-        saiu = true;
-        app.quit();
-      }
-    };
-    aoDrained = sairUmaVez;
-    utility?.postMessage({ kind: 'shutdown' });
-    setTimeout(sairUmaVez, 8_000);
+/**
+ * §3.3 draining — o único caminho de encerramento, venha de onde vier.
+ *
+ * O núcleo fecha cores com snapshot e responde `{e:'drained'}`; sem resposta em 8 s, sai do
+ * mesmo jeito (segurar o fechamento é pior, §18.7).
+ *
+ * **Emenda de 2026-09-05 em §3.3 — o sinal externo entra por aqui.** Antes só
+ * `window-all-closed` drenava, e o encerramento vindo de fora da janela (`SIGTERM` de um
+ * `systemctl`/gerenciador de sessão, `SIGINT` de um terminal, logoff) matava o processo sem
+ * passar por nada: sem snapshot de §10.6, sem a barreira de §18.7 e sem `stopped`. O
+ * caminho de U-06 **não** vale nesses casos — a decisão de sair foi tomada fora do app, e
+ * perguntar "tem certeza?" a um `SIGTERM` só gasta o prazo que o SO deu antes do `SIGKILL`.
+ */
+let encerramentoIniciado = false;
+function iniciarEncerramento(motivo: string): void {
+  if (encerramentoIniciado) return;
+  encerramentoIniciado = true;
+  encerrando = true;
+  console.log(`[main] encerrando (${motivo}) — draining de §3.3`);
+  if (reinicioAgendado !== null) {
+    clearTimeout(reinicioAgendado);
+    reinicioAgendado = null;
   }
+  let saiu = false;
+  const sairUmaVez = (): void => {
+    if (!saiu) {
+      saiu = true;
+      app.quit();
+    }
+  };
+  aoDrained = sairUmaVez;
+  if (utility === null) {
+    // Sem núcleo não há o que drenar, e esperar 8 s por um `drained` que não vem é só
+    // atraso — no `SIGTERM` é atraso dentro do prazo que o SO concedeu.
+    sairUmaVez();
+    return;
+  }
+  utility.postMessage({ kind: 'shutdown' });
+  setTimeout(sairUmaVez, 8_000);
+}
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') iniciarEncerramento('window-all-closed');
 });
+
+// §3.3 emendado — encerramento externo. O sinal é o caminho do `systemctl`/logoff; o
+// `before-quit` cobre o resto (menu Sair, `app.quit()` de outro ponto) sem segurar a saída:
+// `iniciarEncerramento` é idempotente e não faz `preventDefault`.
+for (const sinal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+  process.on(sinal, () => iniciarEncerramento(sinal));
+}
+app.on('before-quit', () => iniciarEncerramento('before-quit'));
 
 /** Chamado quando o núcleo confirma que drenou (mensagem `{e:'drained'}` do utility). */
 let aoDrained: (() => void) | null = null;

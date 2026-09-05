@@ -3,7 +3,24 @@
 O que está aberto, hoje. Uma linha por item: **nome e ponteiro**. A descrição mora na
 referência — repetir aqui seria a segunda cópia a envelhecer.
 
-Não normativo. Atualizado em 2026-09-05 (§127). **§127** foi a verificação do relatório de
+Não normativo. Atualizado em 2026-09-05 (§128). **§128** foi a verificação do relatório de
+auditoria do shell Electron (main, preload, `utilityProcess`, ponte do renderer): dos 14
+achados, sete confirmados como escritos, quatro com o mecanismo certo e a consequência
+exagerada, três refutados; das três lacunas de especificação, **uma** era real. Onze defeitos
+corrigidos — o mais grave sendo a rede parada **antes** do dreno, que tornava a barreira de
+§18.7 impossível de cumprir, e o mais perigoso o loopback do sistema concedido a uma janela
+escolhida no portal do Wayland. Cinco emendas normativas: §18.7 (a rede sai depois do dreno),
+§17.5 (sob seletor do sistema, o tipo que vale é o **concedido**; e `window` sem `sourceId` é
+recusa), §3.3 (`blocked` é terminal, o respawn não atropela o quit, e o encerramento por sinal
+externo drena sem passar por U-06), §3.5(2) (o deep link vai ao **renderer**; o caminho pela
+IPC-M não tinha consumidor) e §13.6 (o `mode` de `shell.open`, e a allowlist conferida nas duas
+fronteiras) — mais a emenda de A13(6) em `adr-v2.md`, que passa a nomear a etapa (2) de §10.8.
+**B19 fechou** (a porta IPC-R **é** reentregue na recarga desde §92, e §15.2 agora declara o
+mecanismo e o custo). **B73 e B74 nasceram e fecharam na mesma fatia**, por decisão do
+operador: §15.3 vence §13.6 sobre `archive` (abrir compactado é permitido, atrás da caixa
+nativa — bloquear não removia o risco, mudava-o para "Mostrar na pasta" + duplo clique, que
+não tem confirmação nenhuma), e a UI passou a saber o que oferecer por um campo novo do
+núcleo (`revealMode`) em vez de uma terceira cópia da tabela de extensões. **§127** foi a verificação do relatório de
 auditoria da conversa direta (GEMINI/SPARK, `auditoria.md`): oito achados confirmados e
 corrigidos — um crítico (escritas concorrentes duplicavam `authorSeq` e invalidavam o próprio
 lado para sempre), dois altos, três médios e dois baixos — e sete emendas normativas: §31.10
@@ -151,7 +168,6 @@ Sintomas com repro possível nesta máquina: o próximo passo é investigar, nã
 |---|---|---|
 | B48 | Fila de karaokê pós-respawn do host: a fila é efêmera (§6.16) e ninguém a re-anuncia — quem estava no turno fica "todos mudos" sem evento nomeado explicando. Repro: respawn do núcleo host com canal em modo fila. **A metade que era do roster fechou em 2026-09-05** (§16.4, emenda): quem sai da chamada sai da fila, então o "todos mudos" por titular fantasma não acontece mais. O que resta aqui é o caso do respawn, em que a fila inteira some junto com o host | §97.4, §6.16, §16.4 |
 | B18 | Chips de reação otimistas através de respawn de epoch | §61.4 |
-| B19 | Recarga da página não redeliveria a porta IPC-R (F5 do usuário) — o ciclo real roda em Electron sob Xvfb, como os smokes de `app/scripts` | §60.5 |
 | B65 | `E_STORAGE_FULL` **durante o append do log** (não do blob) só está definido para a criação da comunidade (§11.1). Sem a cota de anexos (§122), encher o disco deixou de ser caso raro, e o append sem desfecho nomeado é a próxima parada silenciosa. Repro: `blob.stage` + `message.send` com o volume do `dataDir` quase cheio | §122.5, `threat-model-seguranca.md` T-09 item 12, §11.1 |
 
 ### Qualidade

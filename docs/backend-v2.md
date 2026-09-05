@@ -318,6 +318,41 @@ instalação cuja Data Key está em modo `secure` — a regra 3 vence.
 reinício incrementando o `epoch` do IPC (§15.1). Na quarta falha, erro terminal e não
 reinicia mais. O renderer trata cada `epoch` novo pelo procedimento de §15.2.
 
+**Emenda de 2026-09-05 — `blocked` não é crash, e o respawn não atropela o quit.** Duas
+regras que a tabela acima implicava e o main não distinguia:
+
+1. **Recusa de abertura é terminal.** As linhas de falha de `boot` (`E_CORE_ALREADY_RUNNING`,
+   `E_SCHEMA_AHEAD`, `E_CORE_LOCK_UNAVAILABLE`) dizem "encerra", e encerrar é o fim: nenhuma
+   delas muda de resposta por ser tentada de novo. Elas **não** consomem a cota de reinício
+   de §15.2 e **não** são reiniciadas — o main mostra a recusa uma vez e encerra. Reiniciar
+   dava quatro caixas de erro idênticas para uma condição que a primeira já descrevia.
+2. **Reinício agendado confere o estado antes de disparar.** O backoff chega a 10 s, e o app
+   pode entrar em `draining` dentro dessa janela. Um núcleo que nasça depois disso abre os
+   bancos e toma o lock de §10.8 sem que ninguém mais lhe mande `core.shutdown` — e morre
+   pelo prazo do quit, sem snapshot e sem soltar o lock pelo caminho limpo. O reinício em
+   voo é cancelado no início do encerramento, e conferido de novo na hora de disparar.
+
+**Emenda de 2026-09-05 — encerramento por sinal externo do sistema operacional.** O ciclo
+de fechamento estava escrito só para o caminho da janela: U-06 mostra o impacto (§18.7), a
+pessoa confirma, `window-all-closed` dispara o `draining`. Nada dizia o que acontece quando
+a saída é decidida **fora do app** — `SIGTERM` de um gerenciador de serviços ou de sessão,
+`SIGINT` de um terminal, logoff/desligamento do SO. Na prática não acontecia nada: o
+processo morria sem `draining`, portanto sem o snapshot de §10.6, sem a barreira de §18.7 e
+sem passar por `stopped`.
+
+Fica normativo:
+
+| | Fechamento pela janela | Sinal externo (`SIGTERM`/`SIGINT`/`SIGHUP`, logoff) |
+|---|---|---|
+| Confirmação de U-06 | **Sim** — o modal de §18.7 mostra quem cai e o que não replicou | **Não.** A decisão foi tomada fora do app; perguntar "tem certeza?" a um `SIGTERM` gasta o prazo que o SO deu antes do `SIGKILL` |
+| `draining` de §3.3 | Sim | **Sim, o mesmo** — mesma barreira de §18.7, mesmo `DRAIN_BUDGET_MS` |
+| Prazo do main | 8 s por `{e:'drained'}`, depois sai de qualquer jeito | Idem. O orçamento do núcleo (5 s) continua **menor** que ele, de propósito |
+| Sem núcleo vivo | Sai imediatamente | Sai imediatamente — esperar 8 s por um `drained` que não vem é atraso dentro do prazo do SO |
+
+O dreno é o mesmo procedimento, não um caminho paralelo: **um** ponto de entrada, alcançado
+pela janela, pelo sinal ou por `before-quit`, e idempotente porque as três coisas podem
+chegar juntas.
+
 ### 3.4 Regras de fronteira (invioláveis)
 
 1. **O renderer nunca toca disco nem rede para dado de domínio.** Sem `fetch`, sem `fs`,
@@ -347,8 +382,22 @@ Regras normativas:
 
 1. O **main** faz o parse e a validação sintática. Uma URL que não case exatamente com a
    gramática é descartada com log `deeplink.rejected` e **nada** é encaminhado.
-2. O main encaminha ao núcleo **dado estruturado já parseado** (`{route:'join', code}`),
-   nunca a string original.
+2. O main encaminha **dado estruturado já parseado** (`{route:'join', code}`), nunca a
+   string original. **Emenda de 2026-09-05 — o destinatário é o renderer.** A redação
+   anterior dizia "ao núcleo", e a implementação a obedecia ao pé da letra nos dois lados
+   sem que nada acontecesse: o main postava `{kind:'deeplink'}` na IPC-M e o
+   `utilityProcess` logava a mensagem e voltava. Não era descuido — é que **não há o que o
+   núcleo faça com um deep link**. A regra 3 abaixo manda o link só posicionar a UI numa
+   confirmação, e a prévia que essa tela mostra vem de `invite.resolve` (classe `open`,
+   §12.3) e `query.resolveMessageLink` (§15.6), comandos que o renderer emite pela IPC-R
+   quando a tela abre. O núcleo fica sabendo do link por eles, no momento em que a
+   informação é pedida, e uma cópia antecipada pela IPC-M não teria consumidor. O caminho
+   morto foi removido das duas pontas.
+
+   **A entrega ao renderer é fila, e a fila esvazia.** Link que chega antes de haver
+   documento (abertura a frio, `second-instance` durante uma recarga) espera o
+   `did-finish-load`; entregue, sai da fila. Reler a fila a cada carga transformava toda
+   recarga da janela numa reabertura dos convites já tratados.
 3. Deep link **nunca dispara ação**: ele só posiciona a UI numa tela de confirmação. Entrar
    numa comunidade sempre exige um clique explícito depois do preview.
 4. Com o app já aberto, `second-instance` encaminha à instância viva
@@ -2943,8 +2992,19 @@ state}`. No boot:
 **Regras de segurança (fecham `T-17`, `T-48`, `DR-41`):**
 
 1. `blob.reveal` (abrir com o handler do SO) é permitido **apenas** para `image`, `audio`,
-   `video`, `document` e **apenas** para as extensões da tabela. Todo o resto oferece
-   somente "Mostrar na pasta".
+   `video`, `document`, `archive` e **apenas** para as extensões da tabela. Todo o resto
+   (`other`) oferece somente "Mostrar na pasta".
+
+   **Emenda de 2026-09-05 (`B73`) — `archive` entra, e entra pela porta de §15.3.** Esta
+   regra e §15.3 se contradiziam: a lista aqui excluía `archive`, e §15.3 declara
+   "`blob.reveal` de `archive`" na linha `main-confirmed`, com a caixa nativa escrita
+   ("Abrir este arquivo compactado?"). O caminho `main-confirmed` estava construído nas
+   duas fronteiras e o que o matava era esta lista — uma linha normativa inalcançável e um
+   bloqueio que não bloqueava nada: "Mostrar na pasta" leva à mesma pasta, e o duplo clique
+   de lá **não tem confirmação nenhuma**. Recusar aqui não removia o risco; mudava-o para o
+   caminho com menos aviso. Vence §15.3, que é a regra mais específica (nomeia o tipo e
+   nomeia o mecanismo de consentimento). Abrir um `archive` continua exigindo o token de
+   §15.3; a regra 2 continua acima de tudo isto.
 2. Uma allowlist de extensões executáveis/roteiráveis (`exe bat cmd com scr ps1 sh msi
    dll app pkg dmg deb rpm jar vbs js wsf lnk`) é **bloqueada até para revelar**: o arquivo
    é gravado com a extensão preservada, mas a UI mostra aviso de origem e não oferece ação
@@ -2957,6 +3017,41 @@ state}`. No boot:
    Vídeo e áudio **não** tocam inline no v1: exigem download explícito e abertura pelo SO.
    Isso reduz a superfície de decodificador do renderer a um decoder de imagem já
    sandboxado. `REQUIRES POC` — G11 (fuzzing) antes de qualquer ampliação.
+
+**Emenda de 2026-09-05 — o `mode` de `shell.open`, e onde a allowlist é conferida.**
+
+`shell.open{path, mode}` (§15.7) tem dois modos e eles são ações diferentes: `open` entrega
+o arquivo ao handler do SO, `folder` mostra o item no gerenciador de arquivos. O main
+tratava os dois como `open` — então "Mostrar na pasta", que é a ação **menos** invasiva e a
+única que a regra 1 oferece para o que está fora da allowlist, abria o arquivo. Normativo:
+`folder` **nunca** abre, e a allowlist da regra 1 governa `open`; `folder` é permitido para
+o que a regra 2 não bloqueia.
+
+**Emenda de 2026-09-05 (`B74`) — quem classifica é o núcleo, e ele passou a dizer.** A regra 1
+manda a UI oferecer **somente** a ação que o tipo permite, e a UI não tinha como saber qual é:
+o `kind` que viaja no log é **declarado por quem enviou** (usá-lo é o ataque `T-48` que esta
+mesma regra nomeia), e derivar da extensão no renderer seria a terceira cópia da tabela acima.
+O `AttachmentDto` de §15.6.1 ganha `revealMode`, decidido pelo núcleo pela **extensão real**:
+
+| `revealMode` | O que a tela oferece | Quando |
+|---|---|---|
+| `open` | "Abrir" e "Mostrar na pasta" | `image`, `audio`, `video`, `document`, `archive` — regra 1 |
+| `folder` | Só "Mostrar na pasta" | `other`, e qualquer extensão fora da tabela |
+| `none` | Nenhuma das duas | Extensão da regra 2 (executável/roteirável) |
+
+Vale **antes** do download: o nome está no log e o arquivo local é gravado com a extensão
+preservada (regra 2), então a resposta não muda quando os bytes chegam. Continua sendo
+`esconder nunca é enforcement` (§3.4 regra 3) — quem recusa é o núcleo, e a recusa é
+`E_TYPE_NOT_OPENABLE`; `revealMode` só evita oferecer o botão que seria recusado.
+
+**A conferência acontece nas duas fronteiras, e isso é deliberado.** O núcleo continua sendo
+a autoridade (`canReveal`: recusa executável e tudo fora de `image`/`audio`/`video`/
+`document` com `E_TYPE_NOT_OPENABLE`), e é a decisão dele que a UI vê. O main confere de
+novo antes de chamar `shell.openPath`, porque §3.1 põe "`shell.openPath` (só com allowlist
+de tipo, §13.6)" dentro da caixa do main: ele é quem fala com o SO, e um `openPath` que
+obedece qualquer caminho vindo da IPC-M é uma etapa a menos entre um núcleo com defeito e o
+handler do sistema. Duplicação de regra é o custo; a alternativa é uma fronteira que
+executa sem conferir.
 
 ### 13.7 Barreira blob ↔ mensagem (fecha `DS-27`, `F-43`)
 
@@ -3317,6 +3412,29 @@ Resposta direta aos blockers B6 (contrato executável) e B9 (rastreabilidade de 
 **Convergência garantida:** depois de (d), o estado da UI é derivado só de queries, e as
 queries leem `view.db`, que é derivado do log. Três crashes seguidos convergem para o mesmo
 estado. `REQUIRES POC` — G6.
+
+**Emenda de 2026-09-05 — a recarga do renderer entra por este mesmo ciclo, e por quê.**
+
+O procedimento acima está escrito de um único gatilho: o núcleo morre, o canal renasce, o
+renderer ressincroniza. Existe um segundo gatilho, e ele é o inverso — **o documento do
+renderer é substituído** (recarga por `F5`/menu, renderer que crashou e voltou, navegação).
+Fica declarado que ele usa o mesmo caminho, e o que isso custa:
+
+- **Por que não há caminho mais barato.** Uma `MessagePort` transferida pertence ao
+  documento que a recebeu; quando ele é substituído, ela vai junto e não há como
+  transferi-la de novo. A porta do lado do núcleo também já foi transferida (e neuterada no
+  main), então o **canal inteiro** precisa nascer outra vez. Rebindar só a ponta do renderer
+  exigiria dar ao `IpcServer` uma troca de porta em quente e um `hello` fora do nascimento
+  do processo — mecanismo novo no contrato de §15.1 para um caso que o ciclo existente já
+  cobre.
+- **Como é feito.** O main pede ao núcleo um encerramento **limpo** (`core.shutdown`, com o
+  `draining` de §3.3 e a barreira de §18.7 inteiros), e a saída com código 0 **não** consome
+  a cota de 3 reinícios em 60 s. O que volta é `epoch+1`, canal novo, e a porta entregue ao
+  documento que acabou de carregar — os passos 2 a 4 acima, sem exceção.
+- **O que custa.** Uma recarga derruba as conexões P2P e reabre os cores; com ops ainda não
+  replicadas, ela paga a barreira de §18.7 (até `DRAIN_BUDGET_MS`) antes de o núcleo sair.
+  É o preço correto: a alternativa seria sair sem drenar. Recarregar o renderer **não** é
+  operação barata neste produto, e a UI não deve oferecê-la como se fosse.
 
 **Emenda de 2026-09-03 (B43) — a reentrada de voz é parte do (d).** A sessão de voz do
 núcleo é efêmera (§6.16): no respawn ela morre sem evento nenhum, e sem re-join o
@@ -3750,10 +3868,18 @@ type MessageDto = {
 type ReactionDto   = { emoji: string, count: number, mine: boolean }
 type AttachmentDto = { blobsCoreKey: Key, blobId: object, name, sizeBytes, kind, hash,
                        state: BlobState, progress: number, availablePeers: number,
-                       hostAvailable: boolean, localPath?: string }
+                       hostAvailable: boolean, localPath?: string,
+                       revealMode: 'open' | 'folder' | 'none' }
 // Emenda de 2026-08-22: `availablePeers`/`hostAvailable` são leitura do bitfield VIVO
 // (§13.4 passo 4). Fora de um download em curso não há par conectado àquele core, e é isso
 // que `0`/`false` dizem — não há registro persistente de pares, e inventar um seria pior.
+// Emenda de 2026-09-05 (B74): `revealMode` é a regra 1 de §13.6 dita à UI, decidida pela
+// extensão REAL do nome. `kind` continua sendo o do remetente e não serve para isto.
+
+// `blob.stage` NÃO devolve um `AttachmentDto`: o que ele descreve são bytes recém-escritos
+// no core de blobs local, sem estado de download, sem pares e sem `revealMode` (nada foi
+// revelado). O que ele devolve, e o que vira `attachment` na op de §7.4.1, é:
+type StagedAttachmentDto = { blobsCoreKey: Key, blobId: object, name, sizeBytes, kind, hash }
 ```
 
 **`replyTo` para mensagem deletada (fecha `F-47`/`M-7`):** a resposta continua existindo,
@@ -4859,6 +4985,34 @@ depois.
 transformaria a escolha da pessoa no seu oposto — é a mesma disciplina de `E_MUSIC_UNSUPPORTED`
 na emenda de 2026-08-28, que recusa **nomeadamente** em vez de dar outra coisa.
 
+**Emenda de 2026-09-05 — sob seletor do sistema, o tipo que vale é o CONCEDIDO.** A tabela
+acima e a regra do loopback do item 3 do Modo Música (`screen` sim, `window` nunca) são
+regras sobre a fonte que a captura de fato usa. Onde a escolha é do
+`xdg-desktop-portal` (Wayland), o tipo declarado pelo renderer é uma **intenção**, não o
+resultado: a caixa do sistema oferece tela e janela, e a pessoa pode apontar uma janela
+depois de o renderer ter declarado `screen`. Nesse caminho:
+
+1. **O áudio é decidido pelo tipo da fonte concedida**, lido dela mesma — nunca pelo tipo
+   declarado. Declarar `screen`, receber uma janela do portal e conceder `loopback` entrega o
+   som da máquina inteira a quem escolheu compartilhar uma janela, que é a captura a mais que
+   esta seção proíbe. Quando o pedido de som não sobrevive à troca de tipo, a captura sobe
+   **muda** — a imagem escolhida continua valendo (§114).
+2. **`sourceTypes` de `capture.decision` é reconferido contra o tipo concedido.** A primeira
+   conferência, contra o declarado, acontece antes de enumerar; a segunda existe para que o
+   portal não entregue um tipo que o núcleo não autorizou.
+3. **A discrepância não invalida a concessão de vídeo por si só.** A escolha da pessoa na
+   caixa do sistema é a escolha, e recusá-la por não casar com a declaração feita antes de a
+   caixa abrir seria transformar o seletor do sistema em erro. O que se ajusta é o som.
+
+Fora do seletor do sistema (Windows, Linux/X11) declarado e concedido são o mesmo valor por
+construção — o `sourceId` é casado contra a lista viva — e nada disto muda.
+
+**E, onde o seletor é do produto, `window` sem `sourceId` é recusa.** "A primeira fonte do
+tipo" é resposta legítima para tela (a primária) e para o Modo Música; para janela não é
+resposta nenhuma — a primeira que o sistema lista é tipicamente a janela **deste** app, e
+conceder uma janela que ninguém apontou é o defeito que o `sourceId` desta seção existe para
+fechar. Falha fechada, como todos os outros ramos do handler.
+
 **3. Quem autoriza.** O núcleo, por `capture.authorize{audio}` (§15.7, emenda de 2026-09-03),
 contra `voice_share_screen` — **a mesma permissão da tela, sem cargo novo**. Um
 `voice_share_audio` separado partiria em dois um par que esta seção sempre tratou como uma
@@ -5443,6 +5597,26 @@ afirmações diferentes, e o modal de U-06 mostrava a primeira chamando-a de seg
 E o botão **"avisar quem está online"** ainda existia no renderer, appendando a mensagem que
 esta seção diz ter removido. Ele saiu junto (`F-43`, delta U-06): o que fica no modal são os
 números, incluindo o que ainda não replicou.
+
+#### Emenda de 2026-09-05 — a rede sai **depois** do dreno, e isso é o passo 2
+
+O passo 2 diz "o host **permanece no swarm** até que `min(3, memberCount − 1)` pares
+confirmem". O shell fazia o contrário: parava o transporte P2P (fechando canais, esquecendo
+os muxes e destruindo o backend do swarm) e só então chamava `core.shutdown`. Com a rede
+desfeita, a barreira não tinha como ser cumprida nem como ser medida:
+
+- a confirmação de um par é lida do bitfield que o replicador mantém **por par conectado**;
+  sem pares, a contagem é fixa em zero;
+- o alvo vem de `membrosAtivos`, que é estado do log e **não** cai junto com a conexão —
+  então numa comunidade com dois ou mais membros o alvo nunca era alcançado;
+- o `outbox.flush()` do primeiro giro precisa de canal vivo (§11.8) e não tinha nenhum.
+
+O efeito não era "replicar menos": era esperar o orçamento inteiro para devolver
+`replicatedTo = 0` e sair do swarm **antes** de replicar — a barreira desligada com o
+sintoma de estar ligada. A ordem é normativa: **`core.shutdown` primeiro, com a rede de pé;
+a parada do transporte depois, com o que sobrar do orçamento.** O orçamento total continua
+sendo o mesmo, e continua menor que a rede de segurança do main (§3.3): perder o dreno é
+aceitável, perder o desligamento não.
 
 ### 18.8 Sucessão de host e continuidade da comunidade
 

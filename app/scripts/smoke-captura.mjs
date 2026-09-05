@@ -263,6 +263,84 @@ for (const [plataforma, tipo, concedido, esperado, porque] of [
   );
 }
 
+// §17.5 (emenda de 2026-09-05) — o tipo que vale é o CONCEDIDO, não o declarado.
+//
+// Onde o portal manda, a lista que volta É a escolha da pessoa, e ela pode ter apontado uma
+// janela depois de o renderer declarar `screen`. O defeito que isto prende: o som era
+// calculado pelo tipo DECLARADO, então uma janela escolhida no portal subia com `loopback` —
+// o som da máquina inteira entregue a quem escolheu compartilhar uma janela. É a captura a
+// mais que §17.5 chama pelo nome ("nunca de janela"), e nenhuma verificação a alcançava,
+// porque `audioDaCaptura` sozinha responde certo: quem errava era o argumento.
+console.log('\nseletor do sistema: o tipo concedido não é o declarado:');
+const { atenderPedidoDeCaptura } = await import(`file://${CAPTURA}`);
+
+/** Um pedido inteiro contra a função de produto, com o núcleo e o sistema injetados. */
+function pedir({ declarada, fontes, doSistema, decisao, plataforma = 'linux' }) {
+  return new Promise((resolve) => {
+    atenderPedidoDeCaptura(
+      {
+        sessaoDeclarada: () => 'sessao-de-teste-0000',
+        declaracao: () => declarada,
+        perguntarAoNucleo: async () => decisao,
+        getSources: async () => fontes,
+        seletorDoSistema: () => doSistema,
+        plataforma: () => plataforma,
+      },
+      (c) => resolve({ video: c.video?.id ?? null, audio: c.audio ?? null }),
+    );
+  });
+}
+
+const TELA = { id: 'screen:0:0', name: 'Tela inteira' };
+const JAN = { id: 'window:4242:0', name: 'Um navegador qualquer' };
+const CONCEDE_TUDO = { allowed: true, sourceTypes: ['screen', 'window'], audio: true };
+
+const portalDeuJanela = await pedir({
+  declarada: { kind: 'screen', sourceId: null, audio: true, mode: 'share' },
+  fontes: [JAN],
+  doSistema: true,
+  decisao: CONCEDE_TUDO,
+});
+conferir(
+  portalDeuJanela.video === JAN.id && portalDeuJanela.audio === null,
+  `declarou tela + som, o portal deu JANELA → sobe muda (${JSON.stringify(portalDeuJanela)})`,
+);
+
+const portalDeuTela = await pedir({
+  declarada: { kind: 'screen', sourceId: null, audio: true, mode: 'share' },
+  fontes: [TELA],
+  doSistema: true,
+  decisao: CONCEDE_TUDO,
+});
+conferir(
+  portalDeuTela.video === TELA.id && portalDeuTela.audio === 'loopback',
+  `declarou tela + som e o portal deu TELA → o loopback sobe (${JSON.stringify(portalDeuTela)})`,
+);
+
+const tipoNaoAutorizado = await pedir({
+  declarada: { kind: 'window', sourceId: null, audio: false, mode: 'share' },
+  fontes: [TELA],
+  doSistema: true,
+  decisao: { allowed: true, sourceTypes: ['window'], audio: false },
+});
+conferir(
+  tipoNaoAutorizado.video === null,
+  'o portal devolveu um tipo que o núcleo não autorizou → NEGADA, não concedida assim mesmo',
+);
+
+// E, sem portal, a outra metade: `window` sem `sourceId` não é "a primeira janela da lista"
+// — a primeira costuma ser a janela DESTE app, e ninguém a escolheu.
+const janelaSemEscolha = await pedir({
+  declarada: { kind: 'window', sourceId: null, audio: false, mode: 'share' },
+  fontes: [JAN, { id: 'window:9:0', name: 'Outra' }],
+  doSistema: false,
+  decisao: CONCEDE_TUDO,
+});
+conferir(
+  janelaSemEscolha.video === null,
+  'seletor do produto: `window` sem fonte escolhida é NEGADA, não `fontes[0]`',
+);
+
 fs.rmSync(tmp, { recursive: true, force: true });
 if (naoMedidos.length > 0) console.log(`\n${naoMedidos.length} cenário(s) NÃO MEDIDO(S) neste ambiente`);
 console.log(problemas.length === 0 ? 'tudo verde' : `\n${problemas.length} problema(s)`);

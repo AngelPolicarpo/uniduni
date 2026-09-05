@@ -433,11 +433,31 @@ dizia que ele protegia.
    aceite dedicado, e a UI passa a exibir indicador permanente.
 6. **O probe é um relaunch, e tem ordem obrigatória.** O switch só tem efeito antes de
    `app.whenReady()` — medido —, e `isEncryptionAvailable()` só responde depois dele, então
-   cada candidato custa um `app.relaunch()`. O probe roda **antes** do lock composto de
-   §10.8, senão o processo relançado encontra o próprio lock e morre com
-   `E_CORE_ALREADY_RUNNING`, e **preserva `argv`**, senão o deep link de §3.5(4) se perde no
-   relaunch. O backend aprovado é persistido e reusado no boot seguinte, sem repetir o
-   probe; o custo medido é de ~350 ms por candidato ausente, uma única vez.
+   cada candidato custa um `app.relaunch()`. O probe roda **antes da etapa (2) do lock
+   composto de §10.8** — o `flock` de `p2p/LOCK`, que o `utilityProcess` toma —, senão o
+   processo relançado encontra o próprio lock e morre com `E_CORE_ALREADY_RUNNING`; e
+   **preserva `argv`**, senão o deep link de §3.5(4) se perde no relaunch. O backend
+   aprovado é persistido e reusado no boot seguinte, sem repetir o probe; o custo medido é
+   de ~350 ms por candidato ausente, uma única vez.
+
+   **Emenda de 2026-09-05 — a etapa nomeada é a (2), e a (1) fica onde está.** A redação
+   anterior dizia "antes do lock composto de §10.8", sem distinguir as quatro etapas, e a
+   §10.8(1) — `app.requestSingleInstanceLock()` — é tomada no topo do módulo do main, antes
+   do probe. Lida ao pé da letra, a ADR se contradizia com a única ordem implementável, por
+   duas razões que não são de estilo:
+
+   - **`safeStorage.isEncryptionAvailable()` só responde depois do `ready` no Linux** (é o
+     que a API documenta). O probe não tem como preceder um `requestSingleInstanceLock` de
+     topo de módulo — ele nem sequer sabe o que responder ainda.
+   - **A etapa (1) é segura ao relaunch, e o código de erro que a ADR cita não é dela.**
+     `app.relaunch()` sobe a instância nova **quando a atual sai** ("Relaunches the app when
+     the current instance exits"), então o processo relançado nunca disputa o singleton com
+     o processo que o pediu; e um `SingletonLock` deixado para trás por uma saída abrupta é
+     reconhecido como órfão e retomado. `E_CORE_ALREADY_RUNNING` é o erro da etapa (2), o
+     `flock` mantido pelo núcleo — e é essa a etapa que o probe precisa preceder, o que ele
+     faz: a decisão roda no topo do `whenReady`, antes de `spawnUtility()`.
+
+   O que a ADR mede continua valendo inteiro; o que muda é a etapa que ela nomeia.
 
 **Consequências.** A afirmação "a chave nunca cruza fronteira" some e é substituída por uma
 descrição do que de fato acontece. **L-2** declara o que `safeStorage` não protege.

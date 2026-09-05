@@ -14,6 +14,7 @@ import { IpcClient, TIMEOUT_HOST_MS } from "./client";
 import { pedirToken } from "./bridge";
 import type {
   AttachmentDto,
+  StagedAttachmentDto,
   DmConversationDetail,
   DmConversationItem,
   DmConvState,
@@ -581,7 +582,7 @@ export const api = {
       communityId,
     }),
 
-  blobStage: (ticketId: string) => req<AttachmentDto>("blob.stage", { ticketId }, TIMEOUT_HOST_MS),
+  blobStage: (ticketId: string) => req<StagedAttachmentDto>("blob.stage", { ticketId }, TIMEOUT_HOST_MS),
 
   blobDownload: (arg: { communityId: string; blobsCoreKey: string; blobId: AttachmentDto["blobId"] }) =>
     req<{ state: string }>("blob.download", arg),
@@ -659,7 +660,7 @@ export const api = {
   dmSend: (arg: {
     conversationId: string;
     content: string;
-    attachment?: AttachmentDto;
+    attachment?: StagedAttachmentDto;
     replyToId?: string;
     clientRef?: string;
   }) =>

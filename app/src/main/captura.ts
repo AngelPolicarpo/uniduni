@@ -25,6 +25,20 @@ export interface FonteCapturavel {
  * escolha e a captura, e substituí-la pela primeira disponível transmitiria uma janela que
  * ninguém escolheu — o defeito de origem, só que mais tarde.
  */
+/**
+ * O tipo REAL de uma fonte, lido do `id` que o Chromium dá (`screen:0:0`, `window:12345:0`).
+ *
+ * Existe por causa do Wayland: ali a lista é a escolha da pessoa na caixa do portal, e ela
+ * pode não ser do tipo que o renderer declarou. Quem decide o áudio (§17.5: loopback só para
+ * tela) precisa perguntar à fonte concedida, não à declaração. `null` é um `id` que não
+ * segue a convenção — o chamador cai no tipo declarado, que é o que se sabia antes.
+ */
+export function tipoDaFonte(id: string): TipoDeFonte | null {
+  if (id.startsWith('screen:')) return 'screen';
+  if (id.startsWith('window:')) return 'window';
+  return null;
+}
+
 export function resolverFonte<T extends FonteCapturavel>(
   fontes: readonly T[],
   sourceId: string | null,
@@ -286,6 +300,20 @@ export function atenderPedidoDeCaptura(
       // janela pode ter fechado. Casar contra a lista viva é o que transforma "o
       // renderer pediu" em "isto existe".
       const doSistema = deps.seletorDoSistema();
+      /*
+       * **Sem seletor do sistema, `window` exige fonte escolhida.** `resolverFonte(_, null)`
+       * devolve `fontes[0]`, e isso é resposta legítima só onde "a primeira do tipo" quer
+       * dizer alguma coisa: a tela primária, o Modo Música. Para janela não quer — a
+       * primeira que o sistema listar é tipicamente a janela DESTE app (`getSources` aqui
+       * não a filtra, ao contrário do `listCaptureSources` do seletor), e conceder uma
+       * janela que ninguém apontou é o defeito que o `sourceId` de §17.5 existe para
+       * fechar. Falha fechada.
+       */
+      if (!doSistema && tipo === 'window' && sourceId === null) {
+        console.warn('[main] captura de janela sem fonte escolhida — NEGADA (§17.5)');
+        responder('janela-sem-fonte', {});
+        return;
+      }
       const fontes = await deps.getSources({
         types: doSistema ? ['screen', 'window'] : [tipo],
       });
@@ -304,9 +332,36 @@ export function atenderPedidoDeCaptura(
         responder('sem-fonte', {});
         return;
       }
-      const som = audioDaCaptura(tipo, audio, deps.plataforma?.() ?? process.platform);
+      /*
+       * §17.5 — **o áudio é do tipo CONCEDIDO, não do declarado.**
+       *
+       * Onde o portal manda, o tipo que volta é escolha da pessoa na caixa do sistema, e ela
+       * pode ter apontado uma janela depois de o renderer declarar `screen`. Calcular o som
+       * pelo `tipo` declarado dava `loopback` — o som da MÁQUINA — numa captura de janela, que
+       * é exatamente o que §17.5 proíbe ("no Linux ele é concedido para captura de tela, nunca
+       * de janela"; "compartilhar uma janela não é consentir em transmitir tudo o que toca na
+       * máquina"). O tipo efetivo é o que a fonte declara no próprio `id`.
+       *
+       * A mesma leitura vale para a autorização do núcleo: `sourceTypes` foi conferido contra
+       * o declarado antes de enumerar, e reconferir contra o concedido é o que impede o portal
+       * de entregar um tipo que o núcleo não autorizou. Sem seletor do sistema os dois são o
+       * mesmo valor e nada disto muda.
+       */
+      const tipoEfetivo = tipoDaFonte(fonte.id) ?? tipo;
+      if (tipoEfetivo !== tipo) {
+        console.log(`[main] o seletor do sistema devolveu '${tipoEfetivo}' onde o renderer declarou '${tipo}'`);
+        if (!decisao.sourceTypes.includes(tipoEfetivo)) {
+          console.warn(`[main] núcleo não autoriza fonte '${tipoEfetivo}' — captura NEGADA`);
+          responder('fonte-nao-autorizada', {});
+          return;
+        }
+      }
+      const som = audioDaCaptura(tipoEfetivo, audio, deps.plataforma?.() ?? process.platform);
+      if (audio && som === undefined && tipoEfetivo !== tipo) {
+        console.warn('[main] som pedido para tela e a escolha foi janela — a captura sobe MUDA (§17.5)');
+      }
       console.log(
-        `[main] captura concedida · sessão ${sessionId.slice(0, 8)} · ${tipo} '${fonte.name}'` +
+        `[main] captura concedida · sessão ${sessionId.slice(0, 8)} · ${tipoEfetivo} '${fonte.name}'` +
           ` · áudio ${som ?? 'não'}`,
       );
       responder('concedida', som === undefined ? { video: fonte } : { video: fonte, audio: som });

@@ -9295,7 +9295,147 @@ Nada de novo entrou no backlog. Duas observações que a fase deixa registradas 
 porque pertencem a fases seguintes deste mesmo mapeamento:
 
 - `shell.reveal` e `setWindowOpenHandler` no main não têm a allowlist de tipo que §13.6 pede —
-  ambos são o caminho de anexo e captura, fase 6.
+  ambos são o caminho de anexo e captura, fase 6. **Fechado em §128**, com a ressalva de que
+  o `shell.reveal` já era coberto pelo `canReveal` do núcleo: o que faltava no main era a
+  segunda tranca que §3.1 declara, e o `mode`, que era ignorado.
 - A verificação em Windows do `wipe` corrigido é a evidência que falta: o defeito foi deduzido
   do modo de compartilhamento do SQLite e fechado com um teste que reproduz a falha de remoção
   de forma portátil (diretório no lugar do arquivo), não com uma rodada em Windows.
+
+---
+
+## 128. Varredura do shell Electron: o que o relatório acertou, o que ele errou — 2026-09-05
+
+Verificação do relatório de auditoria do `app/` (main, preload, `utilityProcess` e a ponte do
+renderer): 14 achados e 3 "lacunas de especificação". A regra desta fatia foi a de sempre —
+**cada achado é confirmado na fonte antes de virar correção**, e o que não se sustenta é dito
+por que não se sustenta. Sete confirmados como escritos, quatro confirmados com o mecanismo
+certo e a consequência exagerada, três refutados. Das três lacunas, uma era real.
+
+### 128.1 Os defeitos confirmados e corrigidos
+
+- **A rede era parada ANTES do dreno, então a barreira de §18.7 não podia ser cumprida.** O
+  `drenarESair` do `utilityProcess` chamava `pararRede()` — que fecha canais, esquece muxes e
+  destrói o backend do swarm — e só então `runtime.shutdown()`. O passo 2 de §18.7 conta
+  **pares que confirmaram a cabeça**, lidos do bitfield que o replicador mantém por par
+  conectado; sem pares, a contagem é zero fixa, o alvo `min(3, memberCount − 1)` nunca é
+  alcançado e o `outbox.flush()` do primeiro giro não tem canal. O efeito não era "replicar
+  menos": era gastar o orçamento inteiro para devolver `replicatedTo = 0` e sair do swarm
+  **antes** de replicar — a barreira desligada com o sintoma de estar ligada. Invertido.
+- **Sob o portal do Wayland, o som era calculado pelo tipo DECLARADO.** O renderer declara
+  `screen`, a caixa do sistema oferece tela **e** janela, a pessoa aponta uma janela — e
+  `audioDaCaptura('screen', …)` devolvia `loopback`. O som da máquina inteira concedido a quem
+  escolheu compartilhar uma janela, que é a captura a mais que §17.5 nomeia. O tipo efetivo
+  passa a ser lido do `id` da fonte concedida, e `sourceTypes` é reconferido contra ele.
+- **`blocked` era tratado como crash.** Lock ocupado (`E_CORE_ALREADY_RUNNING`) ou schema à
+  frente (`E_SCHEMA_AHEAD`) são "encerra" em §3.3, e o main os mandava de volta pela lógica de
+  respawn de §15.2: quatro caixas de erro idênticas para uma condição que a primeira já
+  descrevia inteira.
+- **O reinício agendado nascia no meio do quit.** O backoff chega a 10 s; fechar a janela
+  dentro dessa janela punha um núcleo novo no mundo depois de `encerrando = true` — bancos
+  abertos, lock de §10.8 tomado, e ninguém mais para lhe mandar `shutdown`. Morria pelo prazo
+  de 8 s, sem snapshot e sem soltar o lock pelo caminho limpo.
+- **`shell.open` ignorava o `mode`.** "Mostrar na pasta", que é a ação menos invasiva e a única
+  que §13.6 regra 1 oferece para o que está fora da allowlist, **abria o arquivo**. E o
+  `canReveal` do núcleo recusava os dois modos, então um `.zip` baixado não tinha ação nenhuma
+  — nem a que a regra lhe promete pelo nome.
+- **`setWindowOpenHandler` prometia allowlist e não tinha nenhuma.** `shell.openExternal(url)`
+  cru: o esquema era o que o SO registrasse.
+- **A fila de deep link nunca esvaziava**, então toda recarga da janela reabria a prévia dos
+  convites já tratados.
+- **`mainWindow` não era zerada no `closed`.** A janela morre antes do processo (o draining
+  dura até 8 s), e cada `mainWindow !== null` adiante era acesso a objeto destruído.
+- **A porta IPC-R dependia de o React ter chegado ao efeito antes de o main entregar.** O
+  evento `message` do DOM não tem fila: quem não tem ouvinte no instante do despacho perde a
+  porta para sempre. A ordem de hoje é favorável (a entrega é adiada até `did-stop-loading`),
+  mas era ordem por sorte. A escuta passou a ser de módulo, e a porta que chega cedo demais
+  fica **guardada**.
+- **`window` sem `sourceId` concedia `fontes[0]`** — que, no handler, é tipicamente a janela
+  deste app (ao contrário do `listCaptureSources`, o handler não a filtra). Falha fechada.
+- **A declaração de sessão de captura sobrevivia ao uso**, então um segundo `getDisplayMedia`
+  sem `declareCaptureSession` herdava o endereço do primeiro. O núcleo ainda recusaria a
+  sessão morta com `gone`, mas a ordem de `T-41` é a barreira e ela é do main.
+
+### 128.2 O que o relatório errou
+
+- **`shell.reveal` não abria executável.** O achado descrevia um `.sh` baixado sendo executado
+  pelo `openPath`. Não chega lá: `canReveal` (§13.6, `l2/blobs`) recusa executável e tudo fora
+  de `image`/`audio`/`video`/`document` com `E_TYPE_NOT_OPENABLE`, e `onReveal` nem é chamado.
+  O que era verdade é outra coisa, e menor: §3.1 põe a allowlist **na caixa do main**, e ali
+  não havia conferência nenhuma. Ela foi acrescentada como segunda tranca — não como a
+  primeira, que já existia.
+- **O probe de `--password-store` não mata instâncias no relaunch.** O achado citava A13(6)
+  ("o probe roda antes do lock composto de §10.8") contra a §10.8(1) tomada no topo do módulo.
+  A ordem é mesmo essa, e o dano descrito não acontece: `app.relaunch()` sobe a instância nova
+  **quando a atual sai**, então ela nunca disputa o singleton com quem a pediu, e um
+  `SingletonLock` órfão é retomado. `E_CORE_ALREADY_RUNNING` — o código que a própria ADR cita
+  — é da etapa (2), o `flock` do núcleo, e essa o probe precede de fato. A ADR foi emendada
+  para nomear a etapa certa, e para registrar que a (1) não pode vir depois:
+  `safeStorage.isEncryptionAvailable()` só responde depois do `ready` no Linux.
+- **A perda de `core-epoch`/`core-ready` na recarga não tem a consequência descrita.** O
+  achado dizia que o `IpcClient` classificaria o `hello` contra a época errada. Não classifica:
+  o epoch do cliente vem do **`hello`**, e o rótulo que o preload põe no `window.postMessage` é
+  ignorado por quem escuta. `core-ready` não tem assinante nenhum no renderer, e `getEpoch()`
+  não tem chamador. A inconsistência é real; o efeito observável, não.
+- **Recarga do renderer derrubar o núcleo não é acidente.** É o ciclo de §15.2 sendo reusado
+  porque não há caminho mais barato: uma `MessagePort` transferida morre com o documento, a do
+  outro lado já foi transferida, e o canal inteiro precisa nascer de novo. Rebindar só a ponta
+  do renderer exigiria troca de porta em quente no `IpcServer` e um `hello` fora do nascimento
+  do processo — mecanismo novo no contrato de §15.1 para um caso que o ciclo existente cobre.
+  Ficou **declarado** em §15.2, com o custo dito: recarregar não é operação barata aqui.
+
+### 128.3 As três lacunas de especificação
+
+- **Reconciliação de tipo e áudio no portal — não era lacuna, era defeito.** §17.5 já responde
+  ("no Linux o loopback é concedido para captura de tela, nunca de janela"; "compartilhar uma
+  janela não é consentir em transmitir tudo o que toca na máquina"). O que faltava era o
+  código obedecer. A emenda de 2026-09-05 em §17.5 diz explicitamente que o tipo que vale é o
+  **concedido**, porque a regra é sobre a fonte que a captura usa — e acrescenta a reconferência
+  de `sourceTypes`, que essa sim não estava escrita.
+- **Encerramento por sinal externo — lacuna real, e a única.** Nada dizia o que acontece com
+  o `draining` quando a saída vem de `SIGTERM`/`SIGINT`/logoff, e na prática não acontecia
+  nada: o processo morria sem snapshot de §10.6, sem a barreira de §18.7 e sem `stopped`.
+  §3.3 foi emendada com a tabela dos dois caminhos: o sinal externo **não** passa por U-06 (a
+  decisão foi tomada fora do app; perguntar "tem certeza?" a um `SIGTERM` gasta o prazo que o
+  SO deu antes do `SIGKILL`) e drena com a mesma barreira e o mesmo orçamento.
+- **Modo Música no portal — já respondida.** §17.5 item 3 diz, com todas as letras, que no
+  Wayland "o portal continua sendo quem escolhe a fonte de vídeo, e por isso o Modo Música
+  ainda passa pela caixa do sistema nessas sessões". O código faz exatamente isso.
+
+### 128.4 As duas decisões do operador, tomadas
+
+Os dois itens que esta fatia levantou nasceram e fecharam nela, com a decisão dada.
+
+**`B73` — `archive` abre, atrás da caixa nativa (§15.3 vence §13.6 regra 1).** As duas seções
+se contradiziam: a regra 1 listava só `image`/`audio`/`video`/`document`; §15.3 declara
+"`blob.reveal` de `archive`" na linha `main-confirmed` e escreve o texto da caixa ("Abrir este
+arquivo compactado?"). O caminho `main-confirmed` estava construído nas duas pontas — o
+`BLOB_KIND_ARCHIVE` no roteador, o `requireConfirmation`, a entrada em `CAIXA_POR_COMANDO`, e
+o retry com token no `api.blobReveal` — e o que o matava era uma linha do `isRevealAllowed`.
+
+O argumento que decidiu: **bloquear não removia o risco, mudava-o de caminho.** "Mostrar na
+pasta" leva à mesma pasta, e o duplo clique de lá não tem confirmação nenhuma; recusar "Abrir"
+empurrava a pessoa para o caminho com *menos* aviso. Abrir um `.zip` inicia o gerenciador de
+compactados, que não executa nada de dentro. §15.3 é a regra mais específica — nomeia o tipo e
+nomeia o mecanismo de consentimento —, e a regra 2 (executável bloqueado até para revelar), que
+é a que de fato sustenta a segurança desta seção, não foi tocada.
+
+**`B74` — quem classifica é o núcleo, e ele passou a dizer (`revealMode`).** A regra 1 manda
+oferecer somente a ação que o tipo permite, e a UI tinha três caminhos, dois ruins: o `kind` do
+log é declarado por quem enviou (é o `T-48` que a própria regra nomeia), e derivar da extensão
+no renderer seria a terceira cópia da tabela. O `AttachmentDto` de §15.6.1 ganhou
+`revealMode: 'open' | 'folder' | 'none'`, decidido pelo núcleo pela extensão real e válido
+**antes** do download (o nome está no log, e o arquivo local preserva a extensão pela regra 2).
+Efeito colateral bom: a decisão de `B73` chega à tela sozinha, sem uma segunda edição.
+
+Junto saíram duas coisas menores que só apareceram por causa disto:
+
+- **"Mostrar na pasta" passou a funcionar para `archive` e `other`.** O `canReveal` recusava os
+  dois modos, então um `.zip` ou um `.bin` baixado não tinha ação nenhuma — nem a que a regra 1
+  lhe promete pelo nome. Agora ele recebe o `mode`, e `folder` só esbarra na regra 2.
+- **A recusa aparece na tela.** `api.blobReveal` era chamado com `void` e sem `catch`: um
+  `E_TYPE_NOT_OPENABLE`, ou o cancelamento da caixa nativa, viravam um botão que parecia não
+  fazer nada. `E_CANCELLED` continua sendo desistência e não vira mensagem.
+- **`blob.stage` deixou de ser tipado como `AttachmentDto` no renderer.** Era mentira antiga —
+  o stage descreve bytes recém-escritos, sem estado de download, sem pares e sem `revealMode` —
+  e só apareceu quando o DTO ganhou campo obrigatório. §15.6.1 agora declara os dois tipos.

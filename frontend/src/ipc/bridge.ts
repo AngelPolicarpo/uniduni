@@ -103,29 +103,53 @@ export function pontePresente(): boolean {
 }
 
 /**
- * Espera a porta chegar do preload. A escuta é registrada ANTES de qualquer `await`: a
- * transferência acontece no `did-finish-load`, que pode ser antes deste código rodar em
- * recarga de janela — por isso o listener fica de pé para sempre e a porta mais recente
- * vence.
+ * **A escuta da porta é de módulo, e a porta é guardada.**
+ *
+ * O preload repassa a porta com `window.postMessage(..., [port])`, e o evento `message` do
+ * DOM é transitório: não há fila, e quem não tem ouvinte no instante em que ele é
+ * despachado perde a porta para sempre — o `MessagePort` transferido não volta, e a tela
+ * ficava presa até o prazo de 30 s de `esperarPorta` com "o shell não transferiu a porta
+ * IPC-R". Registrar dentro de `conectar()` fazia a entrega depender de a árvore React ter
+ * chegado ao efeito antes de o main entregar; a ordem hoje é favorável (a entrega é adiada
+ * até `did-stop-loading`, que vem depois da execução do bundle), mas é ordem por sorte, não
+ * por construção.
+ *
+ * Registrando no topo do módulo — antes de qualquer `await`, no mesmo turno em que o bundle
+ * é avaliado — a porta que chegar cedo demais fica **guardada** aqui e é entregue a quem a
+ * pedir depois. A mais recente vence: cada núcleo novo traz uma porta nova (§15.2).
  */
+let portaGuardada: RendererPort | null = null;
+const esperandoPorta = new Set<(p: RendererPort) => void>();
+
+if (typeof window !== "undefined") {
+  window.addEventListener("message", (ev: MessageEvent) => {
+    if ((ev.data as { tipo?: string } | null)?.tipo !== "ipc-r-port") return;
+    const porta = ev.ports[0];
+    if (porta === undefined) return;
+    console.log(`[ponte] porta IPC-R recebida do shell (t=${Math.round(performance.now())}ms)`);
+    portaGuardada = porta as unknown as RendererPort;
+    for (const aviso of [...esperandoPorta]) aviso(portaGuardada);
+  });
+}
+
 function esperarPorta(timeoutMs: number): Promise<RendererPort> {
+  if (portaGuardada !== null) {
+    console.log("[ponte] porta IPC-R já estava guardada — sem espera");
+    return Promise.resolve(portaGuardada);
+  }
   return new Promise((resolve, reject) => {
-    console.log(`[ponte] escuta da porta IPC-R registrada (t=${Math.round(performance.now())}ms desde o início da página)`);
+    console.log(`[ponte] esperando a porta IPC-R (t=${Math.round(performance.now())}ms desde o início da página)`);
     const timer = setTimeout(() => {
-      window.removeEventListener("message", aoRecado);
+      esperandoPorta.delete(aoChegar);
       console.log("[ponte] TEMPO ESGOTADO sem receber a porta IPC-R do shell");
       reject(new Error("o shell não transferiu a porta IPC-R"));
     }, timeoutMs);
-    function aoRecado(ev: MessageEvent): void {
-      if ((ev.data as { tipo?: string } | null)?.tipo !== "ipc-r-port") return;
-      const porta = ev.ports[0];
-      if (porta === undefined) return;
+    function aoChegar(porta: RendererPort): void {
       clearTimeout(timer);
-      window.removeEventListener("message", aoRecado);
-      console.log(`[ponte] porta IPC-R recebida do shell (t=${Math.round(performance.now())}ms)`);
-      resolve(porta as unknown as RendererPort);
+      esperandoPorta.delete(aoChegar);
+      resolve(porta);
     }
-    window.addEventListener("message", aoRecado);
+    esperandoPorta.add(aoChegar);
   });
 }
 
@@ -153,12 +177,9 @@ export async function conectar(cliente: IpcClient, timeoutMs = 30_000): Promise<
   });
   // Cada núcleo novo traz uma porta nova (§15.2 passo 2): o cliente troca de porta e o
   // `hello` que vier por ela fixa o epoch. Ficar preso à primeira porta faria o produto
-  // sobreviver ao crash mudo.
-  window.addEventListener("message", (ev) => {
-    if ((ev.data as { tipo?: string } | null)?.tipo !== "ipc-r-port") return;
-    const porta = ev.ports[0];
-    if (porta === undefined || !cliente.conectado) return;
-    cliente.attach(porta as unknown as RendererPort);
+  // sobreviver ao crash mudo. A escuta é a do módulo, que guarda a porta e avisa daqui.
+  esperandoPorta.add((porta) => {
+    if (cliente.conectado) cliente.attach(porta);
   });
   const porta = await esperarPorta(timeoutMs);
   cliente.attach(porta);

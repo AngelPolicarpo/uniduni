@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { File, FileAudio, FileImage, FileText, FileVideo } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "../../lib/cn";
@@ -72,6 +73,39 @@ export function AttachmentCard({
     attachment.origem !== undefined;
   /** Bytes que já chegaram numa sessão anterior — o Hypercore retoma daí (§13.4). */
   const parcial = !cancelado && attachment.downloadProgress > 0;
+
+  /*
+   * §13.6 regra 1 — o que ESTE arquivo permite, decidido pelo núcleo. Ausente é lido como
+   * `folder`: mostrar na pasta não entrega arquivo a programa nenhum, então é o desfecho
+   * conservador para um núcleo que ainda não manda o campo.
+   */
+  const revelavel = attachment.revealMode ?? "folder";
+  const [recusa, setRecusa] = useState<string | null>(null);
+  /**
+   * A recusa do núcleo **aparece**. Antes a chamada era `void` sem `catch`: um
+   * `E_TYPE_NOT_OPENABLE` ou o cancelamento da caixa nativa de §15.3 viravam um botão que
+   * parecia não fazer nada. `E_CANCELLED` é desistência, não erro — não vira mensagem.
+   */
+  function revelar(mode: "open" | "folder"): void {
+    setRecusa(null);
+    void api
+      .blobReveal({
+        blobsCoreKey: attachment.origem!.blobsCoreKey,
+        blobId: attachment.origem!.blobId,
+        mode,
+      })
+      .catch((e: unknown) => {
+        const code = (e as { code?: string }).code;
+        if (code === "E_CANCELLED") return;
+        setRecusa(
+          code === "E_TYPE_NOT_OPENABLE"
+            ? "Este tipo de arquivo não pode ser aberto pelo aplicativo"
+            : code === "E_NOT_DOWNLOADED"
+              ? "O arquivo não está mais nesta máquina"
+              : "Não foi possível abrir o arquivo",
+        );
+      });
+  }
 
   return (
     <div className="mt-1 flex max-w-[440px] items-start gap-3 rounded-md border border-border-default bg-surface-sidebar p-3">
@@ -167,35 +201,43 @@ export function AttachmentCard({
         )}
 
         {complete && !uploading && attachment.origem !== undefined && corrompido === undefined && (
+          /*
+           * §13.6 regra 1 — **a tela oferece só o que a regra oferece.** "Abrir" entrega o
+           * arquivo ao handler do SO e vale para `image`/`audio`/`video`/`document` e, com
+           * a confirmação nativa de §15.3, para `archive`; o resto tem só "Mostrar na
+           * pasta", que não entrega arquivo a programa nenhum; executável não tem nem isso
+           * (regra 2). Quem classifica é o núcleo (`revealMode`), pela extensão real — a UI
+           * não tem a tabela e não deve ter: o `kind` que vem no log é declarado por quem
+           * enviou, e derivar aqui seria a terceira cópia da lista.
+           */
           <div className="mt-1 flex gap-3">
-            <button
-              type="button"
-              onClick={() =>
-                void api.blobReveal({
-                  blobsCoreKey: attachment.origem!.blobsCoreKey,
-                  blobId: attachment.origem!.blobId,
-                  mode: "open",
-                })
-              }
-              className="text-meta text-accent-default underline underline-offset-2 hover:text-text-primary"
-            >
-              Abrir
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                void api.blobReveal({
-                  blobsCoreKey: attachment.origem!.blobsCoreKey,
-                  blobId: attachment.origem!.blobId,
-                  mode: "folder",
-                })
-              }
-              className="text-meta text-accent-default underline underline-offset-2 hover:text-text-primary"
-            >
-              Mostrar na pasta
-            </button>
+            {revelavel === "open" && (
+              <button
+                type="button"
+                onClick={() => revelar("open")}
+                className="text-meta text-accent-default underline underline-offset-2 hover:text-text-primary"
+              >
+                Abrir
+              </button>
+            )}
+            {revelavel !== "none" && (
+              <button
+                type="button"
+                onClick={() => revelar("folder")}
+                className="text-meta text-accent-default underline underline-offset-2 hover:text-text-primary"
+              >
+                Mostrar na pasta
+              </button>
+            )}
+            {revelavel === "none" && (
+              <span className="text-meta text-text-tertiary">
+                Este tipo de arquivo não é aberto nem localizado pelo aplicativo
+              </span>
+            )}
           </div>
         )}
+
+        {recusa !== null && <p className="mt-1 text-meta text-feedback-danger">{recusa}</p>}
       </div>
     </div>
   );

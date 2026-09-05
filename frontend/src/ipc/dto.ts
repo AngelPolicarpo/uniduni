@@ -146,6 +146,22 @@ export interface StructureDto {
 /** §13.2 — `kind` do anexo é numérico no fio; o rótulo é da UI. */
 export type BlobState = string;
 
+/**
+ * O que `blob.stage` devolve (§15.4) — que **não** é o `AttachmentDto` das queries.
+ *
+ * O stage descreve bytes que acabaram de ser escritos no core de blobs local: não há estado
+ * de download, nem pares, nem `revealMode` (nada foi revelado). Tipá-lo como `AttachmentDto`
+ * era uma mentira antiga que só apareceu quando o DTO ganhou campo obrigatório novo.
+ */
+export interface StagedAttachmentDto {
+  blobsCoreKey: Key;
+  blobId: { byteOffset: number; blockOffset: number; blockLength: number; byteLength: number };
+  name: string;
+  sizeBytes: number;
+  kind: number;
+  hash: string;
+}
+
 export interface AttachmentDto {
   blobsCoreKey: Key;
   blobId: { byteOffset: number; blockOffset: number; blockLength: number; byteLength: number };
@@ -161,6 +177,13 @@ export interface AttachmentDto {
    */
   availablePeers: number;
   hostAvailable: boolean;
+  /**
+   * §13.6 regra 1 (emenda de 2026-09-05) — `open` = pode abrir pelo handler do SO e mostrar
+   * na pasta; `folder` = só mostrar na pasta; `none` = nem uma coisa nem outra (executável,
+   * regra 2). Decidido pelo núcleo, pela extensão REAL — nunca pelo `kind` acima, que é
+   * declarado por quem enviou.
+   */
+  revealMode: "open" | "folder" | "none";
   localPath?: string;
 }
 

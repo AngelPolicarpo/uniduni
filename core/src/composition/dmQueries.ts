@@ -21,6 +21,7 @@
 import { computeHandle } from '../l0/identity/index.ts';
 import type { ManifestDb } from '../l0/manifest/index.ts';
 import type { ViewDb } from '../l0/view/index.ts';
+import { modoDeRevelacao } from '../l2/blobs/index.ts';
 import type {
   DirectMessages,
   DmContactPolicy,
@@ -457,6 +458,9 @@ export function dmQueryPorts(deps: DmQueryDeps) {
                 name: anexo.name,
                 sizeBytes: anexo.size_bytes,
                 kind: anexo.kind,
+                // §13.6 regra 1 / B74 — o mesmo campo do `AttachmentDto` de §15.6.1, que
+                // §31.16.2 declara reusado sem alteração. Quem classifica é o núcleo.
+                revealMode: modoDeRevelacao(anexo.name),
                 hash: anexo.hash.toString('hex'),
                 ownerKey: anexo.owner_key.toString('hex'),
                 blobsCoreKey: anexo.blobs_core_key.toString('hex'),

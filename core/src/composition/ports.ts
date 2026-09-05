@@ -536,7 +536,7 @@ export function blobAttachmentPort(opts: {
     reveal(a) {
       const alvo = resolvido({ blobsCoreKey: a.blobsCoreKey, blobId: a.blobId });
       if (alvo === null) return { ok: false, code: 'E_NOT_DOWNLOADED' };
-      const permitido = opts.blobs.canReveal(a.blobsCoreKey, alvo.blobIdHex);
+      const permitido = opts.blobs.canReveal(a.blobsCoreKey, alvo.blobIdHex, a.mode);
       if (!permitido.allowed) return { ok: false, code: permitido.reason ?? 'E_NOT_DOWNLOADED' };
       const row = opts.blobs.cache.get(a.blobsCoreKey, alvo.blobIdHex);
       if (row?.path == null) return { ok: false, code: 'E_NOT_DOWNLOADED' };

@@ -38,7 +38,6 @@ interface PortaMensagem {
 interface MensagemPai {
   kind?: string;
   epoch?: number;
-  parsed?: unknown;
   code?: string;
   message?: string;
   /** §15.7 `capture.authorize` — a sessão de tela que o main quer autorizar a capturar. */
@@ -546,10 +545,13 @@ process.parentPort?.on('message', (e) => {
     bootQuandoPronto();
     return;
   }
-  if (data.kind === 'deeplink') {
-    log(`deep link recebido: ${JSON.stringify(data.parsed)}`);
-    return;
-  }
+  // **Não há ramo de `deeplink` aqui, e a emenda de 2026-09-05 em §3.5(2) diz por quê.**
+  // O destino do dado estruturado é o RENDERER: a regra 3 manda o link só posicionar a UI
+  // numa confirmação, e a prévia que ela mostra é `invite.resolve` /
+  // `query.resolveMessageLink` pela IPC-R — comandos que o núcleo já atende. Um segundo
+  // caminho pela IPC-M não tinha consumidor: o ramo que existia aqui só logava e voltava,
+  // e o `postMessage` do main o alimentava, então §3.5(2) era escrita sem efeito nas duas
+  // pontas. Quem precisa saber do link é quem o transforma em tela.
   if (data.kind === 'capture.authorize' && portaM !== null) {
     // §15.7 `capture.authorize` → `capture.decision`, e §17.4 emendado: quem cunhou o
     // `captureToken` é o núcleo do apresentador e quem o verifica é ele mesmo. Falha
@@ -596,18 +598,42 @@ function comPrazo<T>(promessa: Promise<T> | undefined, ms: number, oQue: string)
   ]);
 }
 
+/**
+ * **A rede sai por último, e isso é §18.7 passo 2, não estilo.**
+ *
+ * A ordem anterior era `pararRede()` → `runtime.shutdown()`, e ela tornava o dreno
+ * impossível de cumprir: `stop()` do transporte fecha os canais, esquece os muxes e chama
+ * `backend.destroy()`, então quando o `shutdown` chegava não havia par nenhum. A barreira
+ * de §18.7 conta **pares que confirmaram a cabeça** (`replicationConfirmations`, que lê o
+ * bitfield por par do replicador) e o `outbox.flush()` do primeiro giro precisa de canal
+ * vivo: sem rede, a contagem é fixa em zero, o alvo `min(3, memberCount − 1)` nunca é
+ * alcançado, e a espera consumia o orçamento inteiro para devolver `replicatedTo = 0`
+ * — o host saía do swarm ANTES de replicar, que é exatamente o que o passo 2 proíbe
+ * ("o host permanece no swarm até que … pares confirmem").
+ *
+ * Invertido, cada etapa fica com o que precisa: o `shutdown` corre com a rede de pé e
+ * devolve um `replicatedTo` que quer dizer alguma coisa; a parada do transporte vem depois,
+ * com o resto do orçamento, e o `finally` continua garantindo lock solto e saída.
+ */
 async function drenarESair(): Promise<void> {
   if (drenando) return;
   drenando = true;
   const t0 = Date.now();
+  const sobra = (): number => Math.max(500, ORCAMENTO_DE_DRENO_MS - (Date.now() - t0));
   try {
-    await comPrazo(pararRede?.(), ORCAMENTO_DE_DRENO_MS, 'parada da rede');
     if (runtime !== null) {
-      const resto = Math.max(500, ORCAMENTO_DE_DRENO_MS - (Date.now() - t0));
-      const resumo = await comPrazo(runtime.shutdown({ budgetMs: resto }), resto, 'dreno do núcleo');
-      if (resumo !== null) log(`draining: ${resumo.pendingOps} op(s) pendente(s), ${resumo.drainedMs} ms`);
+      const orcamento = sobra();
+      const resumo = await comPrazo(runtime.shutdown({ budgetMs: orcamento }), orcamento, 'dreno do núcleo');
+      if (resumo !== null) {
+        log(
+          `draining: ${resumo.pendingOps} op(s) pendente(s), ${resumo.replicatedTo} par(es) com a cabeça,` +
+            ` ${resumo.drainedMs} ms`,
+        );
+      }
+      await comPrazo(pararRede?.(), sobra(), 'parada da rede');
       process.parentPort?.postMessage({ e: 'drained', summary: resumo });
     } else {
+      await comPrazo(pararRede?.(), sobra(), 'parada da rede');
       process.parentPort?.postMessage({ e: 'drained', summary: null });
     }
   } catch (err) {

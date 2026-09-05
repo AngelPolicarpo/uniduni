@@ -5,7 +5,7 @@ import { Button } from "../../components/ui/Button";
 import { cn } from "../../lib/cn";
 import { anexarArquivo, avisarDigitacao, enviarMensagem } from "../../live/dm";
 import { formatFileSize } from "../../lib/format";
-import type { AttachmentDto } from "../../ipc/dto";
+import type { StagedAttachmentDto } from "../../ipc/dto";
 
 /**
  * O composer da conversa direta — e a consequência de tela da **ausência de outbox**.
@@ -41,7 +41,7 @@ export function DmComposer({
    * `blob.stage` na hora do clipe, não na hora do envio. O que este estado guarda é o
    * resultado do stage, e é ele que vai no `dm.send` — a tela nunca monta um `attachment`.
    */
-  const [anexo, setAnexo] = useState<AttachmentDto | null>(null);
+  const [anexo, setAnexo] = useState<StagedAttachmentDto | null>(null);
   const [anexando, setAnexando] = useState(false);
   const digitando = useRef(false);
 

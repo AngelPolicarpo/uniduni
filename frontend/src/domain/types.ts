@@ -193,6 +193,9 @@ export interface Reaction {
 
 export type AttachmentKind = "video" | "image" | "audio" | "document" | "other";
 
+/** §13.6 regra 1 — as três respostas possíveis para "o que dá para fazer com este arquivo". */
+export type RevealMode = "open" | "folder" | "none";
+
 export interface Attachment {
   id: string;
   name: string;
@@ -202,6 +205,15 @@ export interface Attachment {
   downloadProgress: number;
   availablePeers: number;
   hostAvailable: boolean;
+  /**
+   * §13.6 regra 1 — o que o cartão pode oferecer para este arquivo. Vem do núcleo, que é
+   * quem tem a tabela de extensões e quem recusaria a ação: `open` = "Abrir" e "Mostrar na
+   * pasta"; `folder` = só mostrar na pasta; `none` = nenhuma das duas (executável, regra 2).
+   *
+   * Opcional porque anexo em composição (ainda sem `origem`) não tem ação nenhuma a
+   * oferecer; ausente é lido como `folder`, que é o desfecho conservador.
+   */
+  revealMode?: RevealMode;
   /**
    * Origem no fio (§13.4) — presente só em anexo vindo do núcleo; as fixtures do mock
    * não a têm. É o que o card precisa para pedir o download e o reveal.

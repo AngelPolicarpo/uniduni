@@ -87,14 +87,46 @@ export function isInlineImageAllowed(extOrName: string): boolean {
   return INLINE_IMAGE_ALLOWLIST.has(e);
 }
 
+/**
+ * §13.6 regra 1 — quem pode ser aberto pelo handler do SO.
+ *
+ * **Emenda de 2026-09-05 (B73) — `archive` entra, e entra pela porta de §15.3.** As duas
+ * seções se contradiziam: a regra 1 listava só `image`/`audio`/`video`/`document`, e §15.3
+ * declara "`blob.reveal` de `archive`" na linha `main-confirmed`, com caixa nativa escrita
+ * ("Abrir este arquivo compactado?"). O caminho `main-confirmed` está construído nas duas
+ * pontas; o que o matava era esta função, e o resultado era uma linha normativa inalcançável
+ * e um bloqueio que não bloqueava nada: "Mostrar na pasta" leva à mesma pasta, e o duplo
+ * clique de lá **não tem confirmação nenhuma**. Recusar aqui não removia o risco — mudava-o
+ * para o caminho com menos aviso.
+ *
+ * O que **não** muda é a regra 2: executável continua bloqueado, inclusive para revelar. É
+ * ela que sustenta a segurança desta seção, e ela é anterior a esta decisão.
+ */
 export function isRevealAllowed(kind: BlobKindNumber, extOrName: string): boolean {
   const ext = extOf(extOrName) || extOrName.replace(/^\./, '');
   if (isExecutableExtension(ext)) return false; // §13.6 regra 2 — bloqueada até para revelar
-  if (kind === BLOB_KIND.other || kind === BLOB_KIND.archive) return false; // §13.6 regra 1 — só image/audio/video/document
+  if (kind === BLOB_KIND.other) return false; // §13.6 regra 1 — `other` só mostra na pasta
   // §13.6 regra 1 — apenas extensões da tabela: o kind declarado pelo remetente é consultável,
   // a extensão real do arquivo é que delimita a allowlist (troca de extensão é o ataque T-48)
-  const tabKind = EXT_TO_KIND.get(ext);
-  return tabKind !== undefined && tabKind !== BLOB_KIND.archive;
+  return EXT_TO_KIND.get(ext) !== undefined;
+}
+
+/**
+ * §13.6 — **o que esta tela pode oferecer para este arquivo**, decidido pela extensão real.
+ *
+ * Existe para que a UI não precise da tabela de extensões (`B74`). Ela tinha três caminhos e
+ * dois eram ruins: confiar no `kind` que veio no log é confiar em quem enviou (o ataque
+ * `T-48` que a regra 1 nomeia), e deduzir da extensão no renderer seria a terceira cópia
+ * desta tabela. O núcleo já é a autoridade — ele só passou a dizer o que decidiu.
+ *
+ * Vale **antes** do download: o nome do anexo está no log, e o arquivo local é gravado com a
+ * extensão preservada (regra 2), então a resposta não muda quando os bytes chegam.
+ */
+export type ModoDeRevelacao = 'open' | 'folder' | 'none';
+
+export function modoDeRevelacao(nameOrPath: string): ModoDeRevelacao {
+  if (isExecutableExtension(nameOrPath)) return 'none'; // regra 2 — nem revelar
+  return isRevealAllowed(kindFromFilename(nameOrPath), nameOrPath) ? 'open' : 'folder';
 }
 
 // ─── Nome de anexo — rejeitar, não sanitizar (§8.6) ─────────────────────────
@@ -1664,13 +1696,30 @@ export class BlobManager {
 
   // ── Reveal / abertura (§13.6) ─────────────────────────────────────────────
 
-  canReveal(blobsCoreKey: Buffer | string, blobIdHex: string): { allowed: boolean; reason?: string } {
+  /**
+   * §13.6 regras 1 e 2 — **e o modo importa**, desde a emenda de 2026-09-05.
+   *
+   * A regra 1 tem duas metades e só uma estava implementada: "`blob.reveal` (abrir com o
+   * handler do SO) é permitido apenas para `image`, `audio`, `video`, `document`" **e**
+   * "todo o resto oferece somente 'Mostrar na pasta'". A verificação era única e recusava
+   * os dois modos, então um `.zip` baixado não tinha ação nenhuma — nem a que a regra lhe
+   * promete pelo nome. Mostrar na pasta não entrega arquivo a handler nenhum: ele abre o
+   * gerenciador de arquivos com o item selecionado.
+   *
+   * A regra 2 continua acima das duas: executável é bloqueado **até para revelar**.
+   */
+  canReveal(
+    blobsCoreKey: Buffer | string,
+    blobIdHex: string,
+    mode: 'open' | 'folder' = 'open',
+  ): { allowed: boolean; reason?: string } {
     const key = typeof blobsCoreKey === 'string' ? Buffer.from(blobsCoreKey, 'hex') : blobsCoreKey;
     const row = this.cache.get(key, blobIdHex);
     if (row === null || row.state !== 'downloaded' || row.path === null) return { allowed: false, reason: 'E_NOT_DOWNLOADED' };
     const ext = extOf(row.path);
     const kind = kindFromExtension(ext);
     if (isExecutableExtension(ext)) return { allowed: false, reason: 'E_TYPE_NOT_OPENABLE' };
+    if (mode === 'folder') return { allowed: true };
     if (!isRevealAllowed(kind, ext)) return { allowed: false, reason: 'E_TYPE_NOT_OPENABLE' };
     return { allowed: true };
   }
