@@ -218,25 +218,42 @@ export class RelayVolunteer {
     const runtime = this.#runtimes.get(communityId);
     if (runtime === undefined || runtime.status === 'expired') return { ok: false, reason: 'not-active' };
     const decision = runtime.quota.tryAllocate(peerKeyHex, now);
-    // a janela pode ter rolado desde a suspensão: a quota limpa a própria marca
-    if (runtime.status === 'suspended' && runtime.quota.suspended === null) runtime.status = 'active';
+    this.#reconciliar(communityId, runtime);
     return decision;
   }
 
   releaseAllocation(communityId: string, peerKeyHex: KeyHex): void {
-    this.#runtimes.get(communityId)?.quota.release(peerKeyHex);
+    const runtime = this.#runtimes.get(communityId);
+    if (runtime === undefined) return;
+    runtime.quota.release(peerKeyHex);
+    this.#reconciliar(communityId, runtime);
   }
 
   /** Bytes retransmitidos no turno do voluntário; pode suspender (emite stateChanged). */
   recordRelayBytes(communityId: string, bytes: number, now: number = this.#clock.now()): void {
     const runtime = this.#runtimes.get(communityId);
     if (runtime === undefined || runtime.status === 'expired') return;
-    const before = runtime.quota.suspended;
     runtime.quota.recordBytes(bytes, now);
-    if (before === null && runtime.quota.suspended !== null && runtime.status === 'active') {
-      runtime.status = 'suspended';
-      this.#emitState(communityId);
-    }
+    this.#reconciliar(communityId, runtime);
+  }
+
+  /**
+   * `runtime.status` derivado de `quota.suspended`, emitindo só na transição (emenda de
+   * 2026-09-05).
+   *
+   * Três pontos mudavam a suspensão e só um emitia. A cura silenciosa no `tryAllocate` não
+   * avisava ninguém; `releaseAllocation` limpava a marca da cota e nem tocava
+   * `runtime.status`; a rolagem da janela de 24 h limpava a marca de dentro do `status()`,
+   * que continuava devolvendo `'suspended'`. A UI mostrava "suspenso" para um voluntário
+   * que já servia — e o contrário também: `suspendedReason` vinha `null` no mesmo objeto em
+   * que `status` dizia `suspended`. Agora a derivação é uma só e mora aqui.
+   */
+  #reconciliar(communityId: string, runtime: Runtime): void {
+    if (runtime.status === 'expired') return;
+    const alvo: VolunteerStatus = runtime.quota.suspended === null ? 'active' : 'suspended';
+    if (runtime.status === alvo) return;
+    runtime.status = alvo;
+    this.#emitState(communityId);
   }
 
   /** Snapshot para query/UI — `null` quando a comunidade não voluntaria. */
@@ -252,20 +269,18 @@ export class RelayVolunteer {
     | null {
     const runtime = this.#runtimes.get(communityId);
     if (runtime === undefined) return null;
+    // A janela pode ter rolado desde a última chamada: ler os bytes é o que a faz rolar, e
+    // o status tem de sair já reconciliado — senão o instantâneo contradiz a si mesmo.
+    const bytesInWindow = runtime.quota.bytesInWindow(now);
+    this.#reconciliar(communityId, runtime);
     return {
       status: runtime.status,
       relayPublicKeyHex: runtime.publicKey.toString('hex'),
       expiresAt: runtime.expiresAt,
-      bytesInWindow: runtime.quota.bytesInWindow(now),
+      bytesInWindow,
       activeAllocs: runtime.quota.activeAllocs,
       suspendedReason: runtime.quota.suspended,
     };
-  }
-
-  #runtimeServing(communityId: string): Runtime | undefined {
-    const runtime = this.#runtimes.get(communityId);
-    if (runtime === undefined) return undefined;
-    return runtime.status === 'active' ? runtime : undefined;
   }
 
   #emitState(communityId: string): void {

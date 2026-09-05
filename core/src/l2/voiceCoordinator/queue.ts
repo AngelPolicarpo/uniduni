@@ -125,12 +125,34 @@ export class FilaKaraoké {
   sair(channelId: string, keyHex: string): void {
     const f = this.#filas.get(channelId);
     if (f === undefined) return;
-    const antes = JSON.stringify(this.#resumo(f));
+    const antes = this.#resumo(f);
     f.itens = f.itens.filter((i) => i.keyHex !== keyHex);
     if (f.turno?.keyHex === keyHex) {
       this.#promover(channelId, f);
     }
-    if (JSON.stringify(this.#resumo(f)) !== antes) this.#emitir(channelId);
+    if (this.#resumo(f) !== antes) this.#emitir(channelId);
+  }
+
+  /**
+   * §16.4 (emenda de 2026-09-05) — a fila contra o roster VIVO do canal.
+   *
+   * A saída explícita (`voiceQueueLeave`) era o **único** caminho que chamava `sair`. Ban,
+   * kick, `voiceLeave` e queda de conexão tiram do roster e não tocavam a fila: o ausente
+   * seguia como titular, e como o gate de transmissão de §17.4 é "só o titular fala", o
+   * canal inteiro ficava mudo por imposição até `endsAt` vencer — e o `ticar` promovia o
+   * próximo fantasma, encadeando turnos vazios. `ticar` não podia resolver: ele só sabe se
+   * a SESSÃO vive, não quem está nela.
+   *
+   * Idempotente e silenciosa quando nada muda — ela é chamada a cada `voice.roster`, e a
+   * própria imposição de turno emite um roster novo.
+   */
+  reconciliar(channelId: string, presentes: ReadonlySet<string>): void {
+    const f = this.#filas.get(channelId);
+    if (f === undefined) return;
+    const antes = this.#resumo(f);
+    f.itens = f.itens.filter((i) => presentes.has(i.keyHex));
+    if (f.turno !== null && !presentes.has(f.turno.keyHex)) this.#promover(channelId, f);
+    if (this.#resumo(f) !== antes) this.#emitir(channelId);
   }
 
   /**

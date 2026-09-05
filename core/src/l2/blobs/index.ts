@@ -238,7 +238,11 @@ export class TicketStore {
     const t = this.#tickets.get(ticketId);
     if (t === undefined || t.used) throw Object.assign(new Error('Ticket inválido ou já usado'), { code: 'E_TICKET_INVALID' });
     if (this.#clock() - t.createdAt > this.#ttlMs) {
-      this.#tickets.delete(ticketId);
+      // **O vencido fica no mapa** (emenda de 2026-09-05). Apagá-lo aqui tornava a segunda
+      // tentativa indistinguível de "ticket de outro processo", e é exatamente essa
+      // distinção que o `stage` usa para decidir se pode reconstruir o ticket da linha de
+      // staging: uma retentativa do renderer passava pelo caminho de retomada e furava a
+      // TTL. O custo de manter é um objeto por anexo escolhido na vida do processo.
       throw Object.assign(new Error('Ticket expirado'), { code: 'E_TICKET_INVALID' });
     }
     if (expectedCommunityId !== undefined && t.communityId !== expectedCommunityId) {
@@ -761,6 +765,14 @@ export class BlobManager {
   readonly #startInterval: (fn: () => void, ms: number) => () => void;
   /** Leitores remotos em uso agora (download em voo) — o GC de §22.4 não fecha estes. */
   readonly #emUso = new Map<string, number>();
+  /**
+   * §13.4 — downloads cancelados em voo (`<coreHex>/<blobIdHex>`). Em memória de propósito:
+   * o cancelamento é do download DESTA execução; o estado durável já é `cancelled` no cache,
+   * e a retomada de boot é decisão do `resumeOnBoot`, não desta marca.
+   */
+  readonly #cancelados = new Set<string>();
+  /** §13.2 — `ticketId` com um `stage` em voo. Uso único vale contra a concorrência também. */
+  readonly #stagingEmVoo = new Set<string>();
   /** Core de blobs local por comunidade (§13.1) — quem anuncia o tópico e escreve. */
   readonly #locais = new Map<string, BlobsWriterPort>();
   /**
@@ -994,26 +1006,57 @@ export class BlobManager {
     const stagingRow = this.staging.get(ticketId);
     if (stagingRow === null) throw Object.assign(new Error('Ticket não encontrado'), { code: 'E_TICKET_INVALID' });
     if (stagingRow.state === 'done') throw Object.assign(new Error('Ticket já usado'), { code: 'E_TICKET_INVALID' });
+    /**
+     * **Uso único também vale para o stage CONCORRENTE** (emenda de 2026-09-05).
+     *
+     * A guarda de cima lê `state === 'done'`, e `markDone` só roda no fim: dois `stage` do
+     * mesmo ticket disparados juntos (duplo clique em "anexar") passavam os dois. Um vencia
+     * o `consume`, o outro caía na retomada abaixo, e os DOIS appendavam o arquivo inteiro
+     * no core — o segundo `markDone` sobrescrevia `blobRanges` e os blocos do primeiro
+     * viravam lixo que nenhum `core.clear` de §22.4 sabe podar. Uma linha de staging tem um
+     * stage por vez, e o segundo é recusado como o ticket já usado que ele é.
+     */
+    if (this.#stagingEmVoo.has(ticketId)) throw Object.assign(new Error('Ticket já usado'), { code: 'E_TICKET_INVALID' });
+    this.#stagingEmVoo.add(ticketId);
+    try {
+      return await this.#stage(ticketId, stagingRow, opts);
+    } finally {
+      this.#stagingEmVoo.delete(ticketId);
+    }
+  }
 
+  async #stage(
+    ticketId: string,
+    stagingRow: StagingRow,
+    opts: { blobsCoreKey?: Buffer; identitySeed?: Buffer; communityId?: string },
+  ): Promise<StageResult> {
     // Valida ticket store (TTL, uso único, escopo)
     let ticket: StagingTicket;
     try {
       ticket = this.tickets.consume(ticketId, stagingRow.communityId ?? undefined);
     } catch (e) {
-      // Se já foi consumido no ticket store mas staging ainda pendente, tenta usar dados do staging
-      if (stagingRow.state === 'pending' || stagingRow.state === 'writing') {
-        ticket = {
-          ticketId: stagingRow.ticketId,
-          path: stagingRow.path,
-          sizeBytes: stagingRow.sizeBytes ?? 0,
-          communityId: stagingRow.communityId ?? '',
-          createdAt: stagingRow.createdAt ?? this.#clock(),
-          name: stagingRow.name ?? path.basename(stagingRow.path),
-          kind: (stagingRow.kind as BlobKindNumber) ?? BLOB_KIND.other,
-        };
-      } else {
-        throw e;
-      }
+      /**
+       * **A retomada é só para o ticket que este processo não conhece** (emenda de
+       * 2026-09-05). `TicketStore` é memória e a linha de staging é disco: depois de um
+       * restart, retomar um `pending`/`writing` é §13.5 funcionando, e a janela que o
+       * governa é a órfã de 24 h da linha, não a TTL do ticket.
+       *
+       * Antes, QUALQUER falha do `consume` caía aqui — inclusive vencido e já usado. A TTL
+       * de 15 min era inócua sempre que a linha sobrevivesse: bastava o renderer guardar um
+       * `ticketId` velho e encenar o `stage` horas depois. Ticket que este processo conhece
+       * e recusou é recusa, e o motivo dela é o que sobe.
+       */
+      if (this.tickets.get(ticketId) !== undefined) throw e;
+      if (stagingRow.state !== 'pending' && stagingRow.state !== 'writing') throw e;
+      ticket = {
+        ticketId: stagingRow.ticketId,
+        path: stagingRow.path,
+        sizeBytes: stagingRow.sizeBytes ?? 0,
+        communityId: stagingRow.communityId ?? '',
+        createdAt: stagingRow.createdAt ?? this.#clock(),
+        name: stagingRow.name ?? path.basename(stagingRow.path),
+        kind: (stagingRow.kind as BlobKindNumber) ?? BLOB_KIND.other,
+      };
     }
 
     const filePath = ticket.path;
@@ -1261,6 +1304,9 @@ export class BlobManager {
         // hash diverge ou tamanho diverge — cai no fluxo de verificação que marcará corrupt
       } catch {}
     }
+    // Um `cancel` de um download ANTERIOR não cancela este: a marca é por tentativa, e é
+    // esta linha que a zera — antes dos dois caminhos (rede e busca local).
+    this.#cancelados.delete(`${blobsCoreKey.toString('hex')}/${blobIdHex}`);
     this.cache.upsert({ blobsCoreKey, blobIdHex, state: 'queued', declaredSize, bytesDownloaded: 0 });
 
     // swarm.join(discoveryKey) se ainda não estiver — §14.1
@@ -1325,6 +1371,9 @@ export class BlobManager {
     // Marca de origem no Windows (§13.6 regra 3) — só onde SO suportar; no Linux não aplica
     // Mock: não tenta Zone.Identifier, apenas registra que não aplicou em Linux
 
+    if (this.#cancelado(blobsCoreKey.toString('hex'), blobIdHex)) {
+      throw Object.assign(new Error('Download cancelado'), { code: 'E_CANCELLED' });
+    }
     this.cache.setState(blobsCoreKey, blobIdHex, 'downloaded', { bytesDownloaded: data.length, path: destPath, declaredSize });
     return { path: destPath };
   }
@@ -1350,6 +1399,7 @@ export class BlobManager {
       return await this.#baixarFaixa(reader, opts);
     } finally {
       pararProgresso();
+      this.#cancelados.delete(`${chaveHex}/${opts.blobIdHex}`);
       const n = (this.#emUso.get(chaveHex) ?? 1) - 1;
       if (n <= 0) this.#emUso.delete(chaveHex);
       else this.#emUso.set(chaveHex, n);
@@ -1430,19 +1480,32 @@ export class BlobManager {
     const start = blobId.blockOffset;
     const end = blobId.blockOffset + Math.max(1, blobId.blockLength) - 1;
 
+    /**
+     * §13.4 — a desistência de quem cancelou, conferida em cada ponto de retomada. Só aqui
+     * o motor volta a ter o controle: entre um `await` e o seguinte, `cancelDownload` pode
+     * ter chegado pela IPC. Cancelado não sobrescreve estado nem emite desfecho — quem
+     * cancelou já viu "cancelado", e `blob.completed` por cima disso era a mentira do achado.
+     */
+    const desistiu = (): boolean => this.#cancelado(chaveHex, blobIdHex);
+    const cancelado = (): Error => Object.assign(new Error('Download cancelado'), { code: 'E_CANCELLED' });
+    if (desistiu()) throw cancelado();
+
     try {
       await this.#comPrazo(reader.downloadRange(start, end));
-    } catch {
+    } catch (e) {
+      if (desistiu()) throw cancelado();
       // §14.5 — sem avanço dentro do prazo é `unavailable`, estado nomeado e desenhado.
       this.cache.setState(blobsCoreKey, blobIdHex, 'unavailable');
       this.#emitir({ topic: 'blob.unavailable', data: { blobsCoreKey: chaveHex, blobIdHex }, ...rota });
-      throw Object.assign(new Error('Nenhum par entregou a faixa'), { code: 'E_NO_PEERS' });
+      throw Object.assign(new Error('Nenhum par entregou a faixa'), { code: 'E_NO_PEERS', cause: e });
     }
+    if (desistiu()) throw cancelado();
 
     const partes: Buffer[] = [];
     let recebidos = 0;
     for (let seq = start; seq <= end; seq++) {
       const bloco = await reader.getBlock(seq);
+      if (desistiu()) throw cancelado();
       if (bloco === null) {
         this.cache.setState(blobsCoreKey, blobIdHex, 'unavailable');
         this.#emitir({ topic: 'blob.unavailable', data: { blobsCoreKey: chaveHex, blobIdHex }, ...rota });
@@ -1472,10 +1535,15 @@ export class BlobManager {
       throw Object.assign(new Error('Hash diverge'), { code: 'E_BLOB_CORRUPT', cause: 'hash' });
     }
 
+    if (desistiu()) throw cancelado();
     const destDir = path.join(this.#dataDir, blobsCoreKey.toString('hex'));
     await fs.promises.mkdir(destDir, { recursive: true });
     const destPath = path.join(destDir, `${blobIdHex}-${name}`);
     await fs.promises.writeFile(destPath, bytes);
+    if (desistiu()) {
+      await fs.promises.rm(destPath, { force: true }).catch(() => {});
+      throw cancelado();
+    }
 
     this.cache.setState(blobsCoreKey, blobIdHex, 'downloaded', { bytesDownloaded: bytes.byteLength, path: destPath, declaredSize });
     this.#emitir({ topic: 'blob.completed', data: { blobsCoreKey: chaveHex, blobIdHex, path: destPath }, ...rota });
@@ -1517,9 +1585,24 @@ export class BlobManager {
     }
   }
 
+  /**
+   * `blob.cancel` — e ele **cancela** desde 2026-09-05.
+   *
+   * Antes gravava `state = 'cancelled'` no manifest e mais nada: nenhum ponto do motor lia
+   * esse estado, o download seguia consumindo banda até o fim, gravava o arquivo e emitia
+   * `blob.completed` por cima do "cancelado" que a tela já mostrava. O cancelamento agora é
+   * uma marca em memória que os pontos de retomada do `#baixarFaixa` consultam, e é ela que
+   * impede os desfechos posteriores de sobrescrever o estado.
+   */
   cancelDownload(blobsCoreKey: Buffer | string, blobIdHex: string): void {
     const key = typeof blobsCoreKey === 'string' ? Buffer.from(blobsCoreKey, 'hex') : blobsCoreKey;
+    this.#cancelados.add(`${key.toString('hex')}/${blobIdHex}`);
     this.cache.setState(key, blobIdHex, 'cancelled');
+  }
+
+  /** O download deste blob foi cancelado enquanto estava em voo? */
+  #cancelado(chaveHex: string, blobIdHex: string): boolean {
+    return this.#cancelados.has(`${chaveHex}/${blobIdHex}`);
   }
 
   getDownloadState(blobsCoreKey: Buffer | string, blobIdHex: string): BlobCacheState | null {

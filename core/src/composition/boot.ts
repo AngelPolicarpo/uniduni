@@ -1452,6 +1452,12 @@ export class CoreRuntime {
         },
         onRosterChanged: (snapshot: RosterSnapshot) => {
           const alvos = snapshot.participants.map((p) => p.keyHex);
+          // §16.4 — a fila é da SESSÃO: quem saiu do roster sai dela junto. O único
+          // chamador de `fila.sair` era o comando explícito do próprio usuário, então
+          // banido, expulso, quem saiu por `voiceLeave` e quem simplesmente desligou o
+          // computador continuavam na fila — e, como titulares, silenciavam o canal inteiro
+          // por imposição de turno até o prazo vencer, promovendo o fantasma seguinte.
+          fila.reconciliar(snapshot.channelId, new Set(alvos));
           empurra('voice.roster', { sessionId: snapshot.sessionId, channelId: snapshot.channelId, participants: snapshot.participants }, alvos);
           // §15.5 `voice.occupancyChanged` — declarado para "alimentar a sidebar" (RT-05) e
           // nunca implementado: quem NÃO está na chamada não via ninguém no canal de voz
@@ -1476,6 +1482,12 @@ export class CoreRuntime {
           const fim = targets.find((t) => t.reason === 'channel-deleted' || t.reason === 'community-ended');
           if (fim !== undefined) empurra('voice.failed', { reason: fim.reason, sessionId: fim.sessionId }, fim.recipients);
           for (const t of targets) {
+            // §17.3/§17.4 — a revogação fecha o **transporte**, não só a sinalização. Os
+            // dois caminhos relayados que não autenticam (ChannelData de saída, entrada
+            // pela porta relayada) só conferiam `alloc.permissions`, que nunca era podada:
+            // o banido seguia recebendo e mandando mídia pelo relay do host, na cota dele,
+            // até a alocação vencer sozinha em `TURN_ALLOC_TTL_MS`.
+            this.#mediaHost?.revogar(t.targetKeyHex);
             // §17.4 — **a todos os participantes**, não só ao alvo. Quem fica é quem tem de
             // fechar a `RTCPeerConnection` com a chave revogada; mandando só ao alvo, o
             // banido saía da lista do host e continuava recebendo mídia de todo mundo, que
@@ -2379,6 +2391,13 @@ export async function bootCore(deps: BootDeps): Promise<CoreRuntime> {
           if (st !== undefined) metricas.setGauge(`replication.state.${serie}`, estados[st] ?? -1);
         }
         logger.info('metrics', 'flush');
+      },
+      // §17.3/§22.1 (emenda de 2026-09-05) — a varredura de alocações do TURN. O
+      // `MediaServer.sweep` existia desde a fase 7 **sem nenhum chamador**: só o teste o
+      // acionava, e em produto cada alocação vencida deixava a socket relayada aberta até o
+      // processo morrer, com o 5-tuple do cliente trancado em 437.
+      'media.sweep': () => {
+        runtime.mediaHost?.sweep();
       },
     },
   });

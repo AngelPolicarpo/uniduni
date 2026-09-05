@@ -281,3 +281,61 @@ describe('cota do TURN restrito (RELAY_MAX_ALLOCS / RELAY_MAX_BYTES_PER_DAY)', (
     assert.equal(r.volunteer.status('com')?.bytesInWindow, 0);
   });
 });
+
+// ─── Precedência de suspensão e status coerente (correções de 2026-09-05) ───────────────
+
+describe('cota: o teto de VOLUME tem precedência sobre a recusa por alocação (§17.7)', () => {
+  it('estourar bytes com alloc-limit de pé não é apagado pela liberação de uma alocação', async () => {
+    const r = rig({ maxAllocs: 1, maxBytesPerDay: 1000 });
+    r.consent.set('com', 'accepted', { remember: true });
+    await r.volunteer.enable({ communityId: 'com' });
+
+    assert.equal(r.volunteer.tryAllocate('com', hexDe('p1')).ok, true);
+    assert.deepEqual(r.volunteer.tryAllocate('com', hexDe('p2')), { ok: false, reason: 'alloc-limit' });
+
+    // O par admitido segue transferindo e estoura o teto diário ENQUANTO a marca de
+    // alloc-limit ocupa o campo. Antes, a violação de volume nem chegava a ser registrada.
+    r.volunteer.recordRelayBytes('com', 1200);
+    assert.equal(r.volunteer.status('com')?.suspendedReason, 'bytes-quota');
+
+    // Terminada a alocação, o campo era limpo e o nó voltava a admitir acima do teto.
+    r.volunteer.releaseAllocation('com', hexDe('p1'));
+    assert.deepEqual(r.volunteer.tryAllocate('com', hexDe('p2')), { ok: false, reason: 'bytes-quota' });
+    assert.equal(r.volunteer.status('com')?.status, 'suspended');
+  });
+});
+
+describe('status do voluntário não mente sobre estar suspenso (§17.7)', () => {
+  it('liberar a alocação que suspendeu cura o status e emite `relay.stateChanged`', async () => {
+    const r = rig({ maxAllocs: 1 });
+    r.consent.set('com', 'accepted', { remember: true });
+    await r.volunteer.enable({ communityId: 'com' });
+    r.volunteer.tryAllocate('com', hexDe('p1'));
+    r.volunteer.tryAllocate('com', hexDe('p2')); // recusado: marca alloc-limit
+    assert.equal(r.volunteer.status('com')?.status, 'suspended');
+
+    r.stateChanges.length = 0;
+    r.volunteer.releaseAllocation('com', hexDe('p1'));
+    // A UI mostrava "suspenso" para um voluntário que já servia: `releaseAllocation`
+    // limpava a marca na cota e nunca tocava `runtime.status`, nem emitia.
+    assert.equal(r.volunteer.status('com')?.status, 'active');
+    assert.equal(r.stateChanges.length, 1);
+    assert.equal(r.stateChanges[0]?.enabled, true);
+  });
+
+  it('a virada da janela deixa o instantâneo coerente consigo mesmo', async () => {
+    const r = rig({ maxBytesPerDay: 500 });
+    r.consent.set('com', 'accepted', { remember: true });
+    await r.volunteer.enable({ communityId: 'com' });
+    r.volunteer.recordRelayBytes('com', 500);
+    assert.equal(r.volunteer.status('com')?.status, 'suspended');
+
+    r.clock.advance(24 * 60 * 60 * 1000 + 1);
+    const s = r.volunteer.status('com')!;
+    // `status` e `suspendedReason` saíam do mesmo objeto contando histórias diferentes:
+    // ler os bytes rolava a janela e limpava a marca, e `runtime.status` ficava para trás.
+    assert.equal(s.status, 'active');
+    assert.equal(s.suspendedReason, null);
+    assert.equal(s.bytesInWindow, 0);
+  });
+});

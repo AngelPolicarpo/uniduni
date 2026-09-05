@@ -6,7 +6,8 @@
 //
 // Decisões já validadas pelo G7 (poc/poc-08-g7/out/gate-G7/gate-G7.json), reutilizadas
 // aqui como decisões, não como código:
-//   - demux na ordem ChannelData (0x40–0x7F) → regra estrutural de §17.3 → resto é UDX;
+//   - demux na ordem ChannelData (0x40–0x7F **com Length coerente**, RFC 5766 §11.4) →
+//     regra estrutural de §17.3 → resto é UDX;
 //   - Binding RFC 5389 com XOR-MAPPED-ADDRESS;
 //   - subconjunto TURN RFC 5766 (Allocate/Refresh/CreatePermission/Send/Data/ChannelBind)
 //     com credencial long-term (MESSAGE-INTEGRITY HMAC-SHA1 sobre chave
@@ -44,8 +45,19 @@ const ATTR_LIFETIME = 0x000d;
 const ATTR_DATA = 0x0013;
 const ATTR_XOR_RELAYED = 0x0016;
 const ATTR_REQUESTED_TRANSPORT = 0x0019;
+/** RFC 5766 §14.1 — CHANNEL-NUMBER. **NÃO** é 0x0006: esse é USERNAME (RFC 5389 §15.3). */
+const ATTR_CHANNEL_NUMBER = 0x000c;
+/** RFC 5389 §15.5 — o único atributo que pode SUCEDER o MESSAGE-INTEGRITY. */
+const ATTR_FINGERPRINT = 0x8028;
 
 const NONCE_VALID_MS = 60 * 60 * 1000;
+
+/**
+ * RFC 5766 §9 — a permissão de um par vive 5 minutos e é renovada por cada
+ * `CreatePermission`/`ChannelBind` que a reafirme. O `Set` sem prazo que existia aqui
+ * concedia acesso PERMANENTE ao endereço relayado até a alocação inteira vencer.
+ */
+const PERMISSION_LIFETIME_MS = 300_000;
 
 /** Defaults de §27.2; a config L0 resolve os valores desta instalação. */
 const DEFAULTS = {
@@ -84,11 +96,21 @@ export function isStructurallyStun(buf: Uint8Array): boolean {
  * ChannelData ocupa o primeiro byte 0x40–0x7F (bits `01`) — sob a regra bruta de §17.3
  * cairia no UDX; na socket compartilhada ele é roteado ao TURN antes do fallback UDX.
  * Ordem validada em G7 (C2/C3, zero desvios em corpus UDX real + adversarial).
+ *
+ * **O primeiro byte sozinho não classifica (emenda de 2026-09-05).** Um quarto dos
+ * datagramas UDX cai nessa faixa por acaso, e o demux os dava por consumidos pelo TURN:
+ * ~25 % de perda artificial em toda replicação da comunidade, indistinguível de rede ruim.
+ * O que separa os dois é o campo Length do cabeçalho, que RFC 5766 §11.4 obriga a casar com
+ * o datagrama ("The Length field ... MUST match the length of the UDP message minus 4"). O
+ * padding a múltiplo de quatro não é exigido sobre UDP, mas **pode** vir: até 3 bytes de
+ * folga são aceitos, mais que isso é UDX.
  */
 export function isChannelData(buf: Uint8Array): boolean {
   if (buf.length < 4) return false;
-  const first = view(buf)[0]!;
-  return first >= 0x40 && first <= 0x7f;
+  const b = view(buf);
+  if (b[0]! < 0x40 || b[0]! > 0x7f) return false;
+  const folga = buf.length - 4 - b.readUInt16BE(2);
+  return folga >= 0 && folga < 4;
 }
 
 export type InboundClass = 'stun' | 'channel-data' | 'udx';
@@ -183,13 +205,19 @@ export function decode(buf: Uint8Array): DecodedStun | null {
     const alen = b.readUInt16BE(off + 2);
     if (off + 4 + alen > end) return null;
     const value = b.subarray(off + 4, off + 4 + alen);
-    if (type === TURN_CHANNEL_BIND && at === ATTR_USERNAME && alen === 4) {
-      // CHANNEL-NUMBER compartilha o tipo 0x0006 com USERNAME; o contexto é o método
+    if (at === ATTR_CHANNEL_NUMBER && alen === 4) {
+      // RFC 5766 §14.1 — CHANNEL-NUMBER é 0x000C, 2 B de canal + 2 B RFFU. A redação
+      // anterior o lia de 0x0006 "porque compartilha o tipo com USERNAME": não compartilha,
+      // 0x0006 É o USERNAME. Todo ChannelBind de cliente WebRTC real voltava 400.
       out.channelNumber = value.readUInt16BE(0);
     } else if (at === ATTR_USERNAME) {
       out.username = value.toString('utf8');
     } else if (at === ATTR_MESSAGE_INTEGRITY && alen === 20) {
       out.hasMessageIntegrity = true;
+      // RFC 5389 §15.4 — nada depois do MESSAGE-INTEGRITY conta, exceto FINGERPRINT. Ler
+      // adiante é aceitar atributo que o HMAC não cobre: era por onde um MITM anexava um
+      // `XOR-PEER-ADDRESS` forjado na cauda de um pedido TURN legitimamente assinado.
+      break;
     } else if (at === ATTR_ERROR_CODE && alen >= 4) {
       out.errorCode = value[2]! * 100 + value[3]!;
     } else if (at === ATTR_REALM) {
@@ -310,7 +338,16 @@ export function addMessageIntegrity(buf: Buffer, key: Buffer): Buffer {
   return Buffer.concat([head, buf.subarray(20), attr(ATTR_MESSAGE_INTEGRITY, mac)]);
 }
 
-/** Verifica MESSAGE-INTEGRITY onde quer que o atributo esteja (hash termina antes dele). */
+/**
+ * Verifica MESSAGE-INTEGRITY onde quer que o atributo esteja (hash termina antes dele).
+ *
+ * **E exige que ele seja o ÚLTIMO** (emenda de 2026-09-05), como RFC 5389 §15.4 manda: só
+ * FINGERPRINT (§15.5) pode sucedê-lo. Sem essa conferência, o HMAC provava o prefixo e não a
+ * mensagem: qualquer intermediário anexava atributos na cauda, corrigia o comprimento do
+ * cabeçalho externo — que não entra no MAC, porque o cálculo o reescreve — e o pedido passava
+ * adulterado. O `decode` para no MI pelo mesmo motivo; as duas guardas são a mesma regra
+ * aplicada nos dois lados (quem lê e quem autentica).
+ */
 export function verifyMessageIntegrity(buf: Uint8Array, key: Buffer): boolean {
   const b = view(buf);
   let off = 20;
@@ -325,6 +362,12 @@ export function verifyMessageIntegrity(buf: Uint8Array, key: Buffer): boolean {
     off += 4 + alen + ((4 - (alen % 4)) % 4);
   }
   if (miOff < 0) return false;
+  const depois = miOff + 24;
+  if (depois !== b.length) {
+    // O único sucessor legítimo: FINGERPRINT (0x8028), 4 B de valor, e nada além dele.
+    if (depois + 8 !== b.length) return false;
+    if (b.readUInt16BE(depois) !== ATTR_FINGERPRINT || b.readUInt16BE(depois + 2) !== 4) return false;
+  }
   const head = Buffer.from(b.subarray(0, 20));
   head.writeUInt16BE(miOff - 20 + 24, 2);
   const expected = crypto.createHmac('sha1', key).update(Buffer.concat([head, b.subarray(20, miOff)])).digest();
@@ -572,7 +615,8 @@ interface Allocation {
   readonly key: Buffer; // chave long-term para MI das respostas deste membro
   readonly relayPort: RelayPort;
   expiresAt: number;
-  readonly permissions: Set<string>; // IP do par (RFC 5766 §9 ignora a porta)
+  /** IP do par (RFC 5766 §9 ignora a porta) → instante em que a permissão vence. */
+  readonly permissions: Map<string, number>;
   readonly channels: Map<number, string>;
   readonly peersByChannel: Map<string, number>;
   bytesRelayed: number;
@@ -673,14 +717,41 @@ export class MediaServer {
     return 'stun';
   }
 
-  /** Expira alocações vencidas e devolve quantas fechou. */
+  /**
+   * Expira alocações vencidas — e as de quem já não está na sessão — e devolve quantas
+   * fechou. Sem cadência que a chame, cada alocação vencida vazava um socket UDP até o fim
+   * do processo, e o cliente cuja alocação venceu levava **437 para sempre** do mesmo
+   * 5-tuple (o `#handleAllocate` via o registro morto e o tratava como conflito).
+   *
+   * A perna do roster é a rede de segurança de §17.4: quem foi banido perde a alocação no
+   * ato pelo `revoke`, e esta varredura cobre o caso em que o evento não veio.
+   */
   sweep(now = this.#now()): number {
     let n = 0;
     for (const alloc of [...this.#allocations.values()]) {
-      if (alloc.expiresAt <= now) {
+      const naSessao = this.#sessionPeerKeys(alloc.sessionId).has(alloc.memberKeyHex);
+      if (alloc.expiresAt <= now || !naSessao) {
         this.#terminate(alloc);
         n++;
       }
+    }
+    return n;
+  }
+
+  /**
+   * §17.4 — a revogação fecha o caminho de mídia do alvo, e não só o de sinalização.
+   *
+   * Ban, kick, timeout, saída e queda tiram o par do roster; sem isto a alocação TURN dele
+   * sobrevivia até `TURN_ALLOC_TTL_MS` (10 min), e os dois caminhos que não autenticam
+   * (ChannelData de saída e entrada pela porta relayada) continuavam entregando mídia
+   * relayada a quem acabou de ser removido, à custa da máquina de quem hospeda.
+   */
+  revoke(memberKeyHex: string): number {
+    let n = 0;
+    for (const alloc of [...this.#allocations.values()]) {
+      if (alloc.memberKeyHex !== memberKeyHex) continue;
+      this.#terminate(alloc);
+      n++;
     }
     return n;
   }
@@ -800,9 +871,16 @@ export class MediaServer {
       this.#sendAuthed(encodeTurnError(dec.type, dec.txId, 437, 'Allocation Mismatch'), auth.key, addr);
       return;
     }
-    if (this.#allocations.has(clientAddr)) {
-      this.#sendAuthed(encodeTurnError(dec.type, dec.txId, 437, 'Allocation Mismatch'), auth.key, addr);
-      return;
+    const anterior = this.#allocations.get(clientAddr);
+    if (anterior !== undefined) {
+      if (anterior.expiresAt > now) {
+        this.#sendAuthed(encodeTurnError(dec.type, dec.txId, 437, 'Allocation Mismatch'), auth.key, addr);
+        return;
+      }
+      // Alocação VENCIDA não é conflito: é lixo que a varredura ainda não recolheu. Tratá-la
+      // como conflito trancava o 5-tuple do cliente em 437 até o host reiniciar — o Refresh
+      // que se perde depois do vencimento não tinha volta nenhuma.
+      this.#terminate(anterior);
     }
     const decision = this.#controls.allocate(auth.peerKeyHex, now);
     if (!decision.ok) {
@@ -829,7 +907,7 @@ export class MediaServer {
           key: auth.key,
           relayPort,
           expiresAt: decision.expiresAt,
-          permissions: new Set(),
+          permissions: new Map(),
           channels: new Map(),
           peersByChannel: new Map(),
           bytesRelayed: 0,
@@ -900,7 +978,7 @@ export class MediaServer {
       this.#sendAuthed(encodeTurnError(dec.type, dec.txId, 403, 'Forbidden'), auth.key, addr);
       return;
     }
-    alloc.permissions.add(peer.host);
+    alloc.permissions.set(peer.host, now + PERMISSION_LIFETIME_MS);
     this.counters.permissionsGranted++;
     // A porta vem no atributo mesmo sem valer para a permissão, e é ela que o primer usa:
     // é o único instante em que o host sabe para onde furar o próprio NAT.
@@ -943,7 +1021,7 @@ export class MediaServer {
       alloc.channels.set(channel, peerKey);
       alloc.peersByChannel.set(peerKey, channel);
     }
-    alloc.permissions.add(peer.host);
+    alloc.permissions.set(peer.host, now + PERMISSION_LIFETIME_MS);
     this.#primeRelayTo(alloc.relayPort, peer);
     this.counters.channelBinds++;
     this.#sendAuthed(encodeChannelBindSuccess(dec.txId), auth.key, addr);
@@ -982,7 +1060,7 @@ export class MediaServer {
       // RFC 5766 §10: o endereço relayado é público, e sem esta checagem qualquer máquina
       // da internet que o descubra faz o host entregar bytes ao cliente por ela. A
       // permissão é a mesma do caminho de saída, e por IP pelo mesmo §9.
-      if (!alloc.permissions.has(from.host)) {
+      if (!this.#permitido(alloc, from.host, now)) {
         this.counters.notPermittedDropped++;
         return;
       }
@@ -1014,7 +1092,7 @@ export class MediaServer {
 
   /** Saída relayada para um par: permissão, taxa e teto de sessão (§17.3). */
   #relayOut(alloc: Allocation, payload: Buffer, peer: MediaAddr, now: number): void {
-    if (!alloc.permissions.has(peer.host)) {
+    if (!this.#permitido(alloc, peer.host, now)) {
       this.counters.notPermittedDropped++;
       return;
     }
@@ -1033,6 +1111,26 @@ export class MediaServer {
     alloc.relayPort.send(new Uint8Array(payload), peer);
   }
 
+  /**
+   * A permissão de §9 vale para ESTE IP e ainda não venceu. Vencida sai do mapa no ato: o
+   * caminho quente é também o que poda, e não há segunda cadência para isto.
+   */
+  #permitido(alloc: Allocation, host: string, now: number): boolean {
+    const ate = alloc.permissions.get(host);
+    if (ate === undefined) return false;
+    if (ate > now) return true;
+    alloc.permissions.delete(host);
+    // O canal é por `host:port` (§11) e a permissão por IP (§9) — duas chaves, de propósito.
+    // Sem a permissão o canal não tem para onde entregar: os que apontam para este IP saem
+    // junto, senão ficaria um destino que §9 acabou de negar.
+    for (const [peerKey, canal] of [...alloc.peersByChannel]) {
+      if (peerKey.slice(0, peerKey.lastIndexOf(':')) !== host) continue;
+      alloc.peersByChannel.delete(peerKey);
+      alloc.channels.delete(canal);
+    }
+    return false;
+  }
+
   /** Balde de tokens por alocação: rajada de 1 s da taxa contratada (§27.2). */
   #admitRate(alloc: Allocation, len: number, now: number): boolean {
     const capacity = this.#rateBytesPerMs * 1000;
@@ -1044,6 +1142,11 @@ export class MediaServer {
   }
 
   #terminate(alloc: Allocation): void {
+    // A porta de relay é fechada abaixo, mas o `onData` que `#wireRelay` instalou é uma
+    // closure sobre ESTA alocação e nada garante que a porta pare de entregar no mesmo
+    // instante. Zerar o prazo é o que faz a closure recusar: o guarda já existe nos dois
+    // caminhos relayados, e assim a revogação vale mesmo para o datagrama em trânsito.
+    alloc.expiresAt = 0;
     this.#allocations.delete(alloc.clientAddr);
     this.#pending.delete(alloc.clientAddr);
     this.#controls.drop(alloc.memberKeyHex, alloc.allocId);

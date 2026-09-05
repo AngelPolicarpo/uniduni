@@ -314,6 +314,11 @@ export function localMediaDispatcher(
       if (key === null || sessionId === null) return { ok: true };
       comunidadeEmChamada = null;
       seguranca = null;
+      // Os dois tokens de captura são da sessão (§17.4: "sem sessão não existe token"). O
+      // `authorizeCapture` daqui já os reconferia contra a sessão corrente, então isto não
+      // fecha buraco — tira estado morto de pé, que é o que deixou o modo membro escapar.
+      capture = null;
+      musica = null;
       return deps.host.leave({ sessionId, memberKeyHex: key });
     },
 
@@ -676,6 +681,11 @@ export function remoteMediaDispatcher(
         const tinhaSessao = sessionId !== null;
         sessionId = null;
         capture = null;
+        // §17.5 — o token do Modo Música é da SESSÃO de voz, como o de tela. Ele ficava de
+        // fora de toda limpeza (aqui, no `forgetSession` e no `voiceLeave`), e sobrevivia à
+        // revogação e à queda do host: dentro da TTL, `capture.authorize{music}` seguia
+        // concedendo a captura de áudio do sistema sem chamada nenhuma para transmiti-la.
+        musica = null;
         seguranca = null;
         pares = [];
         filasConhecidas.clear();
@@ -695,6 +705,7 @@ export function remoteMediaDispatcher(
     forgetSession() {
       sessionId = null;
       capture = null;
+      musica = null;
       pares = [];
       seguranca = null;
       filasConhecidas.clear();
@@ -715,6 +726,10 @@ export function remoteMediaDispatcher(
       const r = await call('voiceLeave', { sessionId });
       sessionId = null;
       seguranca = null;
+      // Sair da chamada leva os dois tokens de captura junto: sem sessão não há audiência,
+      // e §17.4 é explícita — "sem sessão não existe token".
+      capture = null;
+      musica = null;
       return failed(r) ? r : { ok: true };
     },
 
@@ -871,6 +886,13 @@ export function remoteMediaDispatcher(
     authorizeCapture(a) {
       // Resolvido só contra o estado local (§15.7, §17.4 emendado): nenhuma ida ao host —
       // a autorização dele já aconteceu, e é o que fez esta sessão existir.
+      // **Sem sessão de voz não há token** (§17.4: "sem sessão não existe token"). O ramo
+      // host tinha a reconferência e o membro não — ele conferia só token e prazo, então
+      // sair da chamada, perder o host ou ser revogado deixava `capture.authorize` dizendo
+      // `allowed: true` pela TTL inteira. A comparação NÃO é com `a.sessionId`: o da tela é
+      // o id da `ShareSession`, não o da sessão de voz; o que se exige aqui é que a chamada
+      // que criou a capacidade ainda exista.
+      if (sessionId === null) return { allowed: false, reason: 'mismatch', audio: false };
       if (a.kind === 'music') {
         if (musica === null || musica.sessionId !== a.sessionId) return { allowed: false, reason: 'mismatch', audio: false };
         if (now() >= musica.expiresAt) return { allowed: false, reason: 'expired', audio: false };

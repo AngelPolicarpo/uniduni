@@ -51,6 +51,7 @@ export class RelayQuota {
    */
   tryAllocate(keyHex: KeyHex, now: number): { ok: true } | { ok: false; reason: QuotaRefusal } {
     this.#rollWindow(now);
+    this.#marcarBytes();
     if (this.suspended === 'bytes-quota') return { ok: false, reason: 'bytes-quota' };
     if (this.#allocs.has(keyHex)) return { ok: true };
     if (this.#allocs.size >= this.#maxAllocs) {
@@ -65,6 +66,8 @@ export class RelayQuota {
     this.#allocs.delete(keyHex);
     // liberar uma alocação reabre admissão mesmo com a marca alloc-limit viva
     if (this.suspended === 'alloc-limit' && this.#allocs.size < this.#maxAllocs) this.suspended = null;
+    // ...mas não reabre o teto de VOLUME. Ver `#marcarBytes`.
+    this.#marcarBytes();
   }
 
   recordBytes(n: number, now: number): void {
@@ -72,9 +75,21 @@ export class RelayQuota {
     this.#rollWindow(now);
     if (this.#windowStart === 0) this.#windowStart = now;
     this.#bytesInWindow += n;
-    if (this.#bytesInWindow >= this.#maxBytesPerDay && this.suspended === null) {
-      this.suspended = 'bytes-quota';
-    }
+    this.#marcarBytes();
+  }
+
+  /**
+   * O teto de volume tem **precedência** sobre a recusa por alocação (emenda de 2026-09-05).
+   *
+   * A condição era `&& this.suspended === null`: um nó no teto de alocações que estourasse
+   * 5 GiB na janela não registrava a violação, porque a marca `alloc-limit` já ocupava o
+   * campo. Ao terminar uma alocação, o `release` limpava `alloc-limit` — e com ele a
+   * violação de volume que nunca chegou a ser gravada — e o nó voltava a admitir pares
+   * acima do teto diário. Os dois estados não são alternativos: `alloc-limit` é recusa
+   * pontual e reversível, `bytes-quota` é suspensão da janela e só cai quando ela rola.
+   */
+  #marcarBytes(): void {
+    if (this.#bytesInWindow >= this.#maxBytesPerDay) this.suspended = 'bytes-quota';
   }
 
   #rollWindow(now: number): void {

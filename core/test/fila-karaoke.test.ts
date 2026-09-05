@@ -229,3 +229,50 @@ describe('filaParaOFio — os nomes de §15.5 no fio (emenda de 2026-08-28)', ()
     assert.deepEqual(noFio.items, []);
   });
 });
+
+// ─── §16.4 (emenda de 2026-09-05) — a fila contra o roster vivo ────────────────────────
+
+describe('reconciliar — quem saiu da chamada sai da fila (§16.4/§17.4)', () => {
+  it('titular ausente perde a vez e o próximo PRESENTE é promovido', () => {
+    const { fila, mudancas } = filaFake();
+    fila.entrar(CH, 'ana'); // titular automático
+    fila.entrar(CH, 'bruno');
+    fila.entrar(CH, 'carla');
+    mudancas.length = 0;
+
+    // O computador da Ana desliga e o Bruno cai junto: `dropPeer`/`sweepLiveness` os tiram
+    // do roster. Antes desta emenda a fila mantinha os dois, e o gate de §17.4 ("só o
+    // titular fala") deixava o canal inteiro mudo até `endsAt` — promovendo o Bruno
+    // fantasma em seguida, para mais um turno de silêncio.
+    fila.reconciliar(CH, new Set(['carla']));
+
+    assert.equal(fila.titularDe(CH), 'carla');
+    assert.deepEqual(fila.estadoDe(CH).itens, []);
+    assert.equal(mudancas.length, 1, 'uma mudança, um evento');
+  });
+
+  it('a sala inteira sumir encerra o turno sem sucessor', () => {
+    const { fila } = filaFake();
+    fila.entrar(CH, 'ana');
+    fila.entrar(CH, 'bruno');
+    fila.reconciliar(CH, new Set());
+    assert.equal(fila.titularDe(CH), null);
+    assert.deepEqual(fila.estadoDe(CH).itens, []);
+  });
+
+  it('é idempotente e silenciosa quando o roster não mudou nada', () => {
+    const { fila, mudancas } = filaFake();
+    fila.entrar(CH, 'ana');
+    fila.entrar(CH, 'bruno');
+    mudancas.length = 0;
+    fila.reconciliar(CH, new Set(['ana', 'bruno']));
+    fila.reconciliar(CH, new Set(['ana', 'bruno']));
+    assert.equal(mudancas.length, 0, 'sem mudança, sem evento — ela roda a cada voice.roster');
+  });
+
+  it('canal sem fila conhecida é no-op', () => {
+    const { fila, mudancas } = filaFake();
+    fila.reconciliar('ch-vazio', new Set(['ana']));
+    assert.equal(mudancas.length, 0);
+  });
+});

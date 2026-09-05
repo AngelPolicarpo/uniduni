@@ -247,6 +247,25 @@ export class MediaHost {
     return this.#server.counters;
   }
 
+  /**
+   * §22.1 `media.sweep` — a varredura de alocações do TURN, que **nunca teve chamador**.
+   * `MediaServer.sweep` existia com teste que o chamava direto, e nada na composição o
+   * agendava: alocação vencida vazava a socket relayada até o fim do processo, e o cliente
+   * cujo 5-tuple ficou preso a um registro morto levava 437 até o host reiniciar.
+   */
+  sweep(): number {
+    return this.#server.sweep();
+  }
+
+  /**
+   * §17.4 — a revogação alcança o transporte relayado. Chamada pela composição no mesmo
+   * `onRevoked` que emite `voice.revoked`: sem ela o banido seguia recebendo e mandando
+   * mídia pelo relay do host até a alocação vencer sozinha.
+   */
+  revogar(peerKeyHex: string): number {
+    return this.#server.revoke(peerKeyHex);
+  }
+
   close(): void {
     this.#desinstalar();
     this.#server.close();

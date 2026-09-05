@@ -204,3 +204,47 @@ describe('§13.4 — o download monta o arquivo a partir dos blocos que chegaram
     }
   });
 });
+
+// ─── §13.4 — o cancelamento CANCELA (correção de 2026-09-05) ───────────────────────────
+
+describe('`blob.cancel` interrompe o download em voo', () => {
+  it('cancelar durante a faixa não grava arquivo, não emite `blob.completed` e o estado fica `cancelled`', async () => {
+    const conteudo = crypto.randomBytes(BLOB_CHUNK_BYTES * 3);
+    const base = leitorFake(conteudo);
+    const opts = optsDe(conteudo);
+    let r: Rig | null = null;
+    // O cancelamento chega pela IPC no meio da faixa: entre um `getBlock` e o próximo.
+    const leitor: BlobsReaderPort = {
+      ...base,
+      async getBlock(seq) {
+        if (seq === 1) r!.blobs.cancelDownload(CHAVE_REMOTA, opts.blobIdHex);
+        return base.getBlock(seq);
+      },
+    };
+    r = rig(leitor);
+    try {
+      await assert.rejects(r.blobs.download(opts), (e: { code?: string }) => e.code === 'E_CANCELLED');
+      // Antes, o motor terminava, gravava o arquivo e emitia `blob.completed` POR CIMA do
+      // "cancelado" que a tela já mostrava — e a banda já tinha sido gasta.
+      assert.equal(r.blobs.getDownloadState(CHAVE_REMOTA, opts.blobIdHex), 'cancelled');
+      assert.equal(r.eventos.some((e) => e.topic === 'blob.completed'), false);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  it('um cancelamento antigo não derruba o download seguinte do mesmo blob', async () => {
+    const conteudo = crypto.randomBytes(2_000);
+    const r = rig(leitorFake(conteudo));
+    try {
+      const opts = optsDe(conteudo);
+      r.blobs.cancelDownload(CHAVE_REMOTA, opts.blobIdHex);
+      // A marca é por tentativa: o `download` seguinte a zera e roda até o fim.
+      const { path: arquivo } = await r.blobs.download(opts);
+      assert.ok(fs.readFileSync(arquivo).equals(conteudo));
+      assert.equal(r.blobs.getDownloadState(CHAVE_REMOTA, opts.blobIdHex), 'downloaded');
+    } finally {
+      r.cleanup();
+    }
+  });
+});

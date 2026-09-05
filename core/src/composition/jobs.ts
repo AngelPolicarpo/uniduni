@@ -76,6 +76,14 @@ export const LOOP_INTERVALS = {
   'voice.queueTick': 1_000,
   /** §22.1 — o registro central de §24.3 é cometido pelos detentores a cada 10 s, todo nó. */
   'metrics.flush': 10_000,
+  /**
+   * §17.3/§22.1 (emenda de 2026-09-05) — a varredura de alocações do TURN do host: fecha a
+   * socket relayada de quem venceu e a de quem saiu do roster (§17.4). A cadência é a da
+   * vida da permissão de RFC 5766 §9 dividida por dez — o vazamento é de socket, não de
+   * segurança (a revogação ativa já fecha o caminho no ato), e varrer por segundo custaria
+   * um giro de mapa a cada segundo num host que quase nunca tem alocação.
+   */
+  'media.sweep': 30_000,
 } as const;
 
 export type LoopName = keyof typeof LOOP_INTERVALS;

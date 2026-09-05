@@ -36,6 +36,8 @@ const REALM = 'comunidade.test';
 const CLIENT: MediaAddr = { host: '10.0.0.1', port: 50_001 };
 const PEER_ADDR: MediaAddr = { host: '10.0.0.2', port: 50_002 };
 const ATTR_USERNAME = 0x0006;
+/** RFC 5766 §14.1 — CHANNEL-NUMBER. Era lido de 0x0006 (USERNAME), e o teste congelava o erro. */
+const ATTR_CHANNEL_NUMBER = 0x000c;
 const ATTR_REALM = 0x0014;
 const ATTR_NONCE = 0x0015;
 const ATTR_LIFETIME = 0x000d;
@@ -494,9 +496,10 @@ describe('TURN Refresh, CreatePermission, ChannelBind e Send/Data', () => {
     await allocate(f);
     const bindFrame = (peer: MediaAddr): Buffer =>
       authedRequest(f, TURN_CHANNEL_BIND, [
-        // CHANNEL-NUMBER (0x0006, 2 B + 2 RFFU) compartilha o tipo com USERNAME; o
-        // decodificador resolve pelo método
-        { type: ATTR_USERNAME, value: Buffer.concat([u16(0x4000), u16(0)]) },
+        // CHANNEL-NUMBER é 0x000C (RFC 5766 §14.1), 2 B de canal + 2 B RFFU — que é o que
+        // o Chromium manda. O decodificador o lia de 0x0006 e este teste montava o pedido
+        // do mesmo jeito errado, então todo ChannelBind de cliente real voltava 400.
+        { type: ATTR_CHANNEL_NUMBER, value: Buffer.concat([u16(0x4000), u16(0)]) },
         { type: ATTR_XOR_PEER, value: xorPeerValue(peer) },
       ]);
 
@@ -738,5 +741,163 @@ describe('§17.3 — o caminho relayado: permissão por IP, primer e entrada fil
     f.server.handleDatagram(authedRequest(f, TURN_REFRESH, [], { password: 'errada' }), CLIENT);
     await drain();
     assert.equal(observados.length, antes);
+  });
+});
+
+// ─── As correções de 2026-09-05 ─────────────────────────────────────────────────────────
+
+describe('§17.3 — o demux não pode comer datagrama UDX (RFC 5766 §11.4)', () => {
+  it('primeiro byte na faixa de canal só é ChannelData com Length coerente', () => {
+    // O que a regra antiga classificava como ChannelData: qualquer coisa em 0x40–0x7F.
+    const udx = Buffer.from([0x51, 0x0a, 0xff, 0xff, 1, 2, 3, 4, 5, 6]);
+    assert.equal(classifyInbound(udx), 'udx', 'Length que não casa é UDX, não canal comido');
+
+    const quadro = frameChannelData(0x510a, Buffer.from('carga'));
+    assert.equal(classifyInbound(quadro), 'channel-data');
+
+    // Sobre UDP o padding a múltiplo de 4 é opcional (§11.4): até 3 bytes de folga passam.
+    assert.equal(classifyInbound(Buffer.concat([quadro, Buffer.alloc(3)])), 'channel-data');
+    assert.equal(classifyInbound(Buffer.concat([quadro, Buffer.alloc(4)])), 'udx');
+  });
+
+  it('um quarto do corpus adversarial de primeiro byte cai na faixa e nenhum é consumido', () => {
+    // Datagramas UDX de comprimento fixo com o campo Length preenchido por acaso: sob a
+    // regra antiga ~25 % deles sumiam do transporte. Nenhum pode ser reclassificado aqui.
+    let comidos = 0;
+    for (let primeiro = 0x40; primeiro <= 0x7f; primeiro++) {
+      const d = Buffer.alloc(64, 0xab);
+      d[0] = primeiro;
+      // Length arbitrário que NÃO é 60 (= 64 − 4): é o caso do datagrama UDX real.
+      d.writeUInt16BE(0x1234, 2);
+      if (classifyInbound(d) !== 'udx') comidos++;
+    }
+    assert.equal(comidos, 0);
+  });
+});
+
+describe('§17.3 — MESSAGE-INTEGRITY cobre a mensagem inteira (RFC 5389 §15.4)', () => {
+  it('atributo anexado depois do MESSAGE-INTEGRITY invalida o MAC e não é decodificado', () => {
+    const f = fixture();
+    const chave = longTermKey(f.username, REALM, f.password);
+    const legitimo = authedRequest(f, TURN_CREATE_PERMISSION, [
+      { type: ATTR_XOR_PEER, value: xorPeerValue(PEER_ADDR) },
+    ]);
+    assert.equal(verifyMessageIntegrity(legitimo, chave), true);
+
+    // O MITM anexa um XOR-PEER-ADDRESS forjado e corrige o comprimento do cabeçalho — que
+    // não entra no MAC, porque o cálculo o reescreve para terminar no próprio MI.
+    const forjado: MediaAddr = { host: '198.51.100.9', port: 4444 };
+    const cauda = encodeTurnRequest(TURN_CREATE_PERMISSION, randomTxId(), [
+      { type: ATTR_XOR_PEER, value: xorPeerValue(forjado) },
+    ]).subarray(20);
+    const adulterado = Buffer.concat([legitimo, cauda]);
+    adulterado.writeUInt16BE(adulterado.length - 20, 2);
+
+    assert.equal(verifyMessageIntegrity(adulterado, chave), false, 'o MAC não pode fechar sobre o prefixo');
+    assert.equal(decode(adulterado)?.xorPeer?.host, PEER_ADDR.host, 'o decode para no MI');
+  });
+});
+
+describe('§17.3 — CHANNEL-NUMBER é 0x000C (RFC 5766 §14.1)', () => {
+  it('ChannelBind sem CHANNEL-NUMBER é 400, e o USERNAME não faz as vezes dele', async () => {
+    const f = fixture();
+    await allocate(f);
+    // O pedido carrega USERNAME (`authedRequest` o põe) e nenhum 0x000C: falta o canal.
+    f.server.handleDatagram(
+      authedRequest(f, TURN_CHANNEL_BIND, [{ type: ATTR_XOR_PEER, value: xorPeerValue(PEER_ADDR) }]),
+      CLIENT,
+    );
+    await drain();
+    assert.equal(decode(stripMessageIntegrity(f.socket.sents.at(-1)!.data))?.errorCode, 400);
+    assert.equal(f.server.counters.channelBinds, 0);
+  });
+});
+
+/**
+ * Credencial de vida longa: a do `fixture` vence em 5 min, que é o MESMO prazo da permissão
+ * de §9 e menos que o TTL da alocação. Sem isto, todo teste que adianta o relógio para
+ * exercitar prazo bate primeiro no 401 da credencial e mede a coisa errada.
+ */
+function credLonga(f: Fixture): { username: string; password: string } {
+  return issueTurnCredential(f.secret, f.sessionId, f.member.publicKey, f.clock.now() + 24 * 3_600_000);
+}
+
+describe('§17.3/§17.4 — a alocação não sobrevive à revogação nem ao prazo', () => {
+  it('permissão de §9 vence em 5 min e para de entregar nos dois sentidos', async () => {
+    const f = fixture();
+    const cred = credLonga(f);
+    const permitir = (): void => {
+      f.server.handleDatagram(
+        authedRequest(f, TURN_CREATE_PERMISSION, [{ type: ATTR_XOR_PEER, value: xorPeerValue(PEER_ADDR) }], cred),
+        CLIENT,
+      );
+    };
+    f.server.handleDatagram(authedRequest(f, TURN_ALLOCATE, [], cred), CLIENT);
+    await drain();
+    permitir();
+    f.relays[0]!.receive(Buffer.from('antes'), PEER_ADDR);
+    await drain();
+    assert.equal(f.server.counters.relayedPackets, 1);
+
+    f.clock.advance(300_001);
+    f.relays[0]!.receive(Buffer.from('depois'), PEER_ADDR);
+    await drain();
+    assert.equal(f.server.counters.relayedPackets, 1, 'entrada por permissão vencida é descartada');
+    assert.equal(f.server.counters.notPermittedDropped, 1);
+
+    // A renovação é o próprio CreatePermission (§9): concedida de novo, volta a entregar.
+    permitir();
+    f.relays[0]!.receive(Buffer.from('renovada'), PEER_ADDR);
+    await drain();
+    assert.equal(f.server.counters.relayedPackets, 2);
+  });
+
+  it('`revoke` fecha a alocação do banido — o caminho relayado morre com o roster', async () => {
+    const f = fixture();
+    await allocate(f);
+    grantPermission(f);
+    assert.equal(f.server.allocationCount, 1);
+
+    assert.equal(f.server.revoke(f.member.publicKey.toString('hex')), 1);
+    assert.equal(f.server.allocationCount, 0);
+    assert.equal(f.relays[0]!.closed, true, 'a socket relayada fecha junto');
+
+    // Entrada que chegue depois não tem mais a quem entregar.
+    const antes = f.socket.sents.length;
+    f.relays[0]!.receive(Buffer.from('tarde'), PEER_ADDR);
+    await drain();
+    assert.equal(f.socket.sents.length, antes);
+  });
+
+  it('o sweep derruba quem saiu do roster mesmo sem evento de revogação', async () => {
+    const naSessao = new Set<string>();
+    const f = fixture({ sessionPeerKeys: () => naSessao });
+    naSessao.add(keypairFromSeed('membro-voz').publicKey.toString('hex'));
+    await allocate(f);
+    assert.equal(f.server.allocationCount, 1);
+
+    assert.equal(f.server.sweep(), 0, 'quem está na sessão fica');
+    naSessao.clear();
+    assert.equal(f.server.sweep(), 1);
+    assert.equal(f.server.allocationCount, 0);
+  });
+
+  it('alocação VENCIDA não tranca o 5-tuple em 437: o Allocate seguinte realoca', async () => {
+    const f = fixture();
+    const cred = credLonga(f);
+    f.server.handleDatagram(authedRequest(f, TURN_ALLOCATE, [], cred), CLIENT);
+    await drain();
+    assert.equal(f.server.allocationCount, 1);
+
+    // O TTL vence e o sweep ainda não passou — é a janela em que o cliente reAloca.
+    f.clock.advance(resolveConfig().turnAllocTtlMs + 1);
+    const antes = f.socket.sents.length;
+    f.server.handleDatagram(authedRequest(f, TURN_ALLOCATE, [], cred), CLIENT);
+    await drain();
+    const resposta = decode(stripMessageIntegrity(f.socket.sents.at(-1)!.data));
+    assert.notEqual(resposta?.errorCode, 437);
+    assert.equal(resposta?.type, 0x0103, 'Allocate Success, não Allocation Mismatch');
+    assert.ok(f.socket.sents.length > antes);
+    assert.equal(f.server.allocationCount, 1);
   });
 });

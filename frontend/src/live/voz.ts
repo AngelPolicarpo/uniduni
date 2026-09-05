@@ -915,7 +915,19 @@ export class MalhaDeVoz {
 
     log(`sinal recebido de ${par.slice(0, 8)} · ${a.sdp !== undefined ? "sdp" : "ice"}`);
     const existente = this.#pares.get(par);
-    const p = existente ?? this.#abrir(par, false);
+    /*
+     * **O papel é `souOIniciador`, nunca um `false` fixo** (correção de 2026-09-05).
+     *
+     * Este ramo é a rede de segurança para o sinal que chega de um par que não está em
+     * `#pares`: `#fechar` (roster que oscilou) não limpa `#autorizados`, então um candidato
+     * trickle atrasado do par que acabou de sair reabre a conexão por aqui. Com `false`
+     * fixo, o lado que DEVERIA ofertar nascia como respondedor: `tx` fica `null`, os quatro
+     * m-lines de §17.2 não são criados, e `aplicarRoster` não conserta depois porque
+     * `#pares.has(par)` o faz pular a reabertura. A repetição de `#tentarNegociacoesParadas`
+     * então mandava uma oferta **sem m-line nenhum**: o ICE conectava, o tile ficava verde e
+     * a chamada era muda para sempre naquele par.
+     */
+    const p = existente ?? this.#abrir(par, souOIniciador(this.#euHex, par));
     // O id que vale é o do NOSSO ticket; o que veio no quadro é do ticket do outro lado.
     p.ticketId = this.#autorizados.get(par) ?? a.ticketId;
 
@@ -1940,7 +1952,22 @@ export class MalhaDeVoz {
       log(`par ${parHex.slice(0, 8)} · restartIce falhou`, e);
       return;
     }
-    if (souOIniciador(this.#euHex, parHex)) void this.#renegociar(parHex, par);
+    /*
+     * **Quem detectou a queda renegocia, iniciador ou não** (correção de 2026-09-05).
+     *
+     * `restartIce()` sozinho não manda nada pela rede: ele marca a conexão para gerar
+     * credenciais ICE novas *na próxima oferta*. Guardando a renegociação por
+     * `souOIniciador`, o lado respondedor que percebesse a queda marcava e ficava calado —
+     * e a queda é frequentemente assimétrica (só um lado vê `failed`). Três voltas dos 5 s
+     * de graça depois, `tentativasDeRestart` batia o teto e a conexão morria sem que uma
+     * única oferta tivesse saído.
+     *
+     * Ofertar dos dois lados aqui **não** reabre o glare que a regra evitava: a colisão de
+     * ofertas de RENEGOCIAÇÃO já tem desempate em `aplicarSinal` — o iniciador ignora a
+     * oferta cruzada, o outro faz `rollback`, responde e reoferta ao assentar. É a mesma
+     * regra determinística, aplicada onde ela é resolvida em vez de onde ela é evitada.
+     */
+    void this.#renegociar(parHex, par);
   }
 
   /**

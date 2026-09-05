@@ -518,3 +518,71 @@ describe('§17.7 relay.* — as três superfícies deixam de ser E_UNKNOWN_COMMA
     }
   });
 });
+
+describe('§13.2 blob.stage — a retomada não pode furar a TTL nem o uso único (2026-09-05)', () => {
+  function rigStage(clock: () => number) {
+    const dir = tempDir('stage-ttl');
+    const manifest = new ManifestDb(path.join(dir, 'manifest.db'));
+    const arquivo = path.join(dir, 'relatorio.pdf');
+    fs.writeFileSync(arquivo, Buffer.alloc(4096, 7));
+    const blobs = new BlobManager({
+      manifest,
+      swarm: new Swarm(),
+      dataDir: path.join(dir, 'cache'),
+      clock,
+      ttlMs: 15 * 60_000,
+    });
+    return {
+      blobs,
+      arquivo,
+      cleanup() {
+        manifest.close();
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+      },
+    };
+  }
+
+  it('ticket vencido é recusado mesmo com a linha de staging viva', async () => {
+    let t = 1_000_000;
+    const r = rigStage(() => t);
+    try {
+      const ticket = r.blobs.createTicketForMain('a'.repeat(64), r.arquivo, 4096);
+      t += 15 * 60_000 + 1;
+      // A linha de staging tem janela órfã de 24 h e sobrevive; a TTL do ticket é de 15 min.
+      // O `catch` blanket que existia aqui reconstruía o ticket da linha e seguia em frente,
+      // tornando a TTL inócua sempre que a linha estivesse viva.
+      await assert.rejects(
+        r.blobs.stage(ticket.ticketId, { blobsCoreKey: Buffer.alloc(32, 9) }),
+        (e: { code?: string }) => e.code === 'E_TICKET_INVALID',
+      );
+      // E a segunda tentativa também: apagar o vencido do mapa fazia a próxima parecer
+      // "ticket de outro processo" e cair no caminho de retomada.
+      await assert.rejects(
+        r.blobs.stage(ticket.ticketId, { blobsCoreKey: Buffer.alloc(32, 9) }),
+        (e: { code?: string }) => e.code === 'E_TICKET_INVALID',
+      );
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  it('dois `stage` concorrentes do mesmo ticket: um grava, o outro é recusado', async () => {
+    const r = rigStage(() => 1_000_000);
+    try {
+      const ticket = r.blobs.createTicketForMain('b'.repeat(64), r.arquivo, 4096);
+      const [a, b] = await Promise.allSettled([
+        r.blobs.stage(ticket.ticketId, { blobsCoreKey: Buffer.alloc(32, 9) }),
+        r.blobs.stage(ticket.ticketId, { blobsCoreKey: Buffer.alloc(32, 9) }),
+      ]);
+      const ok = [a, b].filter((x) => x.status === 'fulfilled');
+      const nao = [a, b].filter((x) => x.status === 'rejected');
+      // Antes, os dois passavam a guarda `state === 'done'` (que só é gravada no fim) e
+      // appendavam o arquivo inteiro no core; o segundo `markDone` sobrescrevia
+      // `blobRanges` e os blocos do primeiro viravam lixo que nenhum GC sabe podar.
+      assert.equal(ok.length, 1);
+      assert.equal(nao.length, 1);
+    } finally {
+      r.cleanup();
+    }
+  });
+});

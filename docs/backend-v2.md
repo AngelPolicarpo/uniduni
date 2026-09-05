@@ -2838,6 +2838,31 @@ Propriedades do ticket:
 Fecha `T-16` e `DR-37`: um renderer comprometido não consegue exfiltrar arquivo arbitrário,
 porque não existe superfície que aceite caminho dele.
 
+**Emenda de 2026-09-05 — "uma vez" e "15 min" precisam valer também contra a RETOMADA.**
+
+`TicketStore` é memória e `local_blob_staging` é disco (§13.5): depois de um restart, o
+ticket não existe mais e a linha existe. O produto tratava isso com um `catch` que
+reconstruía o ticket a partir da linha sempre que ela estivesse em `pending`/`writing` —
+qualquer que fosse o motivo da recusa. Duas propriedades desta tabela caíam junto:
+
+1. **A validade.** Ticket **vencido** caía no mesmo caminho de retomada, então a TTL era
+   inócua sempre que a linha sobrevivesse: bastava o renderer guardar um `ticketId` velho e
+   encenar o `stage` horas depois, dentro da janela órfã de 24 h.
+2. **O uso único.** A guarda contra reuso lia `state = 'done'`, que só é gravado no **fim**.
+   Dois `stage` concorrentes do mesmo ticket — duplo clique em "anexar" — passavam os dois:
+   um vencia o consumo, o outro caía na retomada, e os **dois** appendavam o arquivo inteiro
+   no core. O segundo `markDone` sobrescrevia a faixa de blocos e a do primeiro virava lixo
+   que nenhum `core.clear` de §13.5/§22.4 sabe podar.
+
+As duas regras, declaradas:
+
+- **A retomada vale só para o ticket que este processo não conhece.** Ticket que o
+  `TicketStore` tem e recusou é recusa, e o motivo dela é o que sobe. É a linha de staging,
+  com a janela órfã de 24 h de §13.5, que governa a retomada — não a TTL do ticket, que
+  governa a **primeira** apresentação.
+- **Uso único inclui o concorrente.** Uma linha de staging tem um `stage` por vez; o segundo
+  é recusado como o ticket já usado que ele é.
+
 ### 13.4 Download
 
 ```
@@ -2861,6 +2886,21 @@ com `bytesDownloaded` preservado; o Hypercore retoma pelo bitfield, sem reinicia
 `availablePeers` = pares conectados que **anunciam ter** os blocos do range (leitura do
 bitfield). `hostAvailable` = o `hostKey` está entre eles. **Dados reais, não estimativa.**
 `blob.unavailable` só quando os dois zeram.
+
+**Emenda de 2026-09-05 — `cancelled` é um estado do MOTOR, não um rótulo no manifest.**
+
+`blob.cancel` gravava `state = 'cancelled'` e mais nada: nenhum ponto dos passos 3–7 lia
+esse estado. O download seguia consumindo banda até o fim, gravava o arquivo em disco e
+emitia `blob.completed` **por cima** do "cancelado" que a tela já mostrava — o pior desfecho
+possível, porque ele desmente a única coisa que o usuário sabia sobre a operação.
+
+**O cancelamento é conferido em cada ponto de retomada** dos passos 3–7 (entre a espera da
+faixa e o primeiro bloco, entre um bloco e o próximo, e antes de gravar o arquivo). Nele o
+download aborta com `E_CANCELLED`, **não sobrescreve o estado** e **não emite desfecho
+nenhum** — nem `blob.completed`, nem `attachment.corrupt`, nem `blob.unavailable`: quem
+cancelou já viu o desfecho que pediu. O arquivo parcial que tenha chegado a ser escrito é
+removido. Um `blob.download` novo do mesmo blob limpa a marca e roda até o fim: o
+cancelamento é da **tentativa**, e a linha `cancelled` no cache é o que a retomada de boot lê.
 
 **Emenda de 2026-08-22 — a realização dos passos 2–3, e o tópico de §14.1.** O `swarm.join`
 do passo 2 usa o tópico `BLAKE2b('blob-discovery/1' ‖ blobsCoreKey)` — a mesma forma da
@@ -3993,6 +4033,28 @@ modo fila entra bloqueado, inclusive quem já era titular de turno anterior.
 reconstrói é `query.voiceQueue` (§15.6). A fila não emite `voice.roster`: o roster muda por
 conta da imposição de mute (§17.4), e é ele quem carrega a mudança.
 
+**Emenda de 2026-09-05 — sair da CHAMADA é sair da fila, e o texto não dizia.**
+
+A seção declarava a entrada ("exige sessão de voz ativa no canal") e a saída explícita, e
+tratava só de `voiceQueueLeave` na promoção sequencial. Todos os outros modos de deixar a
+chamada — `mod.ban`, `mod.kick`, `mod.timeout`, `channel.delete`, `voice.leave` e a **queda
+de conexão** (§17.4, emenda de 2026-08-26) — ficavam fora, e a implementação seguiu o texto:
+`sair` só era chamado pelo comando do próprio usuário.
+
+A consequência é do **canal inteiro**, não de quem saiu. O gate de transmissão desta seção é
+"só o titular fala", e o host o impõe silenciando todo o resto: um titular que desligou o
+computador deixa a sala muda até o `endsAt` vencer — até 300 s por default, 3600 s com
+`addTime` —, e a promoção seguinte pode entregar a vez a outro ausente, encadeando turnos de
+silêncio. A expiração periódica não resolvia porque ela só sabe se a **sessão** vive, não
+quem está nela.
+
+**A regra:** a fila é da sessão, e vale para ela a mesma reconciliação contínua que §17.5
+já aplica à audiência da tela. **A cada `voice.roster`, quem não está no roster sai da fila;
+titular ausente perde a vez no ato e o próximo PRESENTE é promovido.** É uma regra, não um
+gatilho por verbo: qualquer caminho que mude o roster passa por ela, inclusive os que ainda
+não existem. A reconciliação é idempotente e só emite `voice.queueChanged` quando muda algo
+— a própria imposição de turno produz um roster novo, e um evento por giro seria ruído.
+
 ---
 
 ## 17. Mídia: voz, câmera e tela
@@ -4277,6 +4339,63 @@ NAT (full-cone, port-restricted, symmetric, CGNAT); latência e perda no caminho
 de CPU e banda do host. Critérios e consequências em
 `plano-de-validacao-experimental-v2.md`.
 
+#### Emenda de 2026-09-05 — o que a redação do demux e dos controles não dizia
+
+Quatro regras que RFC 5389/5766 exigem, que o produto violava, e que o texto desta seção não
+tinha como arbitrar porque era silencioso sobre as quatro.
+
+**1. O demux de ChannelData é por Length, não pelo primeiro byte.** A abertura da seção
+declara a regra de STUN ("os dois primeiros bits `00` e o magic cookie; o resto é UDX") e
+**não menciona ChannelData**, que ocupa `01` no primeiro byte e portanto cairia no UDX pela
+regra bruta. O produto o roteava ao TURN antes do fallback — decisão certa, validada em G7 —
+classificando por `0x40 ≤ primeiro byte ≤ 0x7F` e mais nada. Um quarto dos datagramas UDX
+cai nessa faixa por acaso: o demux os dava por consumidos pelo TURN e o UDX nunca os via.
+~25 % de perda artificial em toda replicação, sincronização e descoberta da comunidade,
+indistinguível de rede ruim.
+
+A regra normativa passa a ser a de RFC 5766 §11.4: **é ChannelData quando o primeiro byte
+está em `0x40–0x7F` E o campo Length casa com o datagrama** — `length(UDP) − 4`, admitido o
+padding a múltiplo de quatro (opcional sobre UDP, até 3 bytes). Qualquer outra coisa é UDX e
+segue para a pilha do transporte.
+
+**2. `CHANNEL-NUMBER` é `0x000C`.** O produto o lia do tipo `0x0006` sob o comentário de que
+"CHANNEL-NUMBER compartilha o tipo com USERNAME, o contexto é o método". Não compartilha:
+`0x0006` **é** o USERNAME (RFC 5389 §15.3) e `CHANNEL-NUMBER` é `0x000C` (RFC 5766 §14.1).
+Todo `ChannelBind` de cliente WebRTC real voltava **400 Bad Request**, e o relay só
+funcionava pelo caminho de indicações Send/Data, com o overhead de 36 bytes por pacote que o
+ChannelData existe para eliminar.
+
+**3. Nada é lido depois do `MESSAGE-INTEGRITY`.** RFC 5389 §15.4: com a exceção de
+`FINGERPRINT` (§15.5), nenhum atributo pode sucedê-lo, e o que suceder deve ser ignorado. O
+produto verificava o HMAC "onde quer que o atributo esteja" e continuava decodificando até o
+fim do corpo: um intermediário anexava atributos à cauda de um pedido legitimamente assinado
+— um `XOR-PEER-ADDRESS` forjado, por exemplo —, corrigia o comprimento do cabeçalho externo
+(que não entra no MAC, porque o cálculo o reescreve para terminar no próprio MI) e a
+mensagem passava adulterada. **O MAC prova a mensagem, não um prefixo dela:** a verificação
+recusa quando o MI não é o último atributo, e o decodificador para nele.
+
+**4. A permissão de §9 tem prazo, e a revogação de §17.4 derruba a alocação.** A tabela de
+controles acima nomeia a vida da **alocação** e é silenciosa sobre a vida da **permissão** e
+sobre o que a revogação faz com o que já foi concedido. As duas lacunas se somavam no mesmo
+buraco: `CreatePermission`/`ChannelBind` conferem o roster vivo, mas os dois caminhos que
+**não autenticam** — o `ChannelData` de saída e a entrada pela porta relayada — consultavam
+apenas o conjunto de permissões concedidas, que nunca era podado. Um membro banido seguia
+mandando e recebendo mídia relayada, na cota dele e na banda de quem hospeda, até a alocação
+vencer sozinha.
+
+| Regra | Prazo |
+|---|---|
+| Vida de uma permissão | `TURN_PERMISSION_LIFETIME_MS` = **5 min** (RFC 5766 §9), renovada por cada `CreatePermission`/`ChannelBind` que a reafirme. Vencida, o IP volta a ser negado nos dois sentidos e os canais que apontavam para ele caem junto |
+| Revogação (§17.4) | **Imediata.** O mesmo `voice.revoked` que fecha a sinalização fecha a alocação TURN do alvo e a socket relayada dela |
+| Varredura (`media.sweep`, §22.1) | Rede de segurança a cada 30 s: fecha alocação vencida e alocação de quem já não está no roster da sessão |
+
+A varredura **não é opcional**, e não tê-la agendada era o outro defeito: `MediaServer.sweep`
+existia desde a fase 7 sem nenhum chamador em produto. Cada alocação vencida vazava a socket
+relayada até o processo morrer e, pior, o registro morto fazia o `Allocate` seguinte **do
+mesmo 5-tuple** responder 437 Allocation Mismatch para sempre — um `Refresh` perdido depois
+do vencimento matava o caminho relayado até o host reiniciar. **Registro vencido não é
+conflito:** ele é recolhido e o pedido novo é atendido.
+
 **LIMITAÇÃO DECLARADA (L-11):** se o host estiver atrás de CGNAT sem porta alcançável, o
 serviço STUN/TURN dele não funciona para quem precisa dele. Nesse caso a voz depende dos
 voluntários de relay (§17.7); sem voluntário, a conexão falha com `conn-failed`, que é um
@@ -4488,6 +4607,28 @@ Vale só para o silêncio do host: `E_SESSION_GONE` é o host **respondendo** qu
 acabou, e esse caminho já tem sinal próprio na revogação — anunciar duas vezes o mesmo
 encerramento faz duas superfícies competirem pela mesma tela.
 
+**Emenda de 2026-09-05 — quem detecta a queda renegocia, iniciador ou não.**
+
+A regra anti-glare ("quem oferta é um lado só") vale para a **oferta inicial**, e o produto a
+estendeu à **reconstrução de ICE** de um par que caiu. As duas não são o mesmo caso. Uma
+queda de rede é frequentemente assimétrica — só uma das pontas vê `failed` —, e
+`restartIce()` não manda nada pela rede: ele marca a conexão para gerar credenciais ICE novas
+na *próxima oferta*. O lado respondedor que detectasse a queda marcava e ficava calado; três
+voltas da graça de `disconnected` depois, o teto de tentativas desistia e a conexão morria
+sem que uma única oferta tivesse saído.
+
+**Na reconstrução, oferta quem detectou.** Isso não reabre o glare: a colisão de ofertas de
+**renegociação** já tem desempate declarado — quem iniciaria ignora a oferta cruzada, o outro
+desfaz a própria (`rollback`), responde e reoferta quando assentar. A regra determinística é
+a mesma; ela passa a ser aplicada onde a colisão se **resolve**, em vez de onde ela se evita.
+
+Vale o mesmo para o outro ponto em que a malha reabre uma conexão fora do roster: um sinal
+que chega de um par autorizado que não está mais na lista de conexões (candidato trickle
+atrasado, roster que oscilou) reabre a conexão **com o papel que `souOIniciador` dá**, nunca
+como respondedor por default. Nascendo respondedor, o lado que deveria ofertar não cria os
+m-lines reservados de §17.2, e a repetição de oferta sai sem m-line nenhum: o ICE conecta, o
+tile fica verde e a chamada é muda para sempre naquele par.
+
 **Emenda de 2026-09-03 (B43) — a reentrada automática está decidida.** No resync de
 epoch de §15.2(4d) com chamada de voz ativa, o renderer reexecuta o `voice.join`
 idempotente (nova sessão) — decisão do operador "voltar sozinho". Se o re-join falhar
@@ -4588,6 +4729,21 @@ expor um segredo que nenhum dos dois lados usa como prova. A propriedade que `T-
 continua inteira, e passa a valer igual nos dois modos: **sem autorização do host não existe
 sessão, e sem sessão não existe token**. Em modo host isso já era literalmente verdade — o
 processo que cunha é o que verifica; a emenda só estende a mesma regra ao modo membro.
+
+**Emenda de 2026-09-05 — "sem sessão não existe token" é conferido A CADA `capture.authorize`.**
+A frase acima é a regra certa e o modo membro não a aplicava: ele conferia o token e o prazo,
+e mais nada. O ramo host reconferia a sessão corrente; o membro era mais frouxo do que o host
+é consigo mesmo, exatamente ao contrário do que esta emenda estabeleceu. Sair da chamada,
+perder o host (`E_HOST_UNAVAILABLE`) ou ser revogado deixava `capture.authorize` respondendo
+`allowed: true` pela TTL inteira — para a tela e para o Modo Música, cujo token não era
+limpo por caminho nenhum. Duas regras fecham:
+
+1. **`capture.authorize` recusa sem sessão de voz corrente**, nos dois modos, antes de olhar
+   token ou prazo. A comparação é com a existência da chamada, não com o `sessionId` do
+   argumento: o da tela é o id da `ShareSession`, que não é o da sessão de voz.
+2. **Todo caminho que encerra a sessão apaga os dois tokens** — `voice.leave`, a revogação
+   recebida do host e o silêncio dele. O prazo do token continua sendo rede de segurança, e
+   não o mecanismo.
 
 **Emenda de 2026-08-28 — o modo de fala do canal gateia a TRANSMISSÃO, não a entrada**
 (§6.6, R-29). O passo 1 continua valendo como está: `voice_speak` gateia **entrar** na
@@ -4731,8 +4887,39 @@ muda **uma** coisa e é bom dizer o que não muda:
 - **NÃO muda a autorização.** A audiência continua sendo quem o host listou: o apresentador
   põe a trilha no m-line reservado **da conexão daquele espectador** e deixa as demais em
   `null`. Reservar o m-line em toda conexão da malha não concede audiência a ninguém —
-  `share.join`, o ticket e a reconferência contínua da emenda de 2026-08-26 seguem valendo
-  inteiros.
+  `share.join` e a reconferência contínua da emenda de 2026-08-26 seguem valendo inteiros.
+  (A frase original dizia "`share.join`, **o ticket** e a reconferência". Sobre o ticket ela
+  era falsa; ver a emenda de 2026-09-05 abaixo.)
+
+**Emenda de 2026-09-05 — o que o ticket de tela é, dito honestamente.**
+
+`share.join` cunhava um ticket Ed25519 por espectador, apresentado em código como "a
+autorização A22 passos 3–4", e **o descartava**: nem o RPC nem o dispatcher local o
+devolviam, nenhum verificador o consumia. §16.2 não tem campo em que ele viaje, e nem
+precisaria ter — a tela reusa a **mesma** `RTCPeerConnection` da voz (§17.2/§17.3), que já
+está gateada pelo ticket de §17.4. Não havia furo de segurança: havia uma assinatura por
+join paga a troco de nada, e um comentário que prometia cobertura criptográfica onde não há.
+
+Fica declarado o que sempre foi verdade:
+
+| | Quem faz o quê |
+|---|---|
+| **Autorização de transporte** | O ticket de §17.4 da conexão de voz. É ele que decide se DTLS começa com aquele par |
+| **Autorização de audiência** | A lista do host, **reconferida a cada mudança de roster** (emenda de 2026-08-26). É ela que decide em qual conexão a trilha entra no m-line 2 |
+| **`ticketId` de `share.join`** | Um **identificador opaco** da relação (sessão, espectador, apresentador). Não é capacidade e não autoriza nada |
+
+O `ticketId` passa a ser **derivado da assinatura** (`ticketIdOf`, como em §17.4) em vez de
+`randomBytes`: a assinatura Ed25519 é determinística sobre `(sessionId, channelId, par
+ordenado, expiresAt)`, então o id é estável entre re-joins do mesmo espectador e os dois
+lados chegam nele sozinhos. Era a divergência com a voz que fazia o ciclo de vida do ticket
+de tela parecer inconsistente — e ela some sem inventar mecanismo nenhum.
+
+**Consequência: não há "renovação de ticket de tela" a especificar.** A pergunta ("por que
+não existe `shareTicket` na cadência que `voiceTicket` tem?") pressupunha que o prazo do
+ticket de tela governava alguma coisa. Não governa. O que precisa sobreviver a uma
+transmissão longa é a **audiência**, e ela é estado vivo do host: enquanto o espectador
+estiver na chamada, ele está na lista; quando sai, `share.failed{reason:'revoked'}` o tira.
+O prazo que importa continua sendo o do ticket de voz, renovado por §17.4.
 - **NÃO muda o laço de saúde.** `share.report`/`share.health`, a consolidação no host e a
   degradação automática continuam como estão: aqui há N espectadores, e é para isso que eles
   existem. (Numa conversa direta N = 1 e o laço sai — §31.15.)
@@ -4795,6 +4982,17 @@ O ciclo de §17.5 fica assim:
 continua sendo **por espectador** e continua só descendo (`degradeTo`): é ela que protege quem
 assiste numa conexão ruim, e ela nunca precisou de comando de ninguém. Espectador chamando
 `share.setQuality` recebe `E_PERMISSION_DENIED`.
+
+**"Só desce" é decisão, e o caminho de volta é o passo 1** (nota de 2026-09-05). O
+unidirecional já está escrito acima, mas não estava escrito **como se recupera** — e a
+ausência lia-se como esquecimento. Não é: quem sobe é o passo 1 do ciclo, o comando do
+apresentador, que "redefine a base da sessão e realinha todos os espectadores". Subir sozinho
+exigiria histerese e janela de estabilidade sobre uma perda medida a cada 2 s, e o custo do
+erro é assimétrico — descer cedo demais custa nitidez, subir cedo demais devolve à conexão
+ruim exatamente a saturação que a degradação acabou de aliviar, e o laço oscila. **Não há
+recuperação automática no v1, e não há número a inventar para ela.** A UI do apresentador
+mostra o perfil corrente de cada espectador (`share.health`), que é o que torna o realinhe
+uma decisão informada em vez de um palpite.
 
 **Resolução e taxa de quadros da captura — do apresentador, e sem host.** São
 `applyConstraints` sobre a trilha que a máquina do apresentador captura, da mesma natureza
@@ -4928,10 +5126,34 @@ Isso é o que torna "cego" verdadeiro: ele encaminha SRTP que não decifra.
 | Chave de relay | **Derivada da identidade**: `relayPk = keyPairFromSeed(BLAKE2b('ns/relay/1' ‖ identitySeed ‖ communityId)).publicKey`. Não é possível apontar para um terceiro |
 | Prova de posse | `relay.volunteer` carrega `Ed25519(identitySk, relayPk)`; o `fold` verifica (R-19). Fecha `T-14` |
 | TTL | `expiresAt ≤ hostTs + RELAY_TTL_MS` (default 24 h). Expirado = não listado. Fecha o `relayKey` permanente no log de `F-49` |
-| Cota | `RELAY_MAX_BYTES_PER_DAY` (default 5 GiB) e `RELAY_MAX_ALLOCS` (default 4); atingido, o voluntário para de aceitar e emite `relay.stateChanged` |
+| Cota | `RELAY_MAX_BYTES_PER_DAY` (default 5 GiB) e `RELAY_MAX_ALLOCS` (default 4); atingido, o voluntário para de aceitar e emite `relay.stateChanged`. Os dois tetos **não são alternativos** — ver a emenda de 2026-09-05 |
 | Seleção | Por menor RTT medido localmente por quem vai usar; o host entra na lista automaticamente se for capaz |
 | Superfície de UX | **Nova tela em 3.1 → Rede**, irmã do modal de consentimento de repasse (delta U-13) |
 | Confidencialidade | Real: DTLS-SRTP ponta a ponta. O voluntário vê volume e temporização, não conteúdo |
+
+#### Emenda de 2026-09-05 — os dois tetos não são o mesmo estado, e o status não pode mentir
+
+A linha da tabela soma "atingido, o voluntário para de aceitar" para os dois tetos, e o
+produto os guardou num campo só, primeiro a chegar. Eles são coisas diferentes:
+
+| | `alloc-limit` | `bytes-quota` |
+|---|---|---|
+| O que é | Recusa **pontual** do par novo; quem já foi admitido continua servido | Suspensão **da janela**: o voluntário para de aceitar |
+| Como sai | Uma alocação termina | A janela de 24 h rola |
+
+Com um campo só, um nó no teto de alocações que estourasse 5 GiB **não registrava** a
+violação de volume — a marca de `alloc-limit` já ocupava o campo. Terminada uma alocação, a
+marca era limpa e, com ela, a violação que nunca chegou a ser gravada: o nó voltava a
+admitir pares acima do teto diário. **O teto de volume tem precedência**, e a marca de
+alocação nunca o apaga.
+
+A segunda metade é o que a UI vê. Três pontos mudavam a suspensão e **um** emitia
+`relay.stateChanged`: a cura silenciosa na admissão não avisava ninguém, a liberação de uma
+alocação limpava a cota sem tocar o estado do voluntário, e a virada da janela limpava a
+marca por dentro da leitura do status — que continuava respondendo `suspended`. O mesmo
+instantâneo chegava a dizer `status: suspended` com `suspendedReason: null`. **O estado do
+voluntário é derivado da cota, e toda transição emite `relay.stateChanged`** — inclusive a
+cura, que é a que interessa a quem está olhando a tela esperando voltar a servir.
 
 **LIMITAÇÃO DECLARADA (L-14):** o voluntário observa **metadados** — com quem, quando,
 quanto. Isso é inerente a relay e precisa estar no texto de consentimento.
@@ -5678,6 +5900,7 @@ existe conflito de escrita". Isso era verdade para o *log* e falso para o *estad
 | `typing.expire` | 1 s | host |
 | `voice.queueTick` | 1 s | **host** — **Emenda de 2026-08-30 (§16.4):** o giro do relógio da fila de karaokê — expira o turno vencido (muta o titular e promove o próximo) e descarta a fila do canal cuja sessão acabou. Rodava acoplado ao `voice.liveness`, na cadência do hello (30 s), e a vez é coisa de segundos: o titular ficava com o microfone aberto até 30 s além do prazo, e a promoção do próximo atrasada junto. A varredura de vivacidade continua no `voice.liveness`, que é onde a evidência (o `hello`) vive |
 | `media.ticketRenew` | `MEDIA_TICKET_TTL_MS / 3` | participante de mídia |
+| `media.sweep` | 30 s | **host** — **Emenda de 2026-09-05 (§17.3):** a varredura de alocações do TURN, que existia em código desde a fase 7 **sem chamador nenhum** em produto. Fecha a alocação vencida e a de quem já não está no roster da sessão, com a socket relayada de cada uma. Sem ela, cada alocação vencida vazava um socket UDP até o processo morrer, e o registro morto fazia o `Allocate` seguinte do mesmo 5-tuple responder 437 para sempre. A revogação de §17.4 continua sendo o caminho rápido — esta é a rede de segurança, na ordem de grandeza da vida da permissão de RFC 5766 §9 |
 | `blob.progress` | 500 ms | quem baixa |
 | `metrics.flush` | 10 s | todo nó |
 
@@ -6168,6 +6391,7 @@ com log `config.invalid{key, given, used}` e um aviso na UI de 3.1 (fecha `DR-51
 | `P2P_REJECTED_LOG_MAX` | 2 000 | 0–100 000 | Linhas de `rejected_records` por comunidade (§10.3) |
 | `P2P_TURN_ALLOC_TTL_MS` | 600 000 | 60 000–3 600 000 | Vida da alocação TURN (§17.3) |
 | `P2P_TURN_ALLOC_PER_MEMBER` | 2 | 1–8 | Alocações simultâneas por membro (§17.3) |
+| `TURN_PERMISSION_LIFETIME_MS` | 300 000 | — | **Constante de protocolo, não configuração** (RFC 5766 §9): vida de uma permissão de par, renovada por `CreatePermission`/`ChannelBind`. Está nesta tabela por vizinhança com os controles de §17.3; o valor é o da RFC e não se ajusta por ambiente |
 | `P2P_TURN_SESSION_MAX_BYTES` | 2 GiB | ≥ 64 MiB | Teto de bytes por sessão TURN (§17.3) |
 | `P2P_RELAY_MAX_ALLOCS` | 4 | 1–32 | Alocações simultâneas aceitas por um voluntário (§17.7) |
 | `P2P_DM_MAX_CONVERSATIONS` | 500 | 1–5 000 | Conversas diretas em estado `accepted` por instalação (§31.18) |

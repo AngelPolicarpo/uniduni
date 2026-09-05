@@ -68,7 +68,7 @@ type Rig = {
   hostSide: { drop(): void };
   memberSide: { drop(): void };
   /** §15.7 `capture.authorize` — o main pergunta ao núcleo local, não ao host. */
-  captura(a: { sessionId: string; audio?: boolean }): { allowed: boolean; reason?: string; audio: boolean };
+  captura(a: { sessionId: string; audio?: boolean; kind?: 'screen' | 'music' }): { allowed: boolean; reason?: string; audio: boolean };
   dispatcher: ReturnType<typeof remoteMediaDispatcher>;
   /** O que o host encaminhou (§16.2 `voiceSignal`). */
   sinais: Array<Record<string, unknown>>;
@@ -580,6 +580,35 @@ describe('modo membro — tela por §16.2 (§15.4, §17.5)', () => {
       // Sessão encerrada, capacidade encerrada: não há captura órfã.
       await r.ipc.request('share.stop', { sessionId: started.sessionId });
       assert.deepEqual(r.captura({ sessionId: started.sessionId }), { allowed: false, reason: 'mismatch', audio: false });
+    } finally {
+      r.hostSide.drop();
+    }
+  });
+
+  /**
+   * §17.4 (correção de 2026-09-05) — **sem sessão de voz não existe token**, e o modo
+   * membro não aplicava a regra. O ramo host reconferia a sessão corrente; o membro
+   * conferia só token e prazo, então sair da chamada, ser revogado ou perder o host deixava
+   * `capture.authorize` concedendo tela e Modo Música pela TTL inteira (5 min por default).
+   */
+  it('sair da chamada derruba os dois tokens de captura — tela e música', async () => {
+    const r = await rig();
+    try {
+      await r.ipc.request('voice.join', { communityId: 'c', channelId: CANAL });
+      const started = (await r.ipc.request('share.start', { communityId: 'c', channelId: CANAL })) as {
+        sessionId: string;
+      };
+      const musica = (await r.ipc.request('music.start', { communityId: 'c' })) as { sessionId: string };
+      assert.equal(r.captura({ sessionId: started.sessionId }).allowed, true);
+      assert.equal(r.captura({ sessionId: musica.sessionId, kind: 'music' }).allowed, true);
+
+      await r.ipc.request('voice.leave', {});
+      assert.deepEqual(r.captura({ sessionId: started.sessionId }), { allowed: false, reason: 'mismatch', audio: false });
+      assert.deepEqual(r.captura({ sessionId: musica.sessionId, kind: 'music' }), {
+        allowed: false,
+        reason: 'mismatch',
+        audio: false,
+      });
     } finally {
       r.hostSide.drop();
     }

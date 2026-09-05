@@ -26,7 +26,7 @@
 
 import crypto from 'node:crypto';
 
-import { issueSessionTicket, type MediaTicket } from '../voiceCoordinator/tickets.ts';
+import { issueSessionTicket, ticketIdOf, type MediaTicket } from '../voiceCoordinator/tickets.ts';
 import { memberHasPermission, type VoiceStatePort } from '../voiceCoordinator/host.ts';
 
 export const SHARE_SCREEN = 'voice_share_screen' as const;
@@ -203,7 +203,8 @@ export class ShareHostSessions {
   readonly #isVoiceChannelType: (type: number) => boolean;
   readonly #voiceParticipants: (channelId: Id) => ReadonlySet<KeyHex> | null;
   readonly #sessionIdFactory: () => string;
-  readonly #ticketIdFactory: () => string;
+  /** Só a suíte injeta; em produto o id sai da assinatura (`ticketIdOf`), como na voz. */
+  readonly #ticketIdFactory: (() => string) | null;
   readonly #onRevoked: (targets: readonly ShareRevokedTarget[]) => void;
   readonly #onSessionEvent: (event: ShareSessionEvent) => void;
   readonly #sessions = new Map<string, ShareSession>(); // sessionId → session
@@ -234,7 +235,7 @@ export class ShareHostSessions {
     this.#isVoiceChannelType = opts.isVoiceChannelType;
     this.#voiceParticipants = opts.voiceParticipants;
     this.#sessionIdFactory = opts.sessionIdFactory ?? (() => crypto.randomBytes(16).toString('hex'));
-    this.#ticketIdFactory = opts.ticketIdFactory ?? (() => crypto.randomBytes(12).toString('hex'));
+    this.#ticketIdFactory = opts.ticketIdFactory ?? null;
     this.#onRevoked = opts.onRevoked ?? (() => {});
     this.#onSessionEvent = opts.onSessionEvent ?? (() => {});
   }
@@ -346,10 +347,22 @@ export class ShareHostSessions {
   }
 
   /**
-   * `share.join` (§RPC): devolve `{ticketId, ticket, presenterKey}` — o ticket Ed25519 do
-   * host para o par espectador↔apresentador escopado à sessão de tela (A22 passos 3–4).
-   * Sessão inexistente → `E_SESSION_GONE`; quem não está na chamada não tem audiência →
-   * `E_PERMISSION_DENIED` (§17.5/A19). Não há recusa por lotação (§90).
+   * `share.join` (§RPC): devolve `{ticketId, ticket, presenterKey}`. Sessão inexistente →
+   * `E_SESSION_GONE`; quem não está na chamada não tem audiência → `E_PERMISSION_DENIED`
+   * (§17.5/A19). Não há recusa por lotação (§90).
+   *
+   * **O que o ticket de tela é, e o que ele NÃO é (correção de 2026-09-05).** A redação
+   * anterior o apresentava como "A22 passos 3–4", isto é, como a autorização criptográfica
+   * da audiência. Não é, e não tem por onde ser: a tela reusa a **mesma**
+   * `RTCPeerConnection` da voz (§17.2/§17.3), que já está gateada pelo ticket de §17.4, e
+   * §16.2 não tem campo em que este ticket viaje. O enforcement real da audiência é a lista
+   * do host, reconferida a cada mudança de roster (§17.5, emenda de 2026-08-26).
+   *
+   * O que ele **é**: a origem do `ticketId`, agora derivado dele por `ticketIdOf` como em
+   * §17.4, em vez de `randomBytes`. A assinatura Ed25519 é determinística sobre
+   * `(sessionId, channelId, par ordenado, expiresAt)`, então o id é estável entre re-joins
+   * e os dois lados chegam nele sozinhos — que era a propriedade que o id aleatório não
+   * tinha e que a divergência com a voz escondia.
    */
   join(args: { sessionId: string; memberKeyHex: KeyHex }): JoinShareOk | { ok: false; code: ShareErrorCode } {
     const now = this.#clock.now();
@@ -365,7 +378,6 @@ export class ShareHostSessions {
       this.#onSessionEvent({ kind: 'viewersChanged', sessionId: session.sessionId, channelId: session.channelId, presenterKeyHex: session.presenterKeyHex, viewerCount: session.viewers.size });
     }
 
-    const ticketId = this.#ticketIdFactory();
     const ticket = issueSessionTicket(this.#hostSecretKey, {
       sessionId: session.sessionId,
       channelId: session.channelId,
@@ -379,7 +391,7 @@ export class ShareHostSessions {
       sessionId: session.sessionId,
       channelId: session.channelId,
       presenterKeyHex: session.presenterKeyHex,
-      ticketId,
+      ticketId: this.#ticketIdFactory === null ? ticketIdOf(ticket) : this.#ticketIdFactory(),
       ticket,
       expiresAt: now + this.#ttlMs,
     };

@@ -285,6 +285,41 @@ describe("MalhaDeVoz", () => {
     expect(criadas.length).toBe(antes);
   });
 
+  /**
+   * §17.2/§17.4 (correção de 2026-09-05) — o sinal que chega antes do roster reabre a
+   * conexão pelo `aplicarSinal`, e o papel ali era um `false` FIXO. Quem deveria ofertar
+   * nascia como respondedor: sem os quatro m-lines de §17.2, a repetição de oferta saía sem
+   * m-line nenhum e a chamada conectava MUDA para sempre naquele par.
+   */
+  it("sinal de par fora de `#pares` reabre com o papel de `souOIniciador`, não como respondedor", async () => {
+    const { malha, criadas } = montar([ticket(EU, PAR)], [EU, PAR]);
+    await malha.entrar({ communityId: "c", channelId: "ch", euHex: EU, microfoneId: "default", agora: 0 });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(criadas.length).toBe(1);
+    const mLinesDoIniciador = transceiversDe(criadas[0] as unknown as object).length;
+    expect(mLinesDoIniciador).toBe(4);
+
+    // O roster oscila e fecha o par; `#autorizados` continua com ele, então um candidato
+    // trickle atrasado entra por `aplicarSinal` e reabre a conexão.
+    malha.aplicarRoster([{ keyHex: EU }]);
+    await malha.aplicarSinal({ peerKey: PAR, ticketId: "t", ice: '{"candidate":"a"}' });
+    expect(criadas.length).toBe(2);
+    // EU > PAR? `souOIniciador(EU, PAR)` é true (aa… < bb…): eu ofertaria, e a conexão
+    // reaberta tem de nascer com os m-lines reservados.
+    expect(souOIniciador(EU, PAR)).toBe(true);
+    expect(transceiversDe(criadas[1] as unknown as object).length).toBe(4);
+  });
+
+  it("do lado que RESPONDE, o mesmo caminho continua sem criar m-line (é quem adota)", async () => {
+    const { malha, criadas } = montar([ticket(EU, PAR_MENOR)], [EU, PAR_MENOR]);
+    await malha.entrar({ communityId: "c", channelId: "ch", euHex: EU, microfoneId: "default", agora: 0 });
+    await new Promise((r) => setTimeout(r, 0));
+    malha.aplicarRoster([{ keyHex: EU }]);
+    await malha.aplicarSinal({ peerKey: PAR_MENOR, ticketId: "t", ice: '{"candidate":"a"}' });
+    expect(souOIniciador(EU, PAR_MENOR)).toBe(false);
+    expect(transceiversDe(criadas[criadas.length - 1] as unknown as object).length).toBe(0);
+  });
+
   it("roster que perde um par fecha a conexão dele", async () => {
     const { malha, criadas } = montar([ticket(EU, PAR)], [EU, PAR]);
     await malha.entrar({ communityId: "c", channelId: "ch", euHex: EU, microfoneId: "default", agora: 0 });
@@ -526,6 +561,42 @@ describe("MalhaDeVoz", () => {
       pc.connectionState = "failed";
       pc.onconnectionstatechange?.(evFalso());
       expect(pc.restartIce).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * §17.4 (correção de 2026-09-05) — **quem detecta a queda renegocia, iniciador ou não.**
+   * A queda é assimétrica com frequência: só um lado vê `failed`. Guardado por
+   * `souOIniciador`, o lado respondedor chamava `restartIce()` — que só marca credenciais
+   * novas para a PRÓXIMA oferta — e ficava calado; três voltas depois o teto de tentativas
+   * matava a conexão sem que uma oferta tivesse saído. O glare que a guarda evitava já é
+   * resolvido em `aplicarSinal`, que é onde a colisão de renegociação se desempata.
+   */
+  it("o lado que RESPONDE também reoferta ao reconstruir o ICE", async () => {
+    vi.useFakeTimers();
+    try {
+      const { malha, criadas, porta } = montar([ticket(EU, PAR_MENOR)], [EU, PAR_MENOR]);
+      await malha.entrar({ communityId: "c", channelId: "ch", euHex: EU, microfoneId: "default", agora: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(souOIniciador(EU, PAR_MENOR)).toBe(false);
+      (porta.signal as ReturnType<typeof vi.fn>).mockClear();
+
+      const pc = criadas[0] as unknown as {
+        connectionState: RTCPeerConnectionState;
+        restartIce: ReturnType<typeof vi.fn>;
+        onconnectionstatechange: ((ev: Event) => void) | null;
+      };
+      pc.connectionState = "failed";
+      pc.onconnectionstatechange?.(evFalso());
+      expect(pc.restartIce).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const oferta = (porta.signal as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c) => (c[0] as { sdp?: string }).sdp !== undefined,
+      );
+      expect(oferta).toBeDefined();
     } finally {
       vi.useRealTimers();
     }
