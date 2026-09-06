@@ -3,7 +3,19 @@
 O que está aberto, hoje. Uma linha por item: **nome e ponteiro**. A descrição mora na
 referência — repetir aqui seria a segunda cópia a envelhecer.
 
-Não normativo. Atualizado em 2026-09-05 (§128). **§128** foi a verificação do relatório de
+Não normativo. Atualizado em 2026-09-05 (§129). **§129** foi a verificação do relatório de
+auditoria da **interface** da conversa direta (GEMINI/SPARK; §127 foi o do núcleo dela): dos
+14 achados, doze confirmados, um refutado e um com o mecanismo certo e a causa errada. As
+**duas** lacunas de especificação eram reais e fecharam por emenda. Doze defeitos corrigidos —
+o mais grave sendo bloquear ou esquecer no meio de uma chamada, que deixava a captura acesa no
+renderer **e** o escopo do TURN registrado no núcleo, encaminhando a mídia de quem se acabou
+de bloquear. Cinco emendas normativas: §31.16.1 (`dm.block` e `dm.forget` implicam
+`dm.callLeave`), §31.16.3 (a marca de leitura sai nas queries, e o `AttachmentDto` da DM é o
+de §15.6.1 **inteiro**), §15.6.1 (a correlação com `blob.progress` é o `blobIdHex`), §3.5
+regra 3 (posicionar inclui navegar) e U-33 (o painel de chamada que sobrevive à navegação, a
+fonte do divisor de "Novas mensagens" e a conversa em foco que não acumula não lidas).
+**B14 fechou** — a correlação já existia e só não estava escrita. Abriu **B76**, abaixo. A
+lista tinha **dois** `B66`; o de *A observar* virou **B75**. **§128** foi a verificação do relatório de
 auditoria do shell Electron (main, preload, `utilityProcess`, ponte do renderer): dos 14
 achados, sete confirmados como escritos, quatro com o mecanismo certo e a consequência
 exagerada, três refutados; das três lacunas de especificação, **uma** era real. Onze defeitos
@@ -109,7 +121,6 @@ aqui sem decisão seria inventá-lo, que é o que `CLAUDE.md` proíbe.
 | B67 | **§31.7.1 e §31.7.2 não carregam o que RD-1 e RD-5 exigem.** Dois campos faltam, e nos dois casos não há segunda leitura possível — B54 os acrescentou e documentou no ponto, como `communityInvalid` e `originFinalSeq` já haviam sido. (a) `DmContext` não tem as chaves dos dois cores de DM, e sem elas RD-1 não consegue verificar o `coreProof` (a chave do core não viaja no registro; ela é a do core que se está lendo, e o handshake de §31.8 já a carrega). (b) `SideState` só tem `lastTs`, e `clockSkewed` é definido sobre o `ts` do registro no índice `ack − 1` do **outro** lado — que na ordem canônica pode não ser o último interpretado; usar `lastTs` marcaria `clockSkewed` sem impossibilidade causal nenhuma | O aval para o texto: acrescentar os dois campos aos schemas de §31.7.1 e §31.7.2, ou dizer outra coisa. É emenda de duas linhas, não decisão de desenho | §31.7.1, §31.7.2, RD-1, RD-5, §31.6 |
 | B30 | **O voluntário de relay não tem endereço nem credencial no protocolo.** A parte implementável saiu em §95: consentimento persistido, kinds 60/61 no log, `DecisionState.relays` com entradas. O que sobra são **três decisões de protocolo**: §6.14 carrega chave/prazo/posse e nenhum endereço; §16.3 tem tabela fechada sem tópico de relay; e a credencial do TURN do host deriva do `hostTurnSecret`, que o voluntário não tem. "Seleção por menor RTT" pressupõe a lista de candidatos com endereço, que é o que falta | A forma dos três em §17.7/§16.3 — é superfície de protocolo, não detalhe de implementação. A **prova**, depois disso, continua dependendo de CGNAT real — que **§123 não mediu**, e que saiu da lista de bloqueios sem deixar de ser verdade (§123.2 item 1). **`B52` propõe uma resposta comum às três**, aproveitando a conexão UDX que já atravessa | §17.7, §6.14, §16.3, L-11, B52 |
 | B13 | Prazo de `invite.resolve` × teto do IPC-R: desfecho certo seria `unreachable`, não `E_TIMEOUT` | O aval para trocar um código de erro de §15.x. A direção já está proposta na referência; falta virar normativa | §62.4 |
-| B14 | Correlação `blob.progress` ↔ `AttachmentDto` não é declarada em §15.6 | A forma da correlação em §15.6 — é superfície de IPC, não detalhe de implementação | §58.6 |
 | B15 | Divergências de aparência: `hostStatus` 9×3, tombstone, `hiddenByBan`, `clockSkewed`, `createdAt`/`description` sem fonte | Qual é a fonte de cada um desses estados. Hoje a UI mostra o que o mock inventou, e escolher a fonte é decisão de produto | §60.5 |
 | B70 | **`blocked` e `forked` continuam sem produtor.** §14.5 declara os dois estados e o `communityClient` tem os marcadores (`markBlocked`, `markForked`), mas ninguém os chama: nada liga evento de conflito do Hypercore v10 a `forked`, e não existe critério de detecção de `gap` para `blocked`. `unauthorized` fechou em §126 (a recusa de §14.3(1) passou a viajar); estes dois não, e por razões diferentes — `forked` precisa saber qual evento do hypercore vale como conflito, e `blocked` precisa de um critério que §14.5 não dá ("o core anuncia comprimento maior do que o disponível em qualquer par" não diz como se observa isso nem por quanto tempo) | A forma dos dois critérios em §14.5 — é texto normativo, não detalhe de implementação | §126, §14.5, §5.5 L-4 |
 | B71 | **O "digitando…" está morto de ponta a ponta no renderer.** O núcleo serve os dois lados (§17.6: `presencePublish{typingChannelId}`, `subscribeChannel`, fan-out por assinatura) e o `TypingIndicator` existe na tela, mas o renderer **nunca assina** (`channelSubscribeTyping` só aparece no teste de contrato), **nunca publica** (não há comando de IPC-R que mande `typingChannelId`) e o `setTyping` do `messageStore` não tem chamador. Sem assinante, `#typingDeltaFor` devolve `null` e nada sai do host. A conversa direta (`dm.setTyping`) é outro caminho e está viva | A decisão de produto: o "digitando…" entra no v1 em canal de comunidade, ou o indicador sai da tela? Definido isso, ligar as três pontas é do agente | §126, §17.6, `frontend/src/features/channel/TypingIndicator.tsx` |
@@ -137,9 +148,13 @@ o mesmo texto.
 
 ### Caminho do produto, em ordem
 
-**Vazio.** A fase 11 (a conversa direta, §31) fechou em §100..§109, e o que veio depois —
-§110..§115 — foi trabalho de superfície e de texto normativo sobre contrato já existente, sem
-abrir fase nova. Não há próximo item nesta lista.
+| # | Item | Referência |
+|---|---|---|
+| B76 | **A conversa direta não tem responder, editar, apagar nem reagir.** U-33 os lista por escrito ("a conversa reusa a anatomia de 2.1 — … composer, **responder, editar, deletar, reagir**"), o núcleo os serve desde §100..§109 (`dm.edit`, `dm.delete`, `dm.react` e o `replyToId` de `dm.send`, §31.16.1), o cliente de IPC-R os expõe e `live/dm.ts` tem as quatro funções escritas — **sem chamador nenhum**. `DmMessageRow` não tem barra de ações e o `replyToId` nunca é preenchido. É a família de B44/B49/B71/B72 (superfície declarada, sem produtor), com a metade que falta do lado da tela: barra de ações por mensagem, seletor de emoji, edição no lugar, confirmação de apagar e a citação no composer. Não é correção de defeito — é a fatia de produto que U-33 pede e que §100..§109 não entregou | §129.5, U-33, §31.16.1 |
+
+A fase 11 (a conversa direta, §31) fechou em §100..§109, e o que veio depois — §110..§115 —
+foi trabalho de superfície e de texto normativo sobre contrato já existente, sem abrir fase
+nova. **B76** é o que sobrou dela na tela, e foi §129 que o encontrou.
 
 O que a conversa direta ainda deve **não é código de fase**, e está registrado nas seções
 acima: **B66** e **B67** de texto normativo. A medida em rede real que a mídia de DM
@@ -168,7 +183,7 @@ Sintomas com repro possível nesta máquina: o próximo passo é investigar, nã
 |---|---|---|
 | B48 | Fila de karaokê pós-respawn do host: a fila é efêmera (§6.16) e ninguém a re-anuncia — quem estava no turno fica "todos mudos" sem evento nomeado explicando. Repro: respawn do núcleo host com canal em modo fila. **A metade que era do roster fechou em 2026-09-05** (§16.4, emenda): quem sai da chamada sai da fila, então o "todos mudos" por titular fantasma não acontece mais. O que resta aqui é o caso do respawn, em que a fila inteira some junto com o host | §97.4, §6.16, §16.4 |
 | B18 | Chips de reação otimistas através de respawn de epoch | §61.4 |
-| B66 | Apagar a PRÓPRIA mensagem esconde a linha inteira (`deletedIds`), enquanto o tombstone projetado que os outros veem é uma linha com o texto de U-20. Quem apagou vê a conversa fechar o buraco; quem não apagou vê o buraco marcado — e um reload troca uma coisa pela outra para a mesma pessoa. §15.6.1 devolve a linha tombstonada e U-20 diz "some da interface": as duas leituras cabem, e nenhuma está escrita. Repro: apagar a própria mensagem, reabrir o app | §15.6.1, `deltas-ux-v2.md` U-20 |
+| B75 | Apagar a PRÓPRIA mensagem esconde a linha inteira (`deletedIds`), enquanto o tombstone projetado que os outros veem é uma linha com o texto de U-20. Quem apagou vê a conversa fechar o buraco; quem não apagou vê o buraco marcado — e um reload troca uma coisa pela outra para a mesma pessoa. §15.6.1 devolve a linha tombstonada e U-20 diz "some da interface": as duas leituras cabem, e nenhuma está escrita. Repro: apagar a própria mensagem, reabrir o app | §15.6.1, `deltas-ux-v2.md` U-20 |
 | B65 | `E_STORAGE_FULL` **durante o append do log** (não do blob) só está definido para a criação da comunidade (§11.1). Sem a cota de anexos (§122), encher o disco deixou de ser caso raro, e o append sem desfecho nomeado é a próxima parada silenciosa. Repro: `blob.stage` + `message.send` com o volume do `dataDir` quase cheio | §122.5, `threat-model-seguranca.md` T-09 item 12, §11.1 |
 
 ### Qualidade

@@ -400,6 +400,14 @@ Regras normativas:
    recarga da janela numa reabertura dos convites já tratados.
 3. Deep link **nunca dispara ação**: ele só posiciona a UI numa tela de confirmação. Entrar
    numa comunidade sempre exige um clique explícito depois do preview.
+
+   **Emenda de 2026-09-05 — posicionar inclui chegar lá.** "Nunca dispara ação" é sobre o
+   **comando** (`invite.join`, `dm.open`), não sobre navegar: sem navegação não existe a
+   tela em que a confirmação aparece, e o link não posiciona coisa nenhuma. Foi o que
+   acontecia com `u/<KEY64>` fora do destino de conversas — a chave era guardada num store
+   que só o destino da DM lia (B63(a)), e clicar no link de dentro de uma comunidade não
+   produzia efeito visível nenhum. O renderer troca de destino ao receber o link, e a
+   confirmação continua exigindo o clique.
 4. Com o app já aberto, `second-instance` encaminha à instância viva
    (`requestSingleInstanceLock`); o lock de dado (§10.8) e o lock de instância são
    **checados na mesma ordem em todo caminho**: instância primeiro, dado depois.
@@ -3875,6 +3883,13 @@ type AttachmentDto = { blobsCoreKey: Key, blobId: object, name, sizeBytes, kind,
 // que `0`/`false` dizem — não há registro persistente de pares, e inventar um seria pior.
 // Emenda de 2026-09-05 (B74): `revealMode` é a regra 1 de §13.6 dita à UI, decidida pela
 // extensão REAL do nome. `kind` continua sendo o do remetente e não serve para isto.
+// Emenda de 2026-09-05 (fecha B14): a **correlação com os eventos de blob** é o `blobIdHex`
+// de §13.2 — os 16 primeiros bytes do `hash`, em hex (`hash.slice(0,32)`). É a chave que
+// `blob.progress`, `blob.completed`, `blob.peerLost`, `blob.unavailable` e
+// `attachment.corrupt` carregam desde a emenda de 2026-08-22, e ela não estava declarada
+// deste lado: a UI recebia o DTO por uma chave e os eventos por outra, sem nada dizendo que
+// são a mesma. Vale igual na conversa direta (§31.16.3) — lá o `communityId` do pedido de
+// download é o `conversationId` (§31.14), e a correlação não muda.
 
 // `blob.stage` NÃO devolve um `AttachmentDto`: o que ele descreve são bytes recém-escritos
 // no core de blobs local, sem estado de download, sem pares e sem `revealMode` (nada foi
@@ -7819,7 +7834,7 @@ nova: o núcleo não conhece mudo de DM.
 |---|---|---|---|---|
 | `dm.open` | `{peerKey}` | standard | `{conversationId, state}` | `E_VALIDATION.peerKey`, `E_DM_BLOCKED`, `E_LIMIT_EXCEEDED` |
 | `dm.accept` | `{conversationId}` | standard | `{state:'accepted'}` — cria o core e escreve o `dm.hello` | `E_NOT_FOUND`, `E_DM_BLOCKED`, `E_STORAGE_FULL` |
-| `dm.block` | `{conversationId}` | standard | `{}` | `E_NOT_FOUND` |
+| `dm.block` | `{conversationId}` | standard | `{}` — **encerra a chamada desta conversa antes de bloquear** | `E_NOT_FOUND` |
 | `dm.unblock` | `{conversationId}` | standard | `{state}` | `E_NOT_FOUND` |
 | `dm.send` | `{conversationId, content, attachment?, replyToId?, clientRef}` | standard | `{messageId, ordSum, state:'written'}` — **o registro já está no log** | `E_VALIDATION`, `E_DM_BLOCKED`, `E_DM_FORKED`, `E_BLOB_NOT_STAGED`, `E_STORAGE_FULL`, `E_VERSION_UNSUPPORTED` |
 | `dm.edit` | `{conversationId, messageId, content}` | standard | `{ordSum}` | `E_CANNOT_EDIT_OTHERS`, `E_MESSAGE_DELETED`, `E_DM_FORKED` |
@@ -7829,7 +7844,7 @@ nova: o núcleo não conhece mudo de DM.
 | `dm.markRead` | `{conversationId}` | standard | `{unreadCount:0}` | `E_NOT_FOUND` |
 | `dm.setTyping` | `{conversationId, on}` | standard | `{}` | — (efêmero; nunca enfileira) |
 | `dm.setContactPolicy` | `{policy:'anyone'\|'shared-community'}` | standard | `{}` | `E_VALIDATION` |
-| `dm.forget` | `{conversationId}` | **main-confirmed** | `{}` | `E_NOT_FOUND` |
+| `dm.forget` | `{conversationId}` | **main-confirmed** | `{}` — **encerra a chamada desta conversa antes de esquecer** | `E_NOT_FOUND` |
 | `dm.activate` | `{conversationId \| null}` | standard | `{residency}` | `E_NOT_FOUND` |
 | `dm.callJoin` | `{conversationId}` | standard | `{sessionId, peerKey, iceServers[], peerOnCall}` — **emenda de 2026-09-02** (§31.15) | `E_NOT_FOUND` |
 | `dm.callLeave` | `{conversationId}` | standard | `{}` — idempotente | — |
@@ -7849,6 +7864,24 @@ atender é o caso normal —, e quem o vira é `dm.callState`.
 `E_PEER_UNREACHABLE` em `dm.signal` é o mesmo código de §16.2 `voiceSignal`, e aqui ele é
 honesto por construção: sem canal `p2p-dm/1` de pé não existe caminho nenhum, e não há host
 a quem atribuir a falha.
+
+**Emenda de 2026-09-05 — `dm.block` e `dm.forget` implicam `dm.callLeave`.** Os dois
+encerram a chamada daquela conversa, e o `dm.callLeave` acontece **antes** do comando: depois
+de bloquear, `autorizaDm` é falso (§31.8(4)) e o `dm.call{on:false}` não teria por onde sair —
+o par ficaria com a chamada de pé contra quem acabou de bloqueá-lo.
+
+A razão de a regra ser do núcleo, e não só do renderer: a mídia é ponta a ponta (§17.2) e não
+passa pelo canal que o bloqueio fecha, mas o **escopo do serviço de §17.3** é do núcleo.
+Bloquear sem sair deixava o escopo registrado no `MediaServer` e a credencial TURN emitida
+por este nó ainda válida — este nó encaminhando a mídia de quem acabou de bloquear. §31.15 já
+diz que a revogação de §17.4 acontece "pela única via que sobrou aqui: **sair encerra**"; esta
+emenda diz que bloquear e esquecer são duas dessas vias. `dm.callLeave` é idempotente, então a
+implicação não muda nada quando não há chamada.
+
+O renderer tem a **outra metade**, e ela não é derivável desta: o dispositivo. Microfone e
+câmera são dele (§3.4), e nenhum comando do núcleo os apaga — sem desligá-los, bloquear no
+meio de uma chamada deixava a captura acesa. Em `dm.forget` isso era pior, porque a conversa
+some da lista e com ela a única superfície que oferecia desligar (§31.15, U-33).
 
 `dm.forget` é `main-confirmed` pela mesma razão que `community.forget`: ele apaga dado, e a
 barreira contra o apagamento acidental é o diálogo nativo (§15.3).
@@ -7919,15 +7952,41 @@ type DmMessageDto = {
 | Query | Argumento | Resposta |
 |---|---|---|
 | `query.dmConversations` | `{}` | `[{ conversationId, peer: DmPeerRef, state: DmConvState, sync: DmSync, unread: {count}, lastMessage?: {ordSum, ts, excerpt, author}, pendingRecords? }]`, mais recente primeiro |
-| `query.dmConversation` | `{conversationId}` | `{ conversationId, peer: DmPeerRef, state, sync, lag, deliveredUpTo, selfInvalid, peerInvalid, partialInterpretation, blockedAt?, retainUntil? }` |
-| `query.dmMessages` | `{conversationId, cursor?, limit=50, direction:'before'\|'after'}` | `{ messages: DmMessageDto[], nextCursor?, hasMore, sync: DmSync }` |
+| `query.dmConversation` | `{conversationId}` | `{ conversationId, peer: DmPeerRef, state, sync, lag, deliveredUpTo, selfInvalid, peerInvalid, partialInterpretation, lastReadOrdSum, lastReadAuthorKey, blockedAt?, retainUntil? }` |
+| `query.dmMessages` | `{conversationId, cursor?, limit=50, direction:'before'\|'after'}` | `{ messages: DmMessageDto[], nextCursor?, hasMore, sync: DmSync, lastReadOrdSum, lastReadAuthorKey }` |
 | `query.dmMessage` | `{conversationId, messageId}` | `DmMessageDto & { reactions: ReactionDto[], attachment?: AttachmentDto } \| null` |
 | `query.dmPrefs` | `{}` | `{ contactPolicy: 'anyone' \| 'shared-community' }` |
 
 **Cursor:** `base64url({ordSum, authorKey, id})`, opaco. Inválido ou de outra conversa →
 `E_BAD_CURSOR`, e a UI recomeça do início. Nunca resultado errado em silêncio (§15.6.1).
 
-`ReactionDto` e `AttachmentDto` são os de §15.6.1, sem alteração.
+`ReactionDto` e `AttachmentDto` são os de §15.6.1, sem alteração — **inteiros**, e a palavra
+importa: metade daquele DTO é estado de download (`state`, `progress`, `localPath`), lida do
+mesmo `local_blob_cache` de §13.4 que `query.message` já lê. §31.14 manda reutilizar o fluxo
+de download sem alteração, e devolver só o que está em `dm_attachments` — nome, tamanho e
+ponteiro — deixa o cartão da conversa sem como saber que o arquivo já está no disco.
+`availablePeers`/`hostAvailable` são `0`/`false` pela mesma razão de §15.6.1 (leitura do
+bitfield **vivo**), e numa DM `hostAvailable` é `false` por construção: não há host.
+
+**Emenda de 2026-09-05 — a marca de leitura sai nas queries (`lastReadOrdSum`,
+`lastReadAuthorKey`).** É o watermark de `dm_local_read_state` (§31.12/A28), na forma do
+`ordKey` de §31.6, e ele fecha uma lacuna nomeada: **U-33** manda a conversa reusar a anatomia
+de §9 2.1 "inclusive o divisor de *Novas mensagens*", e nada em §31.16.3 dizia **onde** o
+corte fica. `unread.count` diz **quantas**; o divisor precisa saber **onde**, e as duas coisas
+não são derivadas uma da outra.
+
+Os **dois** eixos viajam, e o segundo não é decoração: `naoLidas` desempata pela chave do
+autor (§31.6), então um corte só por `ordSum` discordaria do próprio contador exatamente no
+empate — o selo diria "1 não lida" e a tela não mostraria divisor nenhum.
+
+`lastReadOrdSum = -1` com a chave zerada é o sentinela de "nada lido nesta máquina": a ordem
+canônica começa em 0, e nesse caso tudo é novo. A marca vem na **mesma resposta** da página
+de propósito — numa segunda consulta ela poderia avançar entre as duas, e o divisor apareceria
+no lugar errado por uma corrida.
+
+Congelar o corte enquanto a conversa está aberta é do renderer, e é obrigatório: abrir a
+conversa chama `dm.markRead` logo em seguida (§31.16.1), e um divisor que acompanhasse o
+watermark sumiria no mesmo quadro em que apareceu.
 
 ### 31.17 Erros
 

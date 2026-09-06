@@ -2532,6 +2532,10 @@ export async function bootCore(deps: BootDeps): Promise<CoreRuntime> {
           await blobs.detachLocalCore(conversationId);
         },
         foiStaged: (a) => blobs.stagedMatching(a) !== null,
+        // §31.16.3 — o mesmo `local_blob_cache` de §13.4 que `query.message` já lê. Sem
+        // esta ponta, `query.dmMessage` devolvia meio `AttachmentDto` e o cartão da
+        // conversa não sabia que o arquivo já estava no disco.
+        cache: (blobsCoreKey, blobIdHex) => blobs.cache.get(blobsCoreKey, blobIdHex),
       },
     });
     runtime.dm = dmRuntime;
@@ -2567,6 +2571,9 @@ export async function bootCore(deps: BootDeps): Promise<CoreRuntime> {
     const superficieDm: DmSurfaceDeps = {
       open: (peerKey) => dmRuntime.dm.abrir(peerKey),
       accept: (id) => dmRuntime.dm.aceitar(id),
+      // §31.15 — bloquear e esquecer **encerram a chamada**. Quem garante a ordem é
+      // `registerDmCommands`, e não esta montagem: a regra não pode depender de cada raiz de
+      // composição se lembrar dela (ver o comentário de `dm.block` em `dmCommands.ts`).
       block: (id) => dmRuntime.dm.bloquear(id),
       unblock: (id) => dmRuntime.dm.desbloquear(id),
       forget: (id) => dmRuntime.dm.esquecer(id),

@@ -29,7 +29,9 @@ import {
   mesclarMensagens,
   nomeComHandle,
   palcoDeVideo,
+  primeiraNaoLida,
   rotuloDeEntrega,
+  rotuloDoPainelDeChamada,
   tempoDesdeEscrita,
 } from "../dmRegras";
 import type { DmMessageDto, DmSync } from "../../../ipc/dto";
@@ -348,10 +350,35 @@ describe("lerChaveDeIdentidade — a porta de entrada da conversa direta", () =>
   it("chave de quem já está na lista devolve a conversa existente — `dm.open` é derivado (§31.2 r. 1)", () => {
     const r = lerChaveDeIdentidade(OUTRA.toUpperCase(), {
       euHex: EU,
-      conversas: [{ conversationId: "conv-1", peer: { key: OUTRA } }],
+      conversas: [{ conversationId: "conv-1", state: "accepted", peer: { key: OUTRA } }],
     });
     // Sem isto a tela diria "pedido enviado" para uma conversa que já tem histórico.
     expect(r).toEqual({ ok: true, peerKey: OUTRA, jaExiste: "conv-1" });
+  });
+
+  it("`jaExiste` cobre `blocked` e `pending-in` — os dois desfechos que `dm.open` estraga", () => {
+    // `blocked` recusa com `E_DM_BLOCKED` (§31.16.1), e o que a pessoa queria era o
+    // histórico legível que `blocked` promete ser. `pending-in` é pior: `dm.open` sobre um
+    // pedido recebido **aceita** (§31.9 regra 1, "os dois abriram ao mesmo tempo"), e
+    // aceitar escreve o `dm.hello` e não se desfaz — exatamente o ato que a seção de
+    // pedidos da lista existe para impedir que aconteça por engano.
+    for (const state of ["blocked", "pending-in"] as const) {
+      const r = lerChaveDeIdentidade(OUTRA, {
+        euHex: EU,
+        conversas: [{ conversationId: "conv-1", state, peer: { key: OUTRA } }],
+      });
+      expect(r).toEqual({ ok: true, peerKey: OUTRA, jaExiste: "conv-1" });
+    }
+  });
+
+  it("`left` NÃO conta: ela não está na lista, então abrir a que existe não abriria nada", () => {
+    // §31.19 tira a conversa esquecida de vista. Quem sabe o que fazer com ela é `dm.open`,
+    // que a remonta; devolver o id aqui mandaria a tela abrir uma conversa invisível.
+    const r = lerChaveDeIdentidade(OUTRA, {
+      euHex: EU,
+      conversas: [{ conversationId: "conv-1", state: "left", peer: { key: OUTRA } }],
+    });
+    expect(r).toEqual({ ok: true, peerKey: OUTRA, jaExiste: null });
   });
 });
 
@@ -488,5 +515,74 @@ describe("§17.5/§31.15 — o palco da tela, e o som que viaja com ela", () => 
     expect(palcoDeVideo({ telaLigada: false, parComTela: true }).comSom).toBe(true);
     expect(palcoDeVideo({ telaLigada: true, parComTela: false }).comSom).toBe(false);
     expect(palcoDeVideo({ telaLigada: false, parComTela: false }).comSom).toBe(false);
+  });
+});
+
+describe("U-33 — o divisor de \"Novas mensagens\"", () => {
+  const EU = "bb";
+  function doPar(id: string, ordSum: number, key = "aa"): DmMessageDto {
+    return msg({ id, ordSum, author: { key, displayName: "x", handle: "@x", avatarColor: 0 } });
+  }
+
+  it("sem corte não há divisor: conversa nunca aberta nesta máquina não inventa um", () => {
+    expect(primeiraNaoLida([doPar("m1", 1)], undefined, EU)).toBeNull();
+  });
+
+  it("corta na primeira mensagem ACIMA do watermark", () => {
+    const lista = [doPar("m1", 1), doPar("m2", 2), doPar("m3", 3)];
+    expect(primeiraNaoLida(lista, { ordSum: 2, authorKey: "aa" }, EU)).toBe("m3");
+  });
+
+  it("tudo lido: nenhum divisor", () => {
+    const lista = [doPar("m1", 1), doPar("m2", 2)];
+    expect(primeiraNaoLida(lista, { ordSum: 2, authorKey: "aa" }, EU)).toBeNull();
+  });
+
+  it("conversa nunca marcada (`ordSum: -1`) abre o divisor na primeira do par", () => {
+    const lista = [doPar("m1", 0), doPar("m2", 1)];
+    expect(primeiraNaoLida(lista, { ordSum: -1, authorKey: "" }, EU)).toBe("m1");
+  });
+
+  it("a MINHA mensagem nunca abre o divisor — eu escrevi, logo eu li", () => {
+    // A mesma regra de `naoLidas` no núcleo, e ela precisa valer nos dois: o selo diria
+    // zero e o divisor apareceria sobre a própria mensagem de quem acabou de escrever.
+    const minha = msg({ id: "meu", ordSum: 5, author: { key: EU, displayName: "eu", handle: "@eu", avatarColor: 0 } });
+    expect(primeiraNaoLida([minha], { ordSum: 1, authorKey: "aa" }, EU)).toBeNull();
+    expect(primeiraNaoLida([minha, doPar("dele", 6)], { ordSum: 1, authorKey: "aa" }, EU)).toBe("dele");
+  });
+
+  it("empate de `ordSum` desempata pela chave do autor — o `ordKey` inteiro de §31.6", () => {
+    // Sem o segundo eixo o divisor discordaria do selo exatamente aqui: `unread.count`
+    // conta a de chave maior, e um corte só por `ordSum` não a mostraria.
+    const lista = [doPar("a", 7, "aa"), doPar("z", 7, "zz")];
+    expect(primeiraNaoLida(lista, { ordSum: 7, authorKey: "aa" }, EU)).toBe("z");
+  });
+});
+
+describe("§31.15 — a chamada que falhou para de oferecer câmera e tela", () => {
+  it("com `falha`, `acoesDeVideo` some — não há par conectado a que anexar trilha", () => {
+    // `dmCallStore.falhou` mantém `na-chamada` de propósito (a faixa de §99 precisa ficar),
+    // e o veredito da malha só sai quando NENHUM par chegou a `connected`. Oferecer a
+    // câmera ali acende o dispositivo para mandá-lo a lugar nenhum.
+    expect(acoesDeVideo("accepted", "na-chamada")).toEqual(["camera", "tela"]);
+    expect(acoesDeVideo("accepted", "na-chamada", "sem caminho")).toEqual([]);
+  });
+});
+
+describe("U-33 — o painel de chamada que sobrevive à navegação", () => {
+  it("cada estado tem rótulo, e `fora` não tem painel", () => {
+    expect(rotuloDoPainelDeChamada("fora")).toBeNull();
+    expect(rotuloDoPainelDeChamada("recebendo")).toBe("Chamada recebida");
+    expect(rotuloDoPainelDeChamada("chamando")).toBe("Chamando…");
+    expect(rotuloDoPainelDeChamada("na-chamada")).toBe("Em chamada");
+  });
+
+  it("nenhum rótulo afirma nada sobre o outro lado (L-26/L-28)", () => {
+    // "Chamando…" é fato local. "Está tocando lá" exigiria um atestado que o protocolo
+    // não dá — o mesmo que `faixaDeChamada` já recusa.
+    for (const e of ["chamando", "recebendo", "na-chamada"] as const) {
+      const t = rotuloDoPainelDeChamada(e) ?? "";
+      expect(t).not.toMatch(/offline|tocando|bloque/i);
+    }
   });
 });

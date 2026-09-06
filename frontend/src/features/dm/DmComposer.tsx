@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Paperclip, SendHorizontal, X } from "lucide-react";
 
 import { Button } from "../../components/ui/Button";
+import { Spinner } from "../../components/ui/Spinner";
 import { cn } from "../../lib/cn";
 import { anexarArquivo, avisarDigitacao, enviarMensagem } from "../../live/dm";
 import { formatFileSize } from "../../lib/format";
@@ -44,6 +45,27 @@ export function DmComposer({
   const [anexo, setAnexo] = useState<StagedAttachmentDto | null>(null);
   const [anexando, setAnexando] = useState(false);
   const digitando = useRef(false);
+
+  /**
+   * §31.16.1 `dm.setTyping` — **o "digitando…" morre com o componente.**
+   *
+   * Sair da conversa com meia frase no campo deixava o pulso `on:true` de pé do outro lado
+   * até o TTL de 5 s expirar (`live/dm.ts`), e o par via "está digitando…" de alguém que já
+   * tinha ido embora. O TTL limitava o dano; ele não é o desligamento, é a rede de segurança
+   * para quando o desligamento não chega.
+   *
+   * O componente é remontado por conversa (o `key` de `DmDestino`), então desmontar é
+   * exatamente "saí desta conversa". `dm.setTyping` é efêmero e nunca enfileira (§31.16.1):
+   * um aviso que não sai porque o par está offline não deixa resto nenhum.
+   */
+  useEffect(
+    () => () => {
+      if (!digitando.current) return;
+      digitando.current = false;
+      void avisarDigitacao(conversationId, false);
+    },
+    [conversationId],
+  );
 
   async function escolherArquivo() {
     if (desabilitado || anexando) return;
@@ -109,14 +131,25 @@ export function DmComposer({
           desabilitado && "opacity-60",
         )}
       >
+        {/*
+          §13.3/§13.7 — o clipe abre a caixa do main e o `blob.stage` escreve os bytes ANTES
+          de existir mensagem nenhuma. Num disco lento isso demora, e o botão apagado sem
+          mais nada é a definição de botão morto: o giro diz que a máquina está trabalhando,
+          que é o mínimo que §20.3 pede de uma operação com duração.
+        */}
         <Button
           variant="icon"
           size="sm"
           onClick={() => void escolherArquivo()}
           disabled={desabilitado || anexando}
           aria-label="Anexar arquivo"
+          aria-busy={anexando}
         >
-          <Paperclip size={16} strokeWidth={2} aria-hidden="true" />
+          {anexando ? (
+            <Spinner />
+          ) : (
+            <Paperclip size={16} strokeWidth={2} aria-hidden="true" />
+          )}
         </Button>
         <textarea
           value={texto}
@@ -140,7 +173,11 @@ export function DmComposer({
           variant="icon"
           size="sm"
           onClick={() => void enviar()}
-          disabled={desabilitado || (texto.trim().length === 0 && anexo === null) || ocupado}
+          // Enviar durante o staging mandaria a mensagem SEM o anexo que está a caminho:
+          // `anexo` só existe depois que o `blob.stage` resolve.
+          disabled={
+            desabilitado || (texto.trim().length === 0 && anexo === null) || ocupado || anexando
+          }
           aria-label="Enviar"
         >
           <SendHorizontal size={16} strokeWidth={2} aria-hidden="true" />

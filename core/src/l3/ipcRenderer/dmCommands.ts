@@ -173,10 +173,31 @@ export function registerDmCommands(server: IpcServer, deps: DmSurfaceDeps): void
     return lancarSeRecusa(await deps.accept(texto(arg, 'conversationId')));
   });
 
-  /** `dm.block{conversationId}` → `{}`. **Silencioso**: nada vai para log nenhum (regra 3). */
+  /**
+   * `dm.block{conversationId}` → `{}`. **Silencioso**: nada vai para log nenhum (regra 3).
+   *
+   * **Bloquear encerra a chamada desta conversa** (§31.16.1, emenda de 2026-09-05), e o
+   * `dm.callLeave` vai **antes**: depois de bloquear, `autorizaDm` é falso (§31.8(4)) e o
+   * `dm.call{on:false}` não teria por onde sair — o par ficaria com a chamada de pé contra
+   * quem acabou de bloqueá-lo.
+   *
+   * Sem isto, `dm.block` fechava o canal e deixava tudo o mais em pé: a mídia é ponta a
+   * ponta (§17.2) e não passa por ele, e o escopo continuava registrado no `MediaServer`
+   * com a credencial que este nó emitiu ainda válida — o meu TURN encaminhando a mídia de
+   * quem eu acabei de bloquear. §31.15 diz que a revogação de §17.4 acontece "pela única
+   * via que sobrou aqui: **sair encerra**", então bloquear tem de sair.
+   *
+   * A ordem mora **aqui**, e não na raiz de composição, por uma razão medida: há mais de
+   * uma montagem da mesma superfície (o `boot.ts` do produto e os rigs de teste), e uma
+   * regra que dependesse de cada uma se lembrar dela vale só onde alguém lembrou. Isto não
+   * é decisão de política — L2 continua decidindo o que bloquear faz —, é a ordem de dois
+   * comandos que esta fronteira já roteia. `callLeave` é idempotente (§31.16.1).
+   */
   server.register('dm.block', 'standard', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
-    lancarSeRecusa(deps.block(texto(arg, 'conversationId')));
+    const conversationId = texto(arg, 'conversationId');
+    deps.callLeave(conversationId);
+    lancarSeRecusa(deps.block(conversationId));
     return {};
   });
 
@@ -290,10 +311,19 @@ export function registerDmCommands(server: IpcServer, deps: DmSurfaceDeps): void
     return {};
   });
 
-  /** **main-confirmed** (§15.3): apaga dado, e a barreira é o diálogo nativo. */
+  /**
+   * **main-confirmed** (§15.3): apaga dado, e a barreira é o diálogo nativo.
+   *
+   * Encerra a chamada antes, pela mesma razão de `dm.block` — e aqui com uma consequência a
+   * mais no renderer: esquecer tira a conversa da lista, e com ela some a tela que carrega o
+   * único botão de desligar. A chamada ficava órfã, capturando microfone e câmera, e ainda
+   * recusando a próxima com "voz é uma só" (§15.4).
+   */
   server.register('dm.forget', 'main-confirmed', async (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
-    lancarSeRecusa(await deps.forget(texto(arg, 'conversationId')));
+    const paraEsquecer = texto(arg, 'conversationId');
+    deps.callLeave(paraEsquecer);
+    lancarSeRecusa(await deps.forget(paraEsquecer));
     return {};
   });
 

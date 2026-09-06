@@ -94,8 +94,11 @@ export function DmNovaConversaModal({
 }: {
   open: boolean;
   onClose: () => void;
-  /** Recebe a chave já normalizada e validada. */
-  onAbrir: (peerKey: string) => void;
+  /**
+   * Recebe a chave já normalizada e validada, e o `conversationId` quando ela **já está na
+   * lista** — que é o `jaExiste` de `lerChaveDeIdentidade`, e não uma conveniência.
+   */
+  onAbrir: (peerKey: string, jaExiste: string | null) => void;
   /** B64 — a chave vinda do link, pré-preenchida e ainda confirmável. */
   chaveInicial?: string | null;
 }) {
@@ -119,7 +122,17 @@ export function DmNovaConversaModal({
     }
     // Chave de quem já está na lista abre a conversa existente: `dm.open` é derivado
     // (§31.2 regra 1), e um "pedido enviado" aqui seria mentira sobre o que aconteceu.
-    onAbrir(r.peerKey);
+    //
+    // O `jaExiste` era calculado e **descartado**, e mandar a chave pelo `dm.open` de
+    // qualquer forma custava dois desfechos errados, um deles grave:
+    //
+    //   - conversa `blocked` → `E_DM_BLOCKED` (§31.16.1), e um toast de "não foi possível
+    //     abrir" no lugar do histórico legível que `blocked` promete ser;
+    //   - conversa `pending-in` → **aceite silencioso**. `dm.open` sobre um pedido recebido
+    //     é `aceitar` (§31.9 regra 1: "os dois abriram ao mesmo tempo"), e aceitar é o ato
+    //     que escreve o `dm.hello` e não se desfaz. É exatamente o que a seção de pedidos
+    //     da lista existe para impedir que aconteça por engano.
+    onAbrir(r.peerKey, r.jaExiste);
     fechar();
   };
 

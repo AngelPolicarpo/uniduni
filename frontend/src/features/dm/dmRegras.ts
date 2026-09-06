@@ -412,6 +412,32 @@ export function faixaDeChamada(
   }
 }
 
+/**
+ * O rótulo do painel de chamada que **sobrevive à navegação** (U-33, emenda de 2026-09-05).
+ *
+ * Ele existe pela mesma razão que o `VoicePanel` da comunidade: "a chamada pode ser de uma
+ * comunidade que nem está aberta, e este painel é o que diz isso" (§9, 2.3.1 / §11 C11).
+ * Numa DM o buraco era maior — os botões de atender e desligar moravam **só** no cabeçalho
+ * da conversa, sob a guarda de ser a conversa aberta. Quem estivesse em outra conversa ou
+ * numa comunidade não tinha como atender a chamada que estava chegando, nem como desligar a
+ * que estava de pé, e ainda ficava impedido de iniciar outra por §15.4.
+ *
+ * As frases não afirmam nada sobre o outro lado, pela mesma disciplina de `faixaDeChamada`:
+ * "Chamando…" é fato local, não "está tocando lá".
+ */
+export function rotuloDoPainelDeChamada(chamada: DmCallState): string | null {
+  switch (chamada) {
+    case "fora":
+      return null;
+    case "chamando":
+      return "Chamando…";
+    case "recebendo":
+      return "Chamada recebida";
+    case "na-chamada":
+      return "Em chamada";
+  }
+}
+
 /* ─── §31.16.1 `dm.open` — a chave de identidade colada ───────────────────── */
 
 /**
@@ -475,7 +501,11 @@ export function lerChaveDeIdentidade(
     /** A minha chave — §31.2 regra 5: `lo = hi` não é conversa. */
     readonly euHex: string | null;
     /** As conversas que já existem, para não criar pedido onde já há histórico. */
-    readonly conversas: readonly { readonly conversationId: string; readonly peer: { readonly key: string } }[];
+    readonly conversas: readonly {
+      readonly conversationId: string;
+      readonly state: DmConvState;
+      readonly peer: { readonly key: string };
+    }[];
   },
 ): ChaveColada {
   const recortado = bruto.trim();
@@ -499,8 +529,13 @@ export function lerChaveDeIdentidade(
   // `dm.open` é **derivado, nunca atribuído** (§31.2 regra 1): a mesma chave dá sempre o
   // mesmo `conversationId`. Colar a chave de quem já está na lista tem de abrir a conversa
   // que existe, não parecer que criou um pedido novo.
+  //
+  // `left` fica **de fora**: ela não está na lista (§31.19 tira a conversa de vista), então
+  // "abrir a que existe" não abriria nada. Quem sabe o que fazer com uma conversa esquecida
+  // é `dm.open`, que a remonta.
   const existente =
-    contexto.conversas.find((c) => c.peer.key.toLowerCase() === chave)?.conversationId ?? null;
+    contexto.conversas.find((c) => c.peer.key.toLowerCase() === chave && c.state !== "left")
+      ?.conversationId ?? null;
   return { ok: true, peerKey: chave, jaExiste: existente };
 }
 
@@ -560,9 +595,55 @@ export type AcaoDeVideo = "camera" | "tela";
  * então em `chamando` e em `recebendo` não há malha a que anexar a trilha. Um botão de câmera
  * ali capturaria o dispositivo para não mandá-lo a lugar nenhum.
  */
-export function acoesDeVideo(state: DmConvState, chamada: DmCallState): AcaoDeVideo[] {
+export function acoesDeVideo(
+  state: DmConvState,
+  chamada: DmCallState,
+  /**
+   * O motivo de §99 quando a chamada **não fechou**. Ele não encerra a chamada de propósito
+   * — a faixa precisa continuar visível com o desfecho (`dmCallStore.falhou`) —, mas ele diz
+   * que não há par conectado: `#veredito` da malha só o produz quando nenhum par chegou a
+   * `connected`. Oferecer câmera e tela ali acende o dispositivo para mandá-lo a lugar
+   * nenhum, que é a mesma promessa vazia que `acoesDeVideo` já recusa em `chamando`.
+   */
+  falha: string | null = null,
+): AcaoDeVideo[] {
   if (state !== "accepted") return [];
+  if (falha !== null) return [];
   return chamada === "na-chamada" ? ["camera", "tela"] : [];
+}
+
+/* ─── U-33 — o divisor de "Novas mensagens" ───────────────────────────────── */
+
+/**
+ * O **id** da primeira mensagem depois do corte de leitura, ou `null` quando não há corte.
+ *
+ * U-33 manda a conversa reusar a anatomia de 2.1, e o divisor está na lista. O que faltava
+ * era a fonte: §31.16.3 dava o **quantas** (`unread.count`) e não o **onde** — o watermark
+ * de `dm_local_read_state` não saía do núcleo. A emenda de 2026-09-05 o devolve nas duas
+ * queries, e esta função é a regra que o transforma em posição.
+ *
+ * A comparação é o `ordKey` de §31.6 inteiro — `(ordSum, authorKey)` —, a mesma de
+ * `naoLidas` no núcleo. Usar só o `ordSum` discordaria do selo exatamente no empate: dois
+ * registros com o mesmo `ordSum`, um deles a marca, e o selo diria "1" sem divisor nenhum.
+ *
+ * A minha própria mensagem nunca abre o divisor, pela mesma razão que ela nunca conta como
+ * não lida: eu escrevi, logo eu li.
+ */
+export function primeiraNaoLida(
+  mensagens: readonly DmMessageDto[],
+  corte: { readonly ordSum: number; readonly authorKey: string } | undefined,
+  euHex: string | null,
+): string | null {
+  if (corte === undefined) return null;
+  const eu = euHex?.toLowerCase() ?? null;
+  for (const m of mensagens) {
+    const autor = m.author.key.toLowerCase();
+    if (autor === eu) continue;
+    if (m.ordSum < corte.ordSum) continue;
+    if (m.ordSum === corte.ordSum && autor <= corte.authorKey.toLowerCase()) continue;
+    return m.id;
+  }
+  return null;
 }
 
 export type FaixaDeCamera = {

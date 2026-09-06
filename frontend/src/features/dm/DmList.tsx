@@ -54,7 +54,25 @@ function ItemDeConversa({
         bloqueada && "opacity-60",
       )}
     >
-      <DmPeerLabel peer={item.peer} className="flex-1" />
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <DmPeerLabel peer={item.peer} />
+        {/*
+          U-33 — "a linha de conversa mostra avatar, nome de exibição e o `handle` …, **o
+          trecho da última mensagem**, a hora e o contador de não-lidas". O trecho é o que
+          faltava, e ele não é enfeite: sem ele a lista de conversas de dois nomes conhecidos
+          não diz qual das duas tem algo novo para ler.
+
+          Tombstone (`excerpt: null`) tem frase própria, a mesma de `DmMessageRow`: mostrar a
+          linha vazia devolveria o silêncio no lugar do fato (A26).
+        */}
+        {item.lastMessage && (
+          // `pl-10` = a largura do avatar `md` (32px) mais o gap de 8px do `DmPeerLabel`:
+          // o trecho alinha com o nome, não com a foto.
+          <span className="truncate pl-10 text-caption text-text-tertiary">
+            {item.lastMessage.excerpt ?? "Mensagem apagada"}
+          </span>
+        )}
+      </span>
       <span className="flex shrink-0 flex-col items-end gap-0.5">
         {item.lastMessage && (
           <span className="text-caption text-text-tertiary tabular-nums">

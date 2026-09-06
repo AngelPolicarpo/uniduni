@@ -26,6 +26,7 @@ const api = vi.hoisted(() => ({
   dmOpen: vi.fn<() => Promise<unknown>>(),
   dmSend: vi.fn<() => Promise<unknown>>(),
   dmForget: vi.fn<() => Promise<unknown>>(),
+  dmBlock: vi.fn<() => Promise<unknown>>(),
   dmMessage: vi.fn<() => Promise<unknown>>(),
   filePickForAttachment: vi.fn<() => Promise<unknown>>(),
   blobStage: vi.fn<() => Promise<unknown>>(),
@@ -33,8 +34,12 @@ const api = vi.hoisted(() => ({
 }));
 const cliente = vi.hoisted(() => ({ subscribe: vi.fn() }));
 const toast = vi.hoisted(() => ({ showToast: vi.fn() }));
+// §31.15 — a mídia mora no renderer, e `live/dm.ts` a desliga ao bloquear ou esquecer.
+// O que se afirma aqui é a ORDEM (desligar antes do comando), não o WebRTC.
+const voz = vi.hoisted(() => ({ desligar: vi.fn<() => Promise<void>>() }));
 
 vi.mock("../../ipc/api", () => ({ api, cliente }));
+vi.mock("../dmVoz", () => voz);
 vi.mock("../../store/toastStore", () => ({
   useToastStore: { getState: () => toast },
 }));
@@ -45,11 +50,16 @@ import {
   aceitarConversa,
   anexarArquivo,
   assinarDm,
-  baixarAnexo,
+  bloquearConversa,
+  carregarAnexo,
   enviarMensagem,
+  esquecerConversa,
   sincronizarConversas,
 } from "../dm";
+import { anexo as paraDominio } from "../adaptadores";
 import { useDmStore } from "../../store/dmStore";
+import { useDmCallStore } from "../../store/dmCallStore";
+import { useDownloadStore } from "../../store/downloadStore";
 import type { DmMessageDto } from "../../ipc/dto";
 
 const par = { key: "aa", displayName: "Ana", handle: "@ana", avatarColor: 0 };
@@ -87,7 +97,13 @@ beforeEach(() => {
     digitando: {},
   });
   api.dmConversations.mockResolvedValue({ conversations: [] });
-  api.dmMessages.mockResolvedValue({ messages: [], hasMore: false, sync: "synced" });
+  api.dmMessages.mockResolvedValue({
+    messages: [],
+    hasMore: false,
+    sync: "synced",
+    lastReadOrdSum: -1,
+    lastReadAuthorKey: "",
+  });
   api.dmConversation.mockResolvedValue(null);
   api.dmActivate.mockResolvedValue({ residency: "active" });
   api.dmMarkRead.mockResolvedValue({ unreadCount: 0 });
@@ -289,7 +305,13 @@ describe("§31.14 — anexos, reusando §13 sem alteração", () => {
 
   it("o que vai no `dm.send` é o resultado do stage, nunca algo montado pela tela", async () => {
     api.dmSend.mockResolvedValue({ messageId: "m1", ordSum: 1 });
-    api.dmMessages.mockResolvedValue({ messages: [], hasMore: false, sync: "synced" });
+    api.dmMessages.mockResolvedValue({
+    messages: [],
+    hasMore: false,
+    sync: "synced",
+    lastReadOrdSum: -1,
+    lastReadAuthorKey: "",
+  });
 
     await enviarMensagem("c1", "olha", anexo);
 
@@ -300,17 +322,144 @@ describe("§31.14 — anexos, reusando §13 sem alteração", () => {
     });
   });
 
-  it("baixar usa o `conversationId` no slot do escopo — §13.4 reutilizado sem alteração", async () => {
+  it("baixar usa o `conversationId` no slot do escopo — §13.4 reutilizado sem alteração", () => {
     // §31.14: o escopo de um blob é o escopo de replicação dele, e numa DM ele é a
     // conversa (§31.1). O comando de §15.4 não ganha campo novo.
+    //
+    // Quem baixa é o MESMO `downloadStore` do cartão da comunidade (correção de
+    // 2026-09-05): o `baixarAnexo` que existia aqui mandava `blob.download` e não escutava
+    // nenhum dos cinco eventos de desfecho, então o cartão da DM nunca saía do botão.
     api.blobDownload.mockResolvedValue({ state: "downloading" });
+    useDownloadStore.getState().reset();
 
-    await baixarAnexo("c1", { blobsCoreKey: anexo.blobsCoreKey, blobId: anexo.blobId });
+    useDownloadStore.getState().iniciar(paraDominio({ ...anexo, progress: 0 }, "c1"));
 
     expect(api.blobDownload).toHaveBeenCalledWith({
       communityId: "c1",
       blobsCoreKey: anexo.blobsCoreKey,
       blobId: anexo.blobId,
     });
+  });
+
+  it("a correlação com `blob.progress` é o `blobIdHex` — os 16 primeiros bytes do hash", () => {
+    // §15.6.1 (emenda de 2026-09-05, fecha B14). Sem esta igualdade o progresso do fio
+    // chega chaveado por uma coisa e o cartão procura por outra: era exatamente o que
+    // deixava o cartão da DM parado enquanto os bytes desciam.
+    expect(paraDominio({ ...anexo, progress: 0 }, "c1").id).toBe(anexo.hash.slice(0, 32));
+  });
+});
+
+describe("§31.16.1 — a marca de leitura só cai quando a tela ficou com a conversa", () => {
+  it("a página que falhou NÃO marca como lida: o selo é de mensagem que ninguém viu", () => {
+    // `carregarMensagens` engole a recusa por desenho (a tela segue legível com o que já
+    // tinha); engoli-la E marcar como lida apagava o selo de uma conversa que não abriu.
+    api.dmMessages.mockRejectedValue(new Error("rede"));
+
+    return abrirConversa("c1").then(() => {
+      expect(api.dmMarkRead).not.toHaveBeenCalled();
+    });
+  });
+
+  it("trocar de conversa no meio da abertura não marca a que ficou para trás", async () => {
+    // Abrir A e clicar em B: as promessas de A resolvem depois, e o `markRead` de A zerava
+    // o selo de uma conversa que a tela nunca chegou a mostrar. `recarregarDetalhe` sempre
+    // teve esta guarda; o `markRead` não tinha.
+    api.dmMessages.mockImplementation(async () => {
+      useDmStore.getState().setAtiva("c2");
+      return { messages: [], hasMore: false, sync: "synced", lastReadOrdSum: -1, lastReadAuthorKey: "" };
+    });
+
+    await abrirConversa("c1");
+
+    expect(api.dmMarkRead).not.toHaveBeenCalled();
+  });
+});
+
+describe("§31.16.2 `dm.appended` — a conversa em foco não acumula não lidas", () => {
+  it("lote COM `hasIncoming` na conversa aberta recarrega e remarca como lida", async () => {
+    assinarDm();
+    await abrirConversa("c1");
+    api.dmMarkRead.mockClear();
+
+    ouvinte("dm.appended")({ conversationId: "c1", fromOrdSum: 1, toOrdSum: 2, hasIncoming: true });
+    await vi.waitFor(() => expect(api.dmMarkRead).toHaveBeenCalledWith("c1"));
+  });
+
+  it("lote SÓ MEU não remarca: não há o que dar por lido, e cada tecla viraria escrita", async () => {
+    assinarDm();
+    await abrirConversa("c1");
+    api.dmMarkRead.mockClear();
+
+    ouvinte("dm.appended")({ conversationId: "c1", fromOrdSum: 1, toOrdSum: 2, hasIncoming: false });
+    await vi.waitFor(() => expect(api.dmMessages).toHaveBeenCalled());
+    expect(api.dmMarkRead).not.toHaveBeenCalled();
+  });
+
+  it("lote de conversa que NÃO está em foco não recarrega nem marca", async () => {
+    assinarDm();
+    await abrirConversa("c1");
+    api.dmMarkRead.mockClear();
+
+    ouvinte("dm.appended")({ conversationId: "outra", fromOrdSum: 1, toOrdSum: 2, hasIncoming: true });
+    expect(api.dmMarkRead).not.toHaveBeenCalled();
+  });
+});
+
+describe("§31.15 — bloquear e esquecer encerram a chamada desta conversa", () => {
+  beforeEach(() => {
+    voz.desligar.mockResolvedValue(undefined);
+    useDmCallStore.getState().encerrou();
+  });
+
+  it("bloquear com a chamada de pé desliga ANTES do comando", async () => {
+    // A ordem é o ponto: depois de `dm.block` o canal `p2p-dm/1` não autoriza mais nada
+    // (§31.8(4)), e o `dm.callLeave` não teria por onde sair — o par ficaria com a chamada
+    // de pé contra quem acabou de bloqueá-lo.
+    const ordem: string[] = [];
+    voz.desligar.mockImplementation(async () => {
+      ordem.push("desligar");
+    });
+    api.dmBlock.mockImplementation(async () => {
+      ordem.push("block");
+      return {};
+    });
+    useDmCallStore.getState().chamando({ conversationId: "c1", peerKey: "aa" });
+
+    await bloquearConversa("c1");
+
+    expect(ordem).toEqual(["desligar", "block"]);
+  });
+
+  it("esquecer com a chamada de pé desliga: a tela some, e com ela o único botão de sair", async () => {
+    // Sem isto sobrava uma chamada órfã — microfone e câmera abertos, sem superfície para
+    // encerrá-los, e ainda recusando a próxima com "Você já está numa chamada" (§15.4).
+    api.dmForget.mockResolvedValue({});
+    useDmCallStore.getState().chamando({ conversationId: "c1", peerKey: "aa" });
+
+    await esquecerConversa("c1");
+
+    expect(voz.desligar).toHaveBeenCalledTimes(1);
+  });
+
+  it("bloquear uma conversa que NÃO é a da chamada não mexe na chamada", async () => {
+    api.dmBlock.mockResolvedValue({});
+    useDmCallStore.getState().chamando({ conversationId: "outra", peerKey: "aa" });
+
+    await bloquearConversa("c1");
+
+    expect(voz.desligar).not.toHaveBeenCalled();
+  });
+});
+
+describe("§31.16.3 — o anexo que a consulta não devolveu", () => {
+  it("grava `null` em vez de nada: sem isto o cartão pulsava para sempre", async () => {
+    // As dependências do efeito do cartão não mudavam, então ele não rodava de novo — e
+    // não havia erro nem botão. `hasAttachment` e `dm_attachments` saem da mesma tabela e
+    // do mesmo lote, então isto é falha de consulta, não anexo a caminho.
+    api.dmMessage.mockRejectedValue(new Error("rede"));
+
+    await carregarAnexo("c1", "m1");
+
+    expect(useDmStore.getState().anexos["m1"]).toBeNull();
   });
 });

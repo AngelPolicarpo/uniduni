@@ -527,6 +527,47 @@ describe('§31.16.2 — os eventos, e o não-lido que é query e não acumulador
     await b.close();
   });
 
+  it('§31.16.3 — a marca de leitura sai nas queries, e é ela que dá o ONDE do divisor', async () => {
+    // O selo dizia **quantas** e nada dizia **onde**: o watermark de `dm_local_read_state`
+    // não saía do núcleo, e U-33 pede o divisor de "Novas mensagens" na conversa. Emenda de
+    // 2026-09-05 em §31.16.3 — os dois eixos do `ordKey` de §31.6, porque `naoLidas`
+    // desempata pela chave do autor e um corte só por `ordSum` discordaria do selo.
+    const a = await no('alice');
+    const b = await no('bob');
+    const id = idEntre(a, b);
+    try {
+      ok(await a.request('dm.open', { peerKey: b.identity.publicKey.toString('hex') }));
+      ok(await a.request('dm.send', { conversationId: id, content: 'oi' }));
+      await ate(
+        () => (a.view.prepare('SELECT COUNT(*) AS n FROM dm_messages WHERE conversation_id = ?').get(id) as { n: number }).n > 0,
+        'não projetou',
+      );
+
+      // Nunca marcada: `-1` é "tudo é novo" na ordem canônica, que começa em 0.
+      // `recomputarNaoLidas` já gravou a linha com o sentinela de §31.12 (`-1` e a chave
+      // zerada): nada foi lido, e é isso que o corte diz.
+      const antes = a.dm.queries.messages({ conversationId: id }) as unknown as Record<string, unknown>;
+      assert.equal(antes['lastReadOrdSum'], -1);
+
+      ok(await a.request('dm.markRead', { conversationId: id }));
+
+      const depois = a.dm.queries.messages({ conversationId: id }) as unknown as Record<string, unknown>;
+      const topo = a.view
+        .prepare('SELECT ord_sum, author_key FROM dm_messages WHERE conversation_id = ? ORDER BY ord_sum DESC, author_key DESC LIMIT 1')
+        .get(id) as { ord_sum: number; author_key: Buffer };
+      assert.equal(depois['lastReadOrdSum'], topo.ord_sum);
+      assert.equal(depois['lastReadAuthorKey'], topo.author_key.toString('hex'));
+
+      // A mesma marca no detalhe: a página e o detalhe não podem discordar do corte.
+      const detalhe = a.dm.queries.conversation({ conversationId: id }) as unknown as Record<string, unknown>;
+      assert.equal(detalhe['lastReadOrdSum'], topo.ord_sum);
+      assert.equal(detalhe['lastReadAuthorKey'], topo.author_key.toString('hex'));
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+
   it('`dm.activate` decide residência e é `E_NOT_FOUND` para conversa que não existe', async () => {
     const a = await no('alice');
     const b = await no('bob');
@@ -651,6 +692,47 @@ describe('§31.15 — SDP e ICE viajam pelo próprio `p2p-dm/1`, sem host e sem 
       const r = await a.request('dm.signal', { conversationId: id, ice: '{}' });
       assert.equal(r.ok, false);
       assert.equal(r.code, 'E_PEER_UNREACHABLE');
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+
+  it('§31.15 — bloquear encerra a chamada: o escopo do TURN não sobrevive ao bloqueio', async () => {
+    // Sem isto, `dm.block` fechava o canal `p2p-dm/1` e deixava tudo o mais de pé: o escopo
+    // registrado no `MediaServer` e a credencial que EU emiti ainda válidos, ou seja, o meu
+    // TURN continuaria encaminhando a mídia de quem eu acabei de bloquear. §31.15 diz que a
+    // revogação de §17.4 acontece "pela única via que sobrou aqui: sair encerra" — então
+    // bloquear tem de sair. `E_SESSION_GONE` é a prova de que saiu.
+    const a = await no('alice');
+    const b = await no('bob');
+    const id = idEntre(a, b);
+    try {
+      ok(await a.request('dm.open', { peerKey: b.identity.publicKey.toString('hex') }));
+      ok(await a.request('dm.callJoin', { conversationId: id }));
+      ok(await a.request('dm.block', { conversationId: id }));
+
+      const r = await a.request('dm.signal', { conversationId: id, ice: '{}' });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'E_SESSION_GONE', `veio ${r.code}`);
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+
+  it('§31.15 — esquecer encerra a chamada pela mesma razão, e antes de a conversa sumir', async () => {
+    const a = await no('alice');
+    const b = await no('bob');
+    const id = idEntre(a, b);
+    try {
+      ok(await a.request('dm.open', { peerKey: b.identity.publicKey.toString('hex') }));
+      ok(await a.request('dm.callJoin', { conversationId: id }));
+      ok(await a.request('dm.forget', { conversationId: id }));
+
+      const r = await a.request('dm.signal', { conversationId: id, ice: '{}' });
+      assert.equal(r.ok, false);
+      assert.equal(r.code, 'E_SESSION_GONE', `veio ${r.code}`);
     } finally {
       await a.close();
       await b.close();

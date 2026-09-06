@@ -1,8 +1,10 @@
 import { api, cliente } from "../ipc/api";
+import { desligar } from "./dmVoz";
+import { useDmCallStore } from "../store/dmCallStore";
 import { useDmStore } from "../store/dmStore";
 import { useSettingsStore } from "../store/settingsStore";
 import { useToastStore } from "../store/toastStore";
-import type { AttachmentDto, StagedAttachmentDto } from "../ipc/dto";
+import type { StagedAttachmentDto } from "../ipc/dto";
 
 /**
  * A ponte entre a superfície IPC-R de §31.16 e a store de DM — U-33 / B60.
@@ -49,12 +51,24 @@ export async function abrirConversa(conversationId: string): Promise<void> {
   const store = useDmStore.getState();
   store.setAtiva(conversationId);
   await api.dmActivate(conversationId).catch(() => null);
-  await Promise.all([
+  const [, pagina] = await Promise.all([
     recarregarDetalhe(conversationId),
     carregarMensagens(conversationId),
   ]);
   // A28 — a marca de leitura é do topo da ordem canônica agora, e a contagem vira 0 por
   // construção. Depois de carregar, senão marcaria como lido o que a tela ainda não tem.
+  //
+  // **E só se a tela realmente ficou com ela.** As duas guardas abaixo são o mesmo defeito
+  // em duas formas: `markRead` zera por watermark (§31.16.1), não por "o que apareceu", e
+  // zerar sem ter mostrado nada apaga o selo de mensagens que ninguém viu.
+  //
+  //   1. A página falhou (rede, IPC, conversa que sumiu). `carregarMensagens` engole a
+  //      recusa por desenho — a tela continua legível com o que já tinha —, mas engolir a
+  //      falha e marcar como lida é apagar o selo de uma conversa que não abriu.
+  //   2. Quem abriu já trocou de conversa. `recarregarDetalhe` sempre teve esta guarda; o
+  //      `markRead` não tinha, e clicar em A e logo em B zerava o selo de A.
+  if (!pagina) return;
+  if (useDmStore.getState().ativa !== conversationId) return;
   await api.dmMarkRead(conversationId).catch(() => null);
 }
 
@@ -70,10 +84,11 @@ export async function recarregarDetalhe(conversationId: string): Promise<void> {
   useDmStore.getState().setDetalhe(d);
 }
 
+/** `true` quando a página chegou. A recusa é engolida (a tela segue legível), mas ela é **fato**. */
 export async function carregarMensagens(
   conversationId: string,
   cursor?: string,
-): Promise<void> {
+): Promise<boolean> {
   const pagina = await api
     .dmMessages({
       conversationId,
@@ -82,11 +97,17 @@ export async function carregarMensagens(
       ...(cursor !== undefined ? { cursor } : {}),
     })
     .catch(() => null);
-  if (pagina === null) return;
+  if (pagina === null) return false;
   useDmStore.getState().aplicarPagina(conversationId, pagina.messages, {
     ...(pagina.nextCursor !== undefined ? { cursorAnterior: pagina.nextCursor } : {}),
     temMais: pagina.hasMore,
+    // §31.16.3 (emenda de 2026-09-05) — o corte do divisor de "Novas mensagens" de U-33.
+    // Ele é **congelado na abertura** pela store: `dm.markRead` avança o watermark do
+    // núcleo logo em seguida, e um corte que seguisse o watermark sumiria no mesmo quadro
+    // em que apareceu.
+    corte: { ordSum: pagina.lastReadOrdSum, authorKey: pagina.lastReadAuthorKey },
   });
+  return true;
 }
 
 /* ─── Os doze eventos de §31.16.2 ─────────────────────────────────────────── */
@@ -105,9 +126,27 @@ export function assinarDm(): void {
     if (daAtiva(d)) void recarregarDetalhe((d as { conversationId: string }).conversationId);
   });
 
+  /**
+   * A conversa **em foco** não acumula não lidas, e é aqui que isso acontece.
+   *
+   * O núcleo conta por watermark (§31.12/A28): a mensagem que chega fica acima da marca e
+   * entra na contagem, tenha ou não uma tela mostrando-a. Sem remarcar, a conversa aberta
+   * ganhava selo de "1 não lida" sobre si mesma, e ele só sumia ao fechar e reabrir.
+   *
+   * `hasIncoming` é a guarda, e é para isto que §31.16.2 o declara (emenda de 2026-09-05):
+   * um lote só meu não tem o que marcar como lido, e remarcar nele seria uma escrita no
+   * manifest a cada tecla enviada. A ordem também é a de `abrirConversa` — carregar
+   * primeiro, marcar depois —, porque a marca é do topo da ordem canônica.
+   */
   cliente.subscribe("dm.appended", (d) => {
     void sincronizarConversas();
-    if (daAtiva(d)) void carregarMensagens((d as { conversationId: string }).conversationId);
+    if (!daAtiva(d)) return;
+    const ev = d as { conversationId: string; hasIncoming?: boolean };
+    void carregarMensagens(ev.conversationId).then((ok) => {
+      if (!ok || ev.hasIncoming !== true) return;
+      if (useDmStore.getState().ativa !== ev.conversationId) return;
+      return api.dmMarkRead(ev.conversationId).catch(() => null);
+    });
   });
 
   cliente.subscribe("dm.messageUpdated", (d) => {
@@ -215,8 +254,29 @@ export async function aceitarConversa(conversationId: string): Promise<void> {
   }
 }
 
+/**
+ * §31.15 (emenda de 2026-09-05) — **bloquear e esquecer encerram a chamada desta conversa.**
+ *
+ * Sem isto, bloquear alguém no meio de uma chamada deixava a `RTCPeerConnection` de pé e o
+ * microfone e a câmera capturando: a mídia é ponta a ponta (§17.2) e não passa pelo canal
+ * que o bloqueio fecha. Em `esquecer` era pior — a conversa some da lista, a tela volta para
+ * "Escolha uma conversa" e com ela some o único botão de desligar que existia (ele mora no
+ * cabeçalho da conversa), deixando uma chamada órfã que ainda recusa a próxima com "Você já
+ * está numa chamada" (§15.4).
+ *
+ * `desligar()` **antes** do comando, de propósito: ele manda `dm.callLeave`, e depois de
+ * bloquear o canal `p2p-dm/1` não autoriza mais nada (§31.8(4)) — o par ficaria com a
+ * chamada de pé contra quem acabou de bloqueá-lo. O núcleo repete a saída do seu lado
+ * (`boot.ts`), porque o escopo do TURN é dele; aqui o que se desliga é o dispositivo.
+ */
+async function encerrarChamadaDe(conversationId: string): Promise<void> {
+  if (useDmCallStore.getState().conversationId !== conversationId) return;
+  await desligar();
+}
+
 export async function bloquearConversa(conversationId: string): Promise<void> {
   try {
+    await encerrarChamadaDe(conversationId);
     await api.dmBlock(conversationId);
     await sincronizarConversas();
   } catch (erro) {
@@ -235,6 +295,7 @@ export async function desbloquearConversa(conversationId: string): Promise<void>
 
 export async function esquecerConversa(conversationId: string): Promise<void> {
   try {
+    await encerrarChamadaDe(conversationId);
     await api.dmForget(conversationId);
     useDmStore.getState().limpar(conversationId);
     // B63(b) — o mudo morre com a conversa: sem isto o mapa cresceria com histórico.
@@ -367,24 +428,32 @@ export async function anexarArquivo(conversationId: string): Promise<StagedAttac
   }
 }
 
-/** §13.4 — pull: ninguém recebe bytes que não pediu. O progresso vem por `blob.progress`. */
-export async function baixarAnexo(
-  conversationId: string,
-  anexo: { blobsCoreKey: string; blobId: AttachmentDto["blobId"] },
-): Promise<void> {
-  try {
-    await api.blobDownload({ communityId: conversationId, ...anexo });
-  } catch (erro) {
-    avisar(erro, "Não foi possível baixar o anexo");
-  }
-}
+/*
+ * **Não há `baixarAnexo` aqui**, e a ausência é a correção de 2026-09-05.
+ *
+ * Havia, e ele era metade do fluxo de §13.4: mandava `blob.download` e não escutava
+ * `blob.progress`, `blob.completed`, `blob.peerLost`, `blob.unavailable` nem
+ * `attachment.corrupt` — os cinco eventos que dizem o que aconteceu depois. Quem os escuta
+ * é o `downloadStore` (§15.5, chaveado por `blobIdHex`), e §31.14 manda reutilizar o fluxo
+ * de download **sem alteração**: o cartão da DM passou a usar o mesmo caminho do cartão da
+ * comunidade, com o `conversationId` no slot do `communityId` (§31.1).
+ */
 
-/** §31.16.3 — o anexo completo mora em `query.dmMessage`; a lista traz só `hasAttachment`. */
+/**
+ * §31.16.3 — o anexo completo mora em `query.dmMessage`; a lista traz só `hasAttachment`.
+ *
+ * O desfecho é sempre **gravado**, e é isso que muda em relação a antes: uma query que
+ * falhava saía daqui sem escrever nada, e o efeito do cartão — cujas dependências não
+ * mudaram — nunca rodava de novo. O cartão ficava no bloco pulsante para sempre, sem erro,
+ * sem botão e sem nova tentativa. `hasAttachment` e a linha de `dm_attachments` saem da
+ * mesma tabela e do mesmo lote do projetor, então "existe na lista e não existe na query"
+ * não é estado de replicação: é falha de consulta, e ela agora se anuncia.
+ */
 export async function carregarAnexo(
   conversationId: string,
   messageId: string,
 ): Promise<void> {
   const cheia = await api.dmMessage({ conversationId, messageId }).catch(() => null);
-  if (cheia?.attachment === undefined || cheia.attachment === null) return;
-  useDmStore.getState().setAnexo(messageId, cheia.attachment);
+  const anexo = cheia?.attachment ?? null;
+  useDmStore.getState().setAnexo(messageId, anexo);
 }

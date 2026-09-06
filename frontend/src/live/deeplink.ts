@@ -14,6 +14,7 @@
 import { create } from "zustand";
 import { api } from "../ipc/api";
 import { ouvirDeepLinks, type DeepLink } from "../ipc/bridge";
+import { useUiStore } from "../store/uiStore";
 import type { InvitePreview, ResolvedMessageLink } from "../ipc/dto";
 
 interface Deeplinks {
@@ -38,6 +39,12 @@ export const useDeeplinks = create<Deeplinks>((set, get) => ({
     if (link.route === "user" && typeof link.key === "string") {
       // §3.5 regra 3: posiciona na confirmação, nunca dispara `dm.open`.
       set({ contato: { peerKey: link.key.toLowerCase() } });
+      // **Posicionar inclui chegar lá.** Quem reage a `contato` e abre o modal é
+      // `DmDestino`, e ele só está montado com o destino em `dm` (B63(a)): clicar num
+      // `comunidadep2p://u/…` de dentro de uma comunidade guardava a chave num store que
+      // ninguém estava olhando, e o app não fazia nada visível. "Sem ação" em §3.5 é sobre
+      // **`dm.open`**, não sobre navegar — a navegação é o que torna a confirmação possível.
+      useUiStore.getState().abrirDm();
       return;
     }
     if (link.route === "join" && link.code !== undefined) {

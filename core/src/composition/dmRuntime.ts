@@ -120,6 +120,16 @@ export type DmRuntimeDeps = {
       readonly blobIdHex: string;
       readonly hash: Buffer;
     }): boolean;
+    /**
+     * §31.16.3 — o estado de download deste blob (`local_blob_cache`, §13.4), para o
+     * `AttachmentDto` que a query devolve. §31.14 reutiliza os oito estados de cache sem
+     * alteração; a query da DM precisava lê-los, e não lia.
+     */
+    cache?(blobsCoreKey: Buffer, blobIdHex: string): {
+      readonly state: string;
+      readonly bytesDownloaded: number;
+      readonly path: string | null;
+    } | null;
   };
   /** Injetável para teste: sem isto, cores de verdade em disco. */
   abrirCore?(a: {
@@ -631,6 +641,7 @@ export async function criarDmRuntime(deps: DmRuntimeDeps): Promise<DmRuntime> {
         unknownVersions: [...(s?.unknownVersions ?? [])],
       };
     },
+    ...(deps.blobs?.cache !== undefined ? { blobCache: deps.blobs.cache.bind(deps.blobs) } : {}),
   });
 
   const transport = startDmTransport({

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useLayoutEffect, useRef, useState } from "react";
 import {
   ChevronLeft,
   Mic,
@@ -33,6 +33,7 @@ import {
   faixaDeMicrofone,
   faixaDeTela,
   faixaDeSincronizacao,
+  primeiraNaoLida,
 } from "./dmRegras";
 import {
   bloquearConversa,
@@ -51,6 +52,7 @@ import {
 } from "../../live/dmVoz";
 import { useDmCallStore } from "../../store/dmCallStore";
 import { useDmStore } from "../../store/dmStore";
+import { useIdentityStore } from "../../store/identityStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import type { DmConversationItem } from "../../ipc/dto";
 
@@ -62,6 +64,22 @@ import type { DmConversationItem } from "../../ipc/dto";
  * ler. O texto de cada estado está em `dmRegras.ts` — inclusive a igualdade entre
  * `unauthorized` e `peer-offline`, que é requisito de **L-28** e não descuido.
  */
+/**
+ * O divisor de "Novas mensagens" — o MESMO de §9 2.1, na mesma gramática do canal: régua
+ * `feedback-danger` com o rótulo colado à esquerda. U-33 manda a conversa reusar a anatomia
+ * de 2.1, e a lista dela nomeia este divisor.
+ */
+function DivisorDeNaoLidas() {
+  return (
+    <div className="mt-4 flex items-center px-4" role="separator">
+      <span className="h-px flex-1 bg-feedback-danger" aria-hidden="true" />
+      <span className="ml-2 rounded-sm bg-feedback-danger px-1.5 py-px text-caption text-text-on-accent">
+        Novas mensagens
+      </span>
+    </div>
+  );
+}
+
 export interface DmConversationViewProps {
   conversa: DmConversationItem;
   onBack: () => void;
@@ -94,13 +112,45 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
   const conversaMuda = useSettingsStore((s) => s.dmMutedByConversation[conversa.conversationId] === true);
   const alternarMudoConversa = useSettingsStore((s) => s.setDmMuted);
 
-  const fim = useRef<HTMLDivElement>(null);
+  const rolagem = useRef<HTMLDivElement>(null);
   const mensagens = carregada?.mensagens ?? [];
 
-  // A conversa nasce no fim, como qualquer canal de texto (§9, 2.1).
-  useEffect(() => {
-    fim.current?.scrollIntoView({ block: "end" });
+  /**
+   * A conversa nasce no fim, como qualquer canal de texto (§9, 2.1) — **e só volta para lá
+   * quem já estava lá.**
+   *
+   * O efeito antigo rolava para o rodapé a qualquer variação de `mensagens.length`, e
+   * "carregar mensagens anteriores" é exatamente isso: a página anterior entra no TOPO, o
+   * comprimento cresce, e quem tinha subido para ler o histórico era arremessado de volta
+   * ao fim — a única coisa que ele acabara de pedir para não fazer. U-33 nomeia o requisito
+   * ao falar da recarga de `dm.reordered` ("o desenho precisa aguentá-la sem salto de
+   * rolagem"), e ele vale igual aqui.
+   *
+   * A medida é a mesma do `MessageList` do canal, e ela é feita no **gesto de rolar**, não
+   * depois do render: um efeito de layout já roda com a lista nova no DOM e mediria a
+   * posição de depois — sempre "não está no fim" — em vez da intenção de quem rolou.
+   */
+  const PERTO_DO_FIM = 80;
+  const noFim = useRef(true);
+  function aoRolar(event: React.UIEvent<HTMLDivElement>) {
+    const node = event.currentTarget;
+    noFim.current = node.scrollHeight - node.scrollTop - node.clientHeight <= PERTO_DO_FIM;
+  }
+  useLayoutEffect(() => {
+    const node = rolagem.current;
+    if (node === null) return;
+    if (noFim.current) node.scrollTop = node.scrollHeight;
   }, [mensagens.length]);
+
+  /*
+    U-33 — o divisor de "Novas mensagens", que a conversa herda da anatomia de 2.1.
+    O corte vem do watermark de §31.12 (`query.dmMessages`, emenda de 2026-09-05) e está
+    congelado na abertura pela store: abrir marca como lida logo em seguida, e um divisor
+    que seguisse o watermark sumiria no mesmo quadro em que apareceu.
+  */
+  const corte = useDmStore((s) => s.cortes[conversa.conversationId]);
+  const euHex = useIdentityStore((s) => s.identity?.publicKey ?? null);
+  const idDaPrimeiraNova = primeiraNaoLida(mensagens, corte, euHex);
 
   const sync = detalhe?.sync ?? conversa.sync;
   const faixa = faixaDeSincronizacao(sync);
@@ -111,7 +161,11 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
     daConversa ? chamadaEstado : "fora",
     daConversa ? chamadaFalha : null,
   );
-  const acoesVideo = acoesDeVideo(conversa.state, daConversa ? chamadaEstado : "fora");
+  const acoesVideo = acoesDeVideo(
+    conversa.state,
+    daConversa ? chamadaEstado : "fora",
+    daConversa ? chamadaFalha : null,
+  );
   const bannerCamera = faixaDeCamera(daConversa ? erroDeCamera : null);
   const bannerMicrofone = faixaDeMicrofone(daConversa ? erroDeMicrofone : null);
   const bannerTela = faixaDeTela(daConversa ? erroDeTela : null);
@@ -359,7 +413,7 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
         </StatusBanner>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto py-2">
+      <div ref={rolagem} onScroll={aoRolar} className="min-h-0 flex-1 overflow-y-auto py-2">
         {carregada?.temMais && (
           <div className="flex justify-center py-2">
             <Button
@@ -388,16 +442,19 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
 
         {mensagens.map((m, i) => {
           const anterior = mensagens[i - 1];
+          const nova = m.id === idDaPrimeiraNova;
           const agrupada =
+            !nova &&
             anterior !== undefined &&
             anterior.author.key === m.author.key &&
             m.ts - anterior.ts < MESSAGE_GROUP_WINDOW_MS;
           return (
-            <DmMessageRow key={m.id} mensagem={m} agrupada={agrupada} agora={agora} />
+            <Fragment key={m.id}>
+              {nova && <DivisorDeNaoLidas />}
+              <DmMessageRow mensagem={m} agrupada={agrupada} agora={agora} />
+            </Fragment>
           );
         })}
-
-        <div ref={fim} />
       </div>
 
       {digitando && (

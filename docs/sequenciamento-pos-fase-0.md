@@ -9439,3 +9439,170 @@ Junto saíram duas coisas menores que só apareceram por causa disto:
 - **`blob.stage` deixou de ser tipado como `AttachmentDto` no renderer.** Era mentira antiga —
   o stage descreve bytes recém-escritos, sem estado de download, sem pares e sem `revealMode` —
   e só apareceu quando o DTO ganhou campo obrigatório. §15.6.1 agora declara os dois tipos.
+
+
+---
+
+## 129. Varredura da conversa direta pela interface: o que o relatório acertou — 2026-09-05
+
+Verificação do relatório consolidado GEMINI/SPARK sobre a **interface** da conversa direta
+(não confundir com §127, que foi o relatório sobre o núcleo da DM): 14 achados e 2 "lacunas
+de especificação". A regra é a de sempre — **cada achado é confirmado na fonte antes de virar
+correção**. Doze confirmados, um refutado, um com o mecanismo certo e a causa errada. As duas
+lacunas eram reais, e as duas fecharam por emenda. A varredura achou **um buraco maior do que
+qualquer item da lista**, que o relatório não viu; ele está em §129.5 e virou **B76**.
+
+### 129.1 Os defeitos confirmados e corrigidos
+
+- **Bloquear ou esquecer no meio de uma chamada não a encerrava** — o crítico do relatório, e
+  ele tinha **duas metades**, das quais o relatório viu uma. A do renderer é a que ele
+  descreve: `bloquearConversa`/`esquecerConversa` despachavam o comando sem tocar em
+  `dmVoz.desligar()`, e microfone e câmera seguiam capturando. Em `esquecer` a conversa some
+  da lista e leva junto a **única** superfície que oferecia desligar (o cabeçalho da
+  conversa), deixando uma chamada órfã que ainda recusava a próxima com "voz é uma só"
+  (§15.4). A metade que faltava é do **núcleo**: a mídia é ponta a ponta e não passa pelo
+  canal que o bloqueio fecha, mas o **escopo do serviço de §17.3 é do núcleo** — bloquear sem
+  sair deixava o escopo registrado no `MediaServer` e a credencial TURN emitida por este nó
+  ainda válida, isto é, este nó encaminhando a mídia de quem acabou de bloquear. As duas
+  foram corrigidas, e a do núcleo mora em `registerDmCommands`, **não** na raiz de
+  composição: há mais de uma montagem da mesma superfície (o `boot.ts` do produto e os rigs
+  de teste), e uma regra que dependesse de cada uma se lembrar dela valeria só onde alguém
+  lembrou — foi exatamente o que a primeira tentativa mostrou, com o teste passando pela
+  montagem errada. §31.16.1 ganhou a emenda.
+- **A conversa aberta acumulava não lidas sobre si mesma.** A contagem de §31.12 é por
+  watermark e não sabe o que está na tela: a mensagem que chegava ficava acima da marca e
+  entrava no selo, com a conversa visível. Só sumia ao fechar e reabrir. O renderer passa a
+  remarcar ao chegar lote com `hasIncoming` (§31.16.2) na conversa em foco — e **só** com
+  ele: um lote só meu não tem o que dar por lido, e remarcar nele seria uma escrita no
+  manifest a cada mensagem enviada.
+- **`abrirConversa` marcava como lida mesmo sem ter aberto nada.** Duas formas do mesmo
+  defeito: a página que falhava (a recusa é engolida por desenho, e engoli-la **e** marcar
+  apagava o selo de uma conversa que não abriu) e a troca de conversa no meio da abertura
+  (clicar em A e logo em B zerava o selo de A). `recarregarDetalhe` sempre teve a segunda
+  guarda; o `markRead` não tinha nenhuma das duas.
+- **O cartão de anexo da DM era metade do fluxo de §13.4.** Ele lia um instantâneo congelado
+  de `dmStore.anexos` e nunca mais o revisitava: `blob.progress` e `blob.completed` alimentam
+  o `downloadStore`, que ele não consultava. Sem progresso, sem mudança ao concluir e **sem
+  nenhuma ação para abrir o arquivo baixado** — §13.6 regra 1 sem superfície nenhuma. A
+  correção foi apagar a cópia: §31.14 manda reutilizar o fluxo de download "sem alteração", e
+  o cartão da DM passou a ser o cartão de §13 com o `conversationId` no slot do `communityId`.
+  `baixarAnexo` saiu de `live/dm.ts` — sem ele, não sobra caminho que mande `blob.download`
+  sem escutar os cinco eventos de desfecho.
+- **`query.dmMessage` devolvia meio `AttachmentDto`** — a causa raiz do item acima, e uma
+  violação de §31.16.3, que declara o DTO de §15.6.1 "sem alteração". Faltavam `state`,
+  `progress`, `localPath`, `availablePeers` e `hostAvailable`: metade do tipo é estado de
+  download, lido do mesmo `local_blob_cache` que `query.message` já lia. Efeito visível: o
+  arquivo já baixado nesta máquina reaparecia como "Baixar" a cada abertura do app.
+- **O modal de "Nova conversa" descartava o `jaExiste` que ele mesmo calculava**, e mandava a
+  chave pelo `dm.open` sempre. Dois desfechos errados, um deles grave: conversa `blocked` →
+  `E_DM_BLOCKED` e um toast no lugar do histórico legível que `blocked` promete ser; conversa
+  `pending-in` → **aceite silencioso**, porque `dm.open` sobre um pedido recebido é `aceitar`
+  (§31.9 regra 1). Aceitar escreve o `dm.hello` e não se desfaz — é o ato que a seção de
+  pedidos da lista existe para impedir que aconteça por engano. `left` ficou de fora do
+  desvio: ela não está na lista, e quem sabe o que fazer com ela é o `dm.open`.
+- **A chamada que falhou continuava oferecendo câmera e tela.** `dmCallStore.falhou` mantém
+  `na-chamada` de propósito (a faixa de §99 precisa ficar), mas o veredito da malha só sai
+  quando **nenhum** par chegou a `connected`: clicar ali acendia o dispositivo para mandá-lo
+  a lugar nenhum. `acoesDeVideo` passou a receber a falha.
+- **"Carregar mensagens anteriores" saltava para o rodapé.** O efeito rolava ao fim a
+  qualquer variação de `mensagens.length`, e carregar a página anterior é exatamente isso: o
+  histórico entra no topo, o comprimento cresce, e quem subiu para ler é arremessado de volta
+  — a única coisa que acabara de pedir para não fazer. A medida passou a ser a do
+  `MessageList` do canal, feita no **gesto de rolar** e não depois do render.
+- **A linha da lista não trazia o trecho da última mensagem**, que U-33 exige por escrito.
+  Sem ele, uma lista de nomes conhecidos não diz qual conversa tem algo novo para ler.
+- **O deep link `u/<KEY64>` não chegava a lugar nenhum fora da DM.** A chave era guardada num
+  store que só o destino de conversas lia (B63(a)), então clicar no link de dentro de uma
+  comunidade não produzia efeito visível. §3.5 regra 3 foi emendada: "nunca dispara ação" é
+  sobre o **comando**, não sobre navegar — sem navegação não existe a tela em que a
+  confirmação aparece.
+- **O "digitando…" vazava na troca de conversa.** Sair com meia frase no campo deixava o
+  pulso `on:true` de pé até o TTL de 5 s. O TTL limitava o dano; ele não é o desligamento, é
+  a rede de segurança para quando o desligamento não chega.
+- **O clipe não dava sinal de vida durante o staging.** O `blob.stage` escreve os bytes antes
+  de existir mensagem, e num disco lento o botão apagado sem mais nada é um botão morto. Ele
+  ganhou o giro, e "Enviar" passou a esperar o stage — enviar no meio mandaria a mensagem sem
+  o anexo que está a caminho.
+
+### 129.2 O que o relatório errou
+
+- **`DmConversationView` não ignora `detalhe.state`.** O achado (alto, no relatório) dizia
+  que a tela usa a prop estática `conversa.state` e fica travada em `pending-out` depois do
+  aceite. A prop **não é estática**: `conversa` sai de `useDmStore.conversas`, que
+  `dm.conversationChanged` reconsulta por `sincronizarConversas()`, e `DmDestino` recalcula a
+  conversa ativa a cada mudança da lista. `detalhe.state` seria uma segunda cópia do mesmo
+  fato. A assimetria com `sync` que o relatório notou é real e tem razão: `dm.desynced`,
+  `dm.forked` e `dm.partialInterpretation` reconsultam **só** o detalhe, então `detalhe.sync`
+  é mais fresco; `state` não tem evento nessa situação. Refutado, sem correção.
+- **O esqueleto eterno do anexo é real; a causa não é a descrita.** O relatório atribuía o
+  shimmer infinito a "`hasAttachment` verdadeiro com o blob ainda não replicado". Isso não
+  acontece: `has_attachment` é um `COUNT(*)` sobre `dm_attachments`, a **mesma** tabela que a
+  query do anexo lê, gravada pelo **mesmo** lote do projetor — o que replica depois são os
+  **bytes**, não a linha. O caminho alcançável é a consulta que falha, e o defeito é o
+  mesmo: `carregarAnexo` saía sem gravar nada e o efeito, com as dependências inalteradas,
+  não rodava de novo. Corrigido com o desfecho gravado, texto honesto ("não foi possível
+  carregar") e um botão.
+
+### 129.3 As duas lacunas de especificação — as duas reais
+
+- **O divisor de "Novas mensagens" não tinha fonte.** U-33 manda a conversa reusar a anatomia
+  de §9 2.1 e nomeia o divisor; §31.16.3 dava `unread.count` (**quantas**) e nunca o watermark
+  (**onde**). `query.dmMessages` e `query.dmConversation` passam a devolver `lastReadOrdSum` e
+  `lastReadAuthorKey`. Os **dois** eixos viajam: `naoLidas` desempata pela chave do autor
+  (§31.6), e um corte só por `ordSum` discordaria do próprio selo no empate — "1 não lida" com
+  divisor nenhum na tela. Duas regras de tela acompanham a emenda: a marca vem na **mesma**
+  resposta da página (numa segunda consulta ela avançaria entre as duas, e o divisor cairia no
+  lugar errado por uma corrida) e o corte é **congelado na abertura**, porque abrir marca como
+  lida logo em seguida e um divisor que seguisse o watermark sumiria no quadro em que apareceu.
+- **A chamada de DM não tinha superfície fora da conversa.** Atender e desligar existiam só no
+  cabeçalho, sob a guarda de ser a conversa aberta: uma chamada que chegasse com o app noutra
+  conversa — ou numa comunidade — não podia ser atendida nem recusada, e "voz é uma só" ainda
+  impedia iniciar outra, com erro sobre uma chamada que ninguém via. U-33 já mandava usar o
+  painel de 2.3.1, e 2.3.1 é justamente **a superfície que sobrevive à navegação** (§11 C11);
+  o que faltava era isso estar escrito. O `DmCallPanel` ocupa o mesmo slot do painel de
+  chamada, existe nos três estados que têm chamada e **some** quando a conversa da chamada é a
+  que está na tela — repetir o par de botões 8px acima do cabeçalho é o argumento que já tirou
+  mudo e ensurdecer do painel da comunidade. Atender leva para a conversa, porque a imagem e o
+  mudo moram lá.
+
+### 129.4 A emenda que fechou uma pendência antiga
+
+**B14 fechou.** "Correlação `blob.progress` ↔ `AttachmentDto` não é declarada em §15.6" estava
+na lista desde §58.6, do lado humano, esperando "a forma da correlação". A varredura mostrou
+que a forma já existia e só não estava escrita: é o `blobIdHex` de §13.2 — os 16 primeiros
+bytes do `hash`, em hex —, a chave que os cinco eventos de blob carregam desde a emenda de
+2026-08-22 e que o adaptador do renderer já produzia como `Attachment.id`. A lacuna não era de
+desenho, era de declaração, e ela custou caro exatamente uma vez: o cartão da DM foi escrito
+sem a correlação e ficou parado enquanto os bytes desciam. §15.6.1 passa a declará-la, e a
+afirmar que ela vale igual na conversa direta.
+
+### 129.5 O que a varredura achou e o relatório não viu — B76
+
+**A conversa direta não tem responder, editar, apagar nem reagir.** U-33 os lista por escrito
+("a conversa reusa a anatomia de 2.1 — grupo de mensagens por autor, divisor de *Novas
+mensagens*, composer, **responder, editar, deletar, reagir**"), o núcleo os serve há muito
+(`dm.edit`, `dm.delete`, `dm.react`, e `replyToId` em `dm.send`, §31.16.1), o cliente de IPC-R
+os expõe e `live/dm.ts` tem as quatro funções escritas — **sem chamador nenhum**.
+`DmMessageRow` não tem barra de ações, e o `replyToId` que a spec declara nunca é preenchido.
+
+É a família de defeito que este repositório já nomeia em §82.3 e que a lista carrega em B44,
+B49, B71 e B72: superfície declarada, sem produtor de um dos lados. A diferença é que aqui a
+metade que falta é a **tela**, e ela é maior do que qualquer item deste relatório — barra de
+ações por mensagem, seletor de emoji, edição no lugar, confirmação de apagar e a citação no
+composer. Não é correção de defeito, é a fatia de produto que U-33 pede e que §100..§109 não
+entregou; por isso ela **não** entrou nesta varredura e virou **B76**, do lado do agente.
+
+**Correção de numeração:** a lista tinha **dois** itens `B66`. O de RD-11 (§31.7.4) é o
+original e é o que o histórico referencia de §100 em diante; o de "apagar a própria mensagem
+esconde a linha inteira", que nasceu depois em *A observar*, passou a **B75**.
+
+### 129.6 O que não foi medido
+
+- **Nenhuma tela tem teste de render** (B20 continua aberta), e as correções de tela desta
+  fatia são afirmadas pelas regras puras de `dmRegras.ts` e pelo comportamento de
+  `live/dm.ts` — não pelo DOM. O divisor, o painel de chamada, o cartão de anexo e o trecho
+  da lista têm o **cálculo** coberto e a **renderização** não.
+- **A chamada de DM continua sem duas pontas com mídia real.** `smoke:voz` cobre a malha de
+  comunidade; o caminho de DM segue com a evidência de §109 e de §123.2, e nada aqui muda
+  isso. O que esta fatia acrescentou ao caminho da chamada — bloquear e esquecer encerrando —
+  está medido pela superfície (`E_SESSION_GONE` depois do comando), não pela mídia.

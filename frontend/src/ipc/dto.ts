@@ -673,6 +673,9 @@ export interface DmConversationDetail {
   selfInvalid: boolean;
   peerInvalid: boolean;
   partialInterpretation: boolean;
+  /** §31.16.3 (emenda de 2026-09-05) — o `ordKey` do watermark de leitura (§31.6/A28). */
+  lastReadOrdSum: number;
+  lastReadAuthorKey: string;
   blockedAt?: Ms;
   retainUntil?: Ms;
 }
@@ -683,6 +686,13 @@ export interface DmMessagesPage {
   nextCursor?: string;
   hasMore: boolean;
   sync: DmSync;
+  /**
+   * §31.16.3 (emenda de 2026-09-05) — o corte do divisor de "Novas mensagens" de **U-33**,
+   * na MESMA resposta da página. Numa segunda consulta a marca poderia avançar entre as
+   * duas, e o divisor apareceria no lugar errado por uma corrida.
+   */
+  lastReadOrdSum: number;
+  lastReadAuthorKey: string;
 }
 
 export interface DmMessageFull extends DmMessageDto {

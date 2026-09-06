@@ -426,6 +426,41 @@
 | **Em aberto, e declarado** | **Onde a DM mora na navegação** e **como a notificação dela é configurada** são **B63**, e não se derivam de §31: a primeira é escolha de arquitetura de informação e a segunda esbarra em `settings.setNotifications` ser por comunidade, que uma DM não tem. As duas propostas estão escritas em B63 e valem enquanto ninguém decidir o contrário; o resto de U-33 não depende delas. `lag` e as listas de `partialInterpretation` chegam à UI como `0` e vazias enquanto a fonte não existir (§105.7) — a superfície **não anuncia** número que ninguém mediu. |
 | **Por quê** | §31.24 declara **L-25 a L-29**, e as cinco linhas da coluna "Superfície de UI obrigatória" daquela tabela são requisito normativo, não escolha de produto: sem elas, cinco limitações reais do sistema ficariam invisíveis para quem as sofre. O resto é derivação do contrato de §31.16 — 14 comandos, 12 eventos e 5 queries que já existem (§105) e que nenhuma tela consumia. |
 
+**Emenda de 2026-09-05 — a chamada de DM precisa de superfície fora da conversa.** A linha
+"Voz numa conversa direta (L-29)" acima diz que a chamada usa o painel de 2.3.1, e 2.3.1 é
+justamente **a superfície que sobrevive à navegação** (§11 C11: "a chamada pode ser de uma
+comunidade que nem está aberta, e este painel é o que diz isso"). Na DM isso não estava
+escrito, e o produto tirava a conclusão contrária: atender e desligar existiam **só** no
+cabeçalho da conversa, sob a guarda de ser a conversa aberta. Uma chamada que chegasse com o
+app noutra conversa — ou numa comunidade — não tinha superfície nenhuma: não dava para
+atender, não dava para recusar, e "voz é uma só" (§15.4) ainda impedia iniciar outra, com um
+erro sobre uma chamada que ninguém via.
+
+O que a emenda fixa: **a chamada de DM ocupa o mesmo slot do painel de chamada** — acima da
+barra de usuário, com a largura dela — sempre que houver chamada, nos três estados que a têm
+(`recebendo`, `chamando`, `na-chamada`). Ele **some** quando a conversa da chamada é a que
+está na tela, onde o cabeçalho já oferece isso e mais (mudo, câmera, tela e o palco): repetir
+o mesmo par de botões 8px acima é o argumento que já tirou mudo e ensurdecer do painel da
+comunidade. Atender **leva para a conversa**, porque a imagem e o mudo moram lá; uma chamada
+atendida sem eles é a metade que ninguém pediu.
+
+O que ele **não** traz continua sendo a tabela de remoções de §31.15: sem roster, sem
+ocupação, sem fila, sem revogação — e sem relay (**L-29**), aqui como no cabeçalho. Os rótulos
+não afirmam nada sobre o outro lado: "Chamando…" é fato local, não "está tocando lá".
+
+**Emenda de 2026-09-05 — de onde sai o divisor de "Novas mensagens".** A linha "Muda para"
+exige o divisor, e ele não era derivável: §31.16.3 dava `unread.count` (**quantas**) e não o
+watermark (**onde**). `query.dmMessages` e `query.dmConversation` passam a devolver
+`lastReadOrdSum` e `lastReadAuthorKey` (§31.16.3, emenda da mesma data). Duas regras de tela
+acompanham: o corte é **congelado na abertura** — abrir marca como lida logo em seguida, e um
+divisor que seguisse o watermark sumiria no mesmo quadro em que apareceu — e a comparação usa
+o `ordKey` **inteiro** de §31.6, senão o divisor discorda do selo no empate de `ordSum`.
+
+**Emenda de 2026-09-05 — a conversa em foco não acumula não lidas.** A contagem de §31.12 é
+por watermark e não sabe o que está na tela: sem remarcar ao receber, a conversa aberta ganhava
+selo sobre si mesma. O renderer remarca ao chegar lote com `hasIncoming` (§31.16.2) na conversa
+em foco — e **só** com ele: um lote só meu não tem o que dar por lido.
+
 ---
 
 **U-34 — A chave pública de identidade é um endereço, e a UI precisa deixar entregá-lo (§31.8, L-24)**

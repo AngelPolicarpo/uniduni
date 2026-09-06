@@ -164,6 +164,23 @@ export type DmQueryDeps = {
     readonly unknownKinds: readonly number[];
     readonly unknownVersions: readonly number[];
   };
+  /**
+   * §31.14 / §31.16.3 — o estado de download deste blob, em `local_blob_cache` (§13.4).
+   *
+   * Ele existe porque §31.16.3 declara que o `attachment` de `query.dmMessage` é o
+   * `AttachmentDto` de §15.6.1 **sem alteração**, e metade daquele DTO é estado de download:
+   * `state`, `progress` e `localPath`. Sem esta porta a query devolvia só o que está em
+   * `dm_attachments` — nome, tamanho e ponteiro —, e o cartão da conversa nascia congelado em
+   * "Baixar" mesmo com o arquivo já no disco desta máquina.
+   *
+   * Ausente = sem `BlobManager` montado (o rig de teste): o DTO responde `not-downloaded`,
+   * que é a verdade quando não há cache a consultar.
+   */
+  blobCache?(blobsCoreKey: Buffer, blobIdHex: string): {
+    readonly state: string;
+    readonly bytesDownloaded: number;
+    readonly path: string | null;
+  } | null;
 };
 
 export function dmQueryPorts(deps: DmQueryDeps) {
@@ -236,6 +253,75 @@ export function dmQueryPorts(deps: DmQueryDeps) {
       ...(propria
         ? { delivery: entregueAte >= r.author_seq ? ('delivered' as const) : ('written' as const) }
         : {}),
+    };
+  }
+
+  /**
+   * §31.16.3 — o `AttachmentDto` de §15.6.1, **inteiro**, para a conversa direta.
+   *
+   * §31.14 manda reutilizar §13 sem alteração, e isso vale para o DTO tanto quanto para o
+   * fluxo: o cartão da DM precisa das mesmas quatro coisas que o da comunidade — o estado do
+   * cache, o quanto já chegou, o caminho local quando existe e o `revealMode` de §13.6 regra
+   * 1. Devolver metade do tipo declarado é o defeito que fazia o cartão da DM nascer parado.
+   *
+   * `availablePeers`/`hostAvailable` são `0`/`false` pela mesma razão de §15.6.1 (emenda de
+   * 2026-08-22): eles são leitura do bitfield **vivo**, e fora de um download em curso não há
+   * par conectado àquele core. Numa DM `hostAvailable` é `false` por construção — não há host.
+   *
+   * A correlação com `blob.progress` é o `blobIdHex` de §13.2 (§15.6.1, emenda de
+   * 2026-09-05): os 16 primeiros bytes do `hash`, em hex, que é a chave do fio.
+   */
+  function anexoDto(anexo: {
+    owner_key: Buffer;
+    blobs_core_key: Buffer;
+    blob_id: string;
+    name: string;
+    size_bytes: number;
+    kind: number;
+    hash: Buffer;
+  }) {
+    const hashHex = anexo.hash.toString('hex');
+    const cache = deps.blobCache?.(anexo.blobs_core_key, hashHex.slice(0, 32)) ?? null;
+    const baixados = cache?.bytesDownloaded ?? 0;
+    return {
+      name: anexo.name,
+      sizeBytes: anexo.size_bytes,
+      kind: anexo.kind,
+      // §13.6 regra 1 / B74 — o mesmo campo do `AttachmentDto` de §15.6.1, que
+      // §31.16.2 declara reusado sem alteração. Quem classifica é o núcleo.
+      revealMode: modoDeRevelacao(anexo.name),
+      hash: hashHex,
+      ownerKey: anexo.owner_key.toString('hex'),
+      blobsCoreKey: anexo.blobs_core_key.toString('hex'),
+      blobId: JSON.parse(anexo.blob_id) as unknown,
+      state: cache?.state ?? 'not-downloaded',
+      progress: anexo.size_bytes > 0 ? Math.min(1, baixados / anexo.size_bytes) : 0,
+      availablePeers: 0,
+      hostAvailable: false,
+      ...(cache?.path != null ? { localPath: cache.path } : {}),
+    };
+  }
+
+  /**
+   * §31.16.3 (emenda de 2026-09-05) — a marca de leitura desta conversa, para o divisor de
+   * "Novas mensagens" que **U-33** exige ("a conversa reusa a anatomia de 2.1 — … divisor de
+   * Novas mensagens …").
+   *
+   * Ela é o `ordKey` de §31.6 do watermark de `dm_local_read_state` (A28) — os **dois**
+   * eixos —, e não a contagem: o contador diz **quantas**, o divisor precisa saber **onde**.
+   * `-1` com a chave zerada é o sentinela de "nada lido"; a ordem canônica começa em 0, e
+   * nesse caso tudo é novo.
+   */
+  function marcaDeLeitura(conversationId: string): {
+    readonly lastReadOrdSum: number;
+    readonly lastReadAuthorKey: string;
+  } {
+    const marca = manifest.getDmReadState(conversationId);
+    return {
+      lastReadOrdSum: marca?.last_read_ord_sum ?? -1,
+      // O segundo eixo do `ordKey` de §31.6, e ele não é decoração: o corte do divisor tem
+      // de ser **o mesmo** que `naoLidas` usa, senão o selo diz "1" e o divisor não aparece.
+      lastReadAuthorKey: marca?.last_read_author.toString('hex') ?? '',
     };
   }
 
@@ -335,6 +421,10 @@ export function dmQueryPorts(deps: DmQueryDeps) {
         selfInvalid: eu !== null && (porChave.get(eu)?.invalid ?? 0) !== 0,
         peerInvalid: (porChave.get(par)?.invalid ?? 0) !== 0,
         partialInterpretation: parcial.partial,
+        // §31.16.3 (emenda de 2026-09-05) — onde fica o corte do divisor de "Novas
+        // mensagens" de U-33. Sem ele o renderer sabia **quantas** não lidas havia e não
+        // sabia **onde** elas começam.
+        ...marcaDeLeitura(a.conversationId),
         ...(row.blocked_at !== null ? { blockedAt: row.blocked_at } : {}),
         ...(row.retain_until !== null ? { retainUntil: row.retain_until } : {}),
       };
@@ -395,6 +485,9 @@ export function dmQueryPorts(deps: DmQueryDeps) {
           : {}),
         hasMore,
         sync: dm.sync(a.conversationId),
+        // A página e o corte vêm juntos: buscá-lo numa segunda query deixaria a marca
+        // avançar entre as duas, e o divisor apareceria no lugar errado por uma corrida.
+        ...marcaDeLeitura(a.conversationId),
       };
     },
 
@@ -452,22 +545,7 @@ export function dmQueryPorts(deps: DmQueryDeps) {
           mine: eu !== null && chaves.includes(eu),
           reactors: chaves.slice(0, LIMITE_REATORES).map((k) => ref(k, porChave.get(k))),
         })),
-        ...(anexo !== undefined
-          ? {
-              attachment: {
-                name: anexo.name,
-                sizeBytes: anexo.size_bytes,
-                kind: anexo.kind,
-                // §13.6 regra 1 / B74 — o mesmo campo do `AttachmentDto` de §15.6.1, que
-                // §31.16.2 declara reusado sem alteração. Quem classifica é o núcleo.
-                revealMode: modoDeRevelacao(anexo.name),
-                hash: anexo.hash.toString('hex'),
-                ownerKey: anexo.owner_key.toString('hex'),
-                blobsCoreKey: anexo.blobs_core_key.toString('hex'),
-                blobId: JSON.parse(anexo.blob_id) as unknown,
-              },
-            }
-          : {}),
+        ...(anexo !== undefined ? { attachment: anexoDto(anexo) } : {}),
       };
     },
 

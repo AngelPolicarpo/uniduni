@@ -6,6 +6,7 @@ import { cn } from "../../lib/cn";
 import { DmConversationView } from "./DmConversationView";
 import { DmNovaConversaModal } from "./DmDialogs";
 import {
+  abrirConversa,
   abrirConversaCom,
   fecharConversa,
   sincronizarConversas,
@@ -76,7 +77,12 @@ export function DmDestino({ className }: { className?: string }) {
         open={nova}
         onClose={fecharNova}
         chaveInicial={contato?.peerKey ?? null}
-        onAbrir={(peerKey) => void abrirConversaCom(peerKey)}
+        // Já na lista? Abre a que existe. `dm.open` é derivado (§31.2 regra 1) e seria
+        // idempotente em `accepted`/`pending-out`, mas em `blocked` recusa e em
+        // `pending-in` **aceita** — ver `DmNovaConversaModal`.
+        onAbrir={(peerKey, jaExiste) =>
+          void (jaExiste !== null ? abrirConversa(jaExiste) : abrirConversaCom(peerKey))
+        }
       />
 
       {ativa ? (

@@ -5,6 +5,7 @@ import { ChannelList } from "./ChannelList";
 import { CommunityRail } from "./CommunityRail";
 import { UserBar } from "./UserBar";
 import { VoicePanel } from "../../features/voice/VoicePanel";
+import { DmCallPanel } from "../../features/dm/DmCallPanel";
 import type { Channel, Community } from "../../domain/types";
 
 export interface ShellLeftColumnProps {
@@ -79,6 +80,14 @@ export function ShellLeftColumn({
       {inVoice && (
         <VoicePanel className={cn(recolhida && "hidden tablet:flex")} />
       )}
+
+      {/*
+        §31.15 / U-33 — o mesmo slot, para a chamada de conversa direta. Não coexiste com o
+        `VoicePanel`: §15.4 diz "voz é uma só". Ele decide sozinho quando aparecer, porque
+        quem sabe se há chamada é a store dela — e porque ele **some** quando a conversa da
+        chamada é a que está na tela, onde o cabeçalho já oferece tudo isto e mais.
+      */}
+      <DmCallPanel className={cn(recolhida && "hidden tablet:flex")} />
 
       {/* §16: no Mobile a barra acompanha a lista de canais — com o
           conteúdo em foco, a coluna da esquerda é só o rail de 72px, que
