@@ -559,7 +559,7 @@ Breakpoints referenciados nas specs de tela abaixo (detalhados na íntegra em §
 **Layout:** coluna direita (280px) em Desktop; overlay em Tablet/Mobile.
 **Estrutura:** grupos por cargo em ordem de hierarquia (Fundador → Moderador → Contribuidor → Membro), header `text-caption` com nome do cargo + contagem ("MODERADOR — 1"); offline agrupados no fim sob "OFFLINE — 307", **colapsado por padrão**. Linha: avatar + dot de presença, nome/apelido, ícone pequeno se em voz agora.
 **Conteúdo mockado:** Rafael, Bianca, Diego, Ana, Fernanda + agregador offline (dataset §2).
-**Ações:** clicar abre popover de perfil (1.4); busca rápida no topo filtra por nome.
+**Ações:** clicar abre popover de perfil (1.4); **botão direito (ou long-press em Mobile) abre o menu de contexto de membro** — o mesmo de §6, já disponível na linha de participante de voz da lista de canais (1.1), e que §6 sempre previu "em membro" (emenda de 2026-09-06: o painel de membros é a superfície onde a lista de gente vive, e era a única que não tinha o gatilho); busca rápida no topo filtra por nome.
 **Estados:** carregando (skeleton) · lista normal · grupo offline expandido/colapsado.
 **Navegação:** aberto pelo nome da comunidade no cabeçalho da lista de canais, ou ícone dedicado no cabeçalho do canal; fecha o painel de thread se aberto (mesmo slot, §6).
 **Responsividade:** Tablet/Mobile → drawer deslizando da direita por cima do conteúdo.
@@ -789,6 +789,7 @@ Só o apresentador vê isso — nunca espectadores, nem os que estão retransmit
 
 **Objetivo:** editar metadados da comunidade e gerenciar convites (visível pra quem tem `manage_community`; host sempre tem).
 **Layout:** mesmo padrão modal/tabs de 3.1, mas escopado à comunidade ativa — tabs "Geral", "Cargos" (3.2), "Moderação" (3.3).
+**Gating dentro da aba Geral (emenda de 2026-09-06):** a aba inteira é alcançável por todo membro, porque "Sair da comunidade" mora nela e é de todo mundo. O que é gated é cada seção: **identidade da comunidade** (nome, descrição, "Salvar alterações") só aparece com `manage_community` — §7.4.5 dá `community.update` a ela, e mostrar o formulário para quem não a tem é oferecer um `E_PERMISSION_DENIED`; **convites** só com `create_invite`; a zona de perigo mostra "Encerrar comunidade" só ao host. Sem `manage_community`, a aba Geral abre direto no que a pessoa pode fazer.
 **Estrutura (Geral):** nome/ícone/descrição editáveis (mesmos campos de 0.4, agora em modo edição), lista de convites ativos (código, criado por, usos, expiração, botão "Revogar" por linha) + botão "Criar novo convite" (formulário: expiração opcional, limite de usos opcional), zona de perigo no fim: "Sair da comunidade" (todo mundo) ou, se Ana é o host, **"Encerrar comunidade"** (`feedback-danger`, dupla confirmação — texto explícito: "Isso desconecta todos os membros permanentemente. Não pode ser desfeito.").
 **Ações:** editar metadados, criar convite, revogar convite, sair/encerrar comunidade.
 **Estados:** salvo automaticamente com toast "Alterações salvas" (debounce ~800ms após parar de digitar) — sem botão "Salvar" separado, consistente com a natureza local-first (não há "enviar pro servidor").
@@ -803,6 +804,14 @@ Só o apresentador vê isso — nunca espectadores, nem os que estão retransmit
 **Conteúdo mockado:** os 4 cargos do dataset (§2) — Fundador (todas as permissões, não-editável/não-deletável, sempre no topo), Moderador, Contribuidor, Membro (cargo padrão, não pode ser deletado, mas permissões são editáveis).
 **Ações:** criar cargo ("+ Novo cargo"), editar nome/cor/permissões/hierarquia, deletar cargo (exceto Fundador e Membro), atribuir/remover membro de um cargo (pelo popover de perfil 1.4 ou por aqui).
 **Regra de hierarquia (aplicada em toda a spec, não só aqui):** um membro só pode gerenciar cargos, expulsar, banir ou aplicar timeout em outro membro cujo cargo de maior hierarquia esteja **abaixo** do seu próprio. Nunca em cargo igual ou superior. O Fundador/host nunca pode ser alvo de nenhuma ação de moderação.
+**A tela não oferece o que o núcleo já recusa (emenda de 2026-09-06, §20.3 regra 8 de `backend-v2.md`).** Concretamente, nesta aba:
+- **Cargo com hierarquia igual ou superior à do autor** abre em modo leitura: nome, cor, mencionabilidade, permissões, "Deletar cargo" e os controles de reordenar ficam **desabilitados com o motivo dito** ("Este cargo está acima do seu na hierarquia"). Desabilitado e não escondido porque o cargo em si é informação legítima — quem administra precisa ver que ele existe e o que ele concede.
+- **Cargo Fundador** é imutável em **todo** campo, não só nome e cor: mencionabilidade e permissões também. Motivo dito: "O cargo Fundador não é editável".
+- **Cargo base** não oferece as 11 permissões que `R-11` proíbe (gerenciar comunidade/canais/cargos/mensagens, banir, expulsar, timeout, mencionar @everyone, ver log de auditoria, silenciar outros, convidar pessoas): as caixas ficam desabilitadas com o motivo ("O cargo base é de todo mundo — permissão de gestão ou moderação nele valeria para a comunidade inteira"). Desabilitadas, não escondidas: o checklist é o catálogo, e sumir com metade dele faria parecer que a permissão não existe.
+- **Permissão que o autor não tem** não é concedível a ninguém (`R-5`): a caixa fica desabilitada com o motivo ("Você não tem esta permissão"). O Fundador tem as 17 e não vê nenhuma desabilitada por este motivo.
+- **Reordenar** só alcança as posições estritamente abaixo do topo do autor, e o **cargo base** não se move: ele é o piso fixo da hierarquia.
+- **Aba "Membros com este cargo"**: "Remover" some para membro que o autor não pode moderar (Fundador, host corrente, ou hierarquia igual/superior) — aqui é ação de moderação, então vale a regra de esconder de §15.
+- **Atribuir cargo pelo popover de perfil (1.4)**: a lista oferece só cargos estritamente abaixo do topo do autor, e o **cargo base nunca sai** do conjunto enviado (`R-3` — remover o base é recusado).
 **Estados:** salvo automaticamente (mesmo padrão de 3.1b) · conflito ao tentar deletar cargo com membros (confirmação: "Este cargo tem 12 membros. Remover o cargo, não os membros?") · tentativa de reordenar cargo pra cima do próprio (bloqueado, tooltip explicando).
 **Navegação:** tab dentro de Configurações da comunidade.
 **Responsividade:** Mobile → lista de cargos e editor viram duas telas sequenciais (lista → seleciona → editor tela cheia → voltar).
@@ -817,7 +826,8 @@ Só o apresentador vê isso — nunca espectadores, nem os que estão retransmit
 **Conteúdo mockado:** entrada de log "Bianca Souza baniu `Usuário#4471` — motivo: spam de link — há 2 dias"; entrada "Rafael Mendes criou o cargo Contribuidor — há 3 semanas"; nenhum timeout ativo no momento (estado vazio ilustrado abaixo).
 **Ações:** filtrar log, revogar banimento, remover timeout.
 **Estados:** log vazio ("Nenhuma ação de moderação registrada ainda") · lista de banidos vazia · lista de timeouts vazia · carregando (skeleton).
-**Navegação:** tab dentro de Configurações da comunidade; visível só pra quem tem `view_audit_log` (Moderador+ no dataset).
+**Navegação:** tab dentro de Configurações da comunidade; visível para quem tem `view_audit_log`, `ban_members` **ou** `timeout_members` (emenda de 2026-09-06 — §15.6 de `backend-v2.md` dá a `ban_members` e a `timeout_members` a leitura da sua própria lista, e gatear a aba só por `view_audit_log` deixava sem caminho quem tem a permissão de escrita).
+**Gating dentro da aba (emenda de 2026-09-06):** cada sub-tab aparece pela permissão da **sua** consulta — "Log de auditoria" com `view_audit_log`, "Banidos" com `view_audit_log` ou `ban_members`, "Timeouts ativos" com `view_audit_log` ou `timeout_members`. E o botão de ação de cada linha depende da permissão de **escrita**, não da de leitura: "Revogar banimento" exige `ban_members`, "Remover timeout" exige `timeout_members`. Quem só tem `view_audit_log` lê as três listas e não vê botão nenhum — ação de moderação sem permissão **some** (§15).
 **Responsividade:** Mobile → sub-tabs viram um seletor no topo (dropdown) em vez de tabs horizontais, pra caber a largura.
 
 ### 3.4 Gestão de canais e categorias
@@ -1084,7 +1094,7 @@ Só o apresentador vê isso — nunca espectadores, nem os que estão retransmit
 **Entrada:** Bianca Souza (Moderador) clica com o botão direito numa mensagem de spam de `Usuário#4471` em `#geral`.
 **Sequência e resposta da interface:**
 1. Menu de contexto mostra, além das ações padrão, "Deletar mensagem" e "Banir Usuário#4471" (Bianca tem permissão e hierarquia superior ao alvo).
-2. Bianca clica "Banir" → modal de confirmação (nunca ação de um clique só): nome do alvo, campo opcional "Motivo", nota de honestidade fixa (§10, 3.3: "a pessoa pode tecnicamente voltar com identidade nova…").
+2. Bianca clica "Banir" → modal de confirmação (nunca ação de um clique só): nome do alvo, campo opcional "Motivo", e **duas** notas de honestidade fixas, ambas obrigatórias: a de §10, 3.3 ("a pessoa pode tecnicamente voltar com identidade nova…") e a de `L-7` (§6.12 de `backend-v2.md`), que a spec do núcleo obriga a UI a dizer **no modal de ban** e que faltava aqui (emenda de 2026-09-06): o ban impede a replicação **futura**, mas **não retira do alvo o que ele já replicou para a máquina dele**.
 3. Bianca confirma → toast "Usuário#4471 foi banido" · mensagens dele são removidas do canal · entrada nova aparece no log de auditoria (3.3) em tempo real.
 **Estados intermediários:** menu aberto → confirmando → processando (~500ms) → concluído.
 **Resultado final:** `Usuário#4471` não entra mais em Vale do Código com esta identidade; ação registrada e visível pra outros Moderadores+.
@@ -1171,7 +1181,7 @@ Validação inline, em tempo real onde é barato (contadores de caractere) e no 
 - **Mensagens dentro de um canal:** sem paginação numerada — scroll infinito pra cima, carregando em lotes de ~50 conforme aproxima do topo já carregado.
 - **Busca (1.2):** sem paginação visível — top ~20 resultados por grupo (Mensagens/Canais/Membros), com "Ver todos os resultados de mensagens" expandindo in-line (nunca navega pra outra tela).
 - **Lista de membros (1.3):** sem paginação — agrupada por cargo, grupo "Offline" colapsado por padrão. Acima de ~200 membros num grupo expandido, a lista deve ser virtualizada (renderizar só linhas visíveis) — detalhe de implementação, não visível ao usuário.
-- **Log de auditoria (3.3):** paginação por botão "Carregar mais" (lotes de 25), mais recente primeiro — nunca paginação numerada, é um feed, não uma tabela de referência.
+- **Log de auditoria (3.3):** paginação por botão "Carregar mais" (lotes de 25), mais recente primeiro — nunca paginação numerada, é um feed, não uma tabela de referência. **"Carregar mais" busca o lote seguinte na fonte** (`nextCursor` de `query.auditLog`, §15.6 de `backend-v2.md`), não revela mais linhas de um array já carregado: o botão some quando a consulta responde sem `nextCursor`, e não antes (emenda de 2026-09-06). Os filtros de tipo/responsável continuam sendo aplicados sobre o que já veio; um filtro que não acha nada na página carregada não é "nada encontrado" enquanto houver mais páginas, e a tela diz isso.
 - **Lista de banidos / timeouts (3.3):** mesma regra do log de auditoria.
 - **Ordenação:** rail de comunidades = ordem de entrada/criação (não alfabética, não reordenável no v1). Canais dentro de categoria = ordem de criação — canal novo (3.4) entra **no fim** da sua categoria, e canal movido para outra categoria entra no fim da categoria de destino. Categorias = ordem de criação, categoria nova no fim da lista. Membros = agrupado por cargo/hierarquia, depois alfabético dentro do grupo.
 - **Filtros:** busca (autor/canal/data/tipo, chips combináveis) e log de auditoria (tipo de ação/responsável/data) são os dois únicos pontos de filtro desta spec — ambos client-side sobre o dataset já carregado (o mock não simula filtro server-side).

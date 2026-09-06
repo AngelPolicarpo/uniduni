@@ -738,6 +738,10 @@ export function selectCanModerate(
   const targetRoles = selectMemberRoleIds(state, communityId, targetId);
   const target = selectHighestRole(state, targetRoles);
   if (target?.isFounder) return false;
+  // O host CORRENTE também é imune (§9.3, R-16 — `E_HOST_IMMUNE`). Depois de uma
+  // sucessão (R-18) quem assume não carrega o cargo Fundador, então conferir só
+  // `isFounder` deixava o novo host aparecer como alvo de quem está acima dele.
+  if (selectCommunity(state, communityId)?.hostPeerId === targetId) return false;
 
   const mine = selectHighestRole(
     state,
@@ -745,6 +749,46 @@ export function selectCanModerate(
   );
   if (!mine) return false;
   return mine.position > (target?.position ?? 0);
+}
+
+/**
+ * Posição do cargo mais alto da identidade local — o `topRank(autor)` de §9.3, na
+ * ordinalização de `adaptadores.cargo`. `0` é "nenhum cargo conhecido", que já não
+ * autoriza nada porque a comparação é estrita.
+ */
+export function selectLocalTopPosition(state: State, communityId: string): number {
+  return (
+    selectHighestRole(state, selectLocalMemberRoleIds(state, communityId))?.position ?? 0
+  );
+}
+
+/**
+ * `efetiva(autor)` de §9.2 — a união das permissões de todos os cargos ativos da
+ * identidade local. É o que R-5 usa para decidir o que ela pode conceder.
+ */
+export function selectLocalPermissions(
+  state: State,
+  communityId: string,
+): Set<Permission> {
+  const efetiva = new Set<Permission>();
+  for (const roleId of selectLocalMemberRoleIds(state, communityId)) {
+    for (const p of selectRole(state, roleId)?.permissions ?? []) efetiva.add(p);
+  }
+  return efetiva;
+}
+
+/**
+ * R-4 de §8.3: o autor não cria, edita, move nem atribui cargo cujo `rank` seja maior ou
+ * igual ao próprio topo. O cargo Fundador é imutável antes disso (`E_FOUNDER_IMMUTABLE`,
+ * passo 1 de §9.3), então nem para o próprio Fundador ele é alvo.
+ */
+export function selectCanActOnRole(
+  state: State,
+  communityId: string,
+  role: Role,
+): boolean {
+  if (role.isFounder) return false;
+  return selectLocalTopPosition(state, communityId) > role.position;
 }
 
 /**

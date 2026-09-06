@@ -10,7 +10,12 @@ import { codigoDoErro } from "../../ipc/frames";
 import { sincronizarComunidade } from "../../live/sincronizacao";
 import { motivoDaRecusa, OFFLINE_HINT } from "../../live/recusas";
 import { useHostStatus } from "../../store/connectionStore";
-import { useFindMembers, useRoles } from "../../store/communityStore";
+import {
+  selectLocalTopPosition,
+  useCommunityStore,
+  useFindMembers,
+  useRoles,
+} from "../../store/communityStore";
 import type { Community } from "../../domain/types";
 
 export interface RolesTabProps {
@@ -27,6 +32,10 @@ export interface RolesTabProps {
 export function RolesTab({ community }: RolesTabProps) {
   const findMembers = useFindMembers();
   const roles = useRoles(community.id);
+  // `topRank(autor)` de §9.3 — a lista precisa dele para não oferecer movimento que R-4 recusa.
+  const minhaPosicao = useCommunityStore((state) =>
+    selectLocalTopPosition(state, community.id),
+  );
   const hostStatus = useHostStatus(community);
   const semHost = hostStatus !== "online";
 
@@ -132,6 +141,7 @@ export function RolesTab({ community }: RolesTabProps) {
 
         <RoleList
           mover={moverCargo}
+          minhaPosicao={minhaPosicao}
           desabilitado={semHost || ocupado}
           {...(semHost ? { motivoDesabilitado: OFFLINE_HINT } : {})}
           roles={roles}

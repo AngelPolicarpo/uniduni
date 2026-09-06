@@ -9766,3 +9766,183 @@ E duas emendas fecharam limitações que estavam sendo lidas como ausência de m
   razão acima.
 - **A revogação síncrona do `blob:`** é comportamento do Chromium sob download real: a
   correção segue a documentação da plataforma e não há harness que a exercite aqui.
+
+---
+
+## 131. Varredura de cargos, permissões e moderação pela interface — 2026-09-06
+
+Verificação do relatório consolidado GEMINI/SPARK sobre a superfície de **cargos,
+permissões e moderação** no renderer: 14 achados e 3 "lacunas de especificação". A regra é a
+de sempre — **cada achado é confirmado na fonte antes de virar correção**. Treze confirmados
+como escritos, **um refutado**. Das três lacunas, duas eram reais e uma era leitura errada do
+normativo; as três fecharam por emenda.
+
+O tema é um só, e ele atravessa doze dos treze achados: **a tela oferecia o que o `fold` já
+recusa.** O núcleo tem a decisão certa — hierarquia (R-4), imutabilidade do Fundador,
+anti-escalada de permissão (R-5, R-11), imunidade de Fundador e host (R-16), cargo base
+obrigatório (R-3) — e nenhuma das telas de §10, 3.2/3.3 consultava nada disso antes de
+oferecer o botão. O resultado era sempre o mesmo: clicar, esperar, receber um código de erro
+nomeado por uma ação que o produto já sabia que não ia acontecer.
+
+E havia um segundo tema, menor mas com raiz comum: **a superfície lia menos do que o núcleo
+sabe.** O roster entregava um cargo por membro, o log parava no primeiro lote, e a aba de
+moderação era gated por uma permissão que não é a única que abre suas consultas.
+
+### 131.1 O defeito de raiz: o roster com um cargo só
+
+`query.members` agrupa o roster pelo cargo de maior `rank` — é a linha "Membros" de §23.2, e
+está certo. O que faltava era o membro carregar, junto, **todos** os cargos ativos dele. O
+adaptador então gravava `roleIds: [cargo-do-grupo]`, e três coisas quebravam de uma vez:
+
+1. `selectHasPermission` calculava a união de §9.2 sobre um cargo só. Quem tivesse
+   "Veterano" no topo (sem permissão nenhuma) e "Moderação" embaixo era visto como só
+   Veterano, e os botões Expulsar/Banir sumiam de alguém que os tem.
+2. `member.setRoles` **substitui** o conjunto. Toda atribuição ou remoção mandava uma lista
+   sem o cargo base — `E_BASE_ROLE_REQUIRED` (R-3), sempre, para todo mundo.
+3. A lista "Membros (N)" do editor de cargos omitia quem tem o cargo como secundário.
+
+A correção é do lado do fio: `query.members` passa a devolver `roleIds` por membro, em `rank`
+DESC (§15.6, emenda). O núcleo já tinha o vínculo em mãos — ele é quem calcula o cargo do
+grupo a partir dele.
+
+**Um defeito a mais, encontrado ao verificar este.** `sincronizarMembros` pedia um lote de
+100 e parava ali, ignorando `nextCursor`. Acima de 100 membros, quem ficasse de fora do lote
+aparecia com `roleIds` vazio para os seletores — a mesma cegueira do achado principal, por
+outro caminho, e agora com consequência maior, porque é `roleIds` que decide o que a tela
+oferece. §8, 1.3 não pagina o painel de membros: o roster passa a ser lido até o fim.
+
+### 131.2 Os defeitos de hierarquia e anti-escalada
+
+Todos confirmados, todos do mesmo formato — o controle existia e nada conferia o estado que a
+tela já tinha:
+
+- **Atribuir cargo pelo popover de perfil** filtrava só `isFounder`. Cargo de `rank` igual ou
+  superior ao do autor continuava na lista (`E_HIERARCHY`), e o cargo base também, que não se
+  atribui nem se retira (R-3).
+- **Editar e deletar cargo no `RoleEditor`** conferia `isFounder` para nome e cor, e mais
+  nada. Cargo acima do autor era editável e deletável; `canDelete` era
+  `!isFounder && !isDefault`, sem comparação de `rank` nenhuma.
+- **Mencionabilidade e permissões do cargo Fundador** ficavam habilitadas mesmo com nome e cor
+  desabilitados — `E_FOUNDER_IMMUTABLE` no envio.
+- **O cargo base** renderizava as 17 permissões como caixas ativas, inclusive as 11 que R-11
+  proíbe (`E_BASE_ROLE_RESTRICTED`). É o vetor que R-11 existe para fechar: o cargo base é o
+  que **todo** membro presente, futuro e reingressante recebe.
+- **Nenhuma caixa** era comparada com `efetiva(autor)`: qualquer um com `manage_roles`
+  marcava permissão que não tem num cargo subordinado (R-5, `E_PERMISSION_ESCALATION`).
+- **Reordenar** liberava arrasto e botões para tudo que não fosse Fundador — inclusive cargo
+  acima do autor e o **cargo base**, que é o piso sentinela de §6.4.1 e não se move.
+- **"Remover" na aba Membros** do editor não conferia nada: Fundador, host e alguém de
+  hierarquia superior tinham o botão.
+- **`selectCanModerate` não conferia o host corrente.** Só `isFounder`. Depois de uma sucessão
+  (R-18), quem assume não carrega o cargo Fundador original: administradores acima dele viam
+  Expulsar e Banir contra o próprio host (`E_HOST_IMMUNE`).
+
+A correção não é uma checagem espalhada por componente: são dois seletores no
+`communityStore` — `selectLocalTopPosition` (o `topRank(autor)` de §9.3) e
+`selectCanActOnRole` (R-4 mais a imutabilidade do Fundador) — mais `selectLocalPermissions`
+(a união de §9.2) para o checklist. `selectCanModerate` ganhou a conferência de
+`hostPeerId`.
+
+**A forma de "não oferecer" não é uma só.** Ação de moderação sem permissão **some** (§15 do
+`frontend.md`). Mas a caixa de uma permissão dentro do checklist do cargo **fica visível e
+inerte, com o motivo dito**: o checklist é o catálogo de §9.1, e sumir com onze das
+dezessete faria a comunidade parecer ter menos permissões do que tem. O mesmo vale para o
+cargo acima do seu, que continua legível — quem administra precisa ver o que ele concede.
+
+Uma sutileza que o relatório não tinha e a correção precisou decidir: permissão **já salva**
+no cargo continua desmarcável mesmo que o autor não a tenha. Retirar não é escalada, e travar
+ali deixaria um cargo forte sem ninguém que pudesse enfraquecê-lo.
+
+### 131.3 Os defeitos de leitura da aba de moderação
+
+- **Os botões "Revogar banimento" e "Remover timeout"** eram desenhados para qualquer um que
+  alcançasse a aba, isto é, para quem tem `view_audit_log` — que é permissão de **leitura**.
+  §9.1 dá `mod.revokeBan` a `ban_members` e `mod.removeTimeout` a `timeout_members`.
+- **E o inverso, que é a lacuna real:** quem tem `ban_members` e não tem `view_audit_log` não
+  via a aba, embora `query.bans` já aceitasse `ban_members` desde sempre.
+- **`sincronizarModeracao` tratava a permissão como UMA para as três consultas.** Com o
+  carve-out de `bans`, um moderador com só `ban_members` recebia recusa em duas das três, a
+  função concluía "todas negaram" e **apagava os bans que tinham respondido**.
+- **O log parava em 50 entradas.** `api.auditLog({ limit: 50 })` sem cursor, e o "Carregar
+  mais" paginava o array local. Ação além do primeiro lote era inalcançável na tela, embora
+  estivesse no `fold` e §14 já pedisse lotes de 25 buscados na fonte.
+- **O modal de ban omitia `L-7`.** §6.12 obriga a UI a dizer, **neste** modal, que o ban corta
+  a replicação futura e **não** retira do alvo o que ele já replicou. O modal dizia só a nota
+  sobre identidade nova.
+
+### 131.4 O que o relatório errou
+
+**Achado 11 — "ações de moderação sem diálogo de confirmação" (Revogar banimento / Remover
+timeout).** Refutado. §15 do `frontend.md` tem a **lista fechada** das ações que exigem
+confirmação, e nenhuma das duas está nela; a linha seguinte isenta nominalmente "remover
+timeout", classificando-o como destrutivo **reversível dentro da própria sessão**. Revogar um
+banimento é da mesma família: quem revogou por engano bane de novo. O relatório citou como
+regra violada um comentário de código do `ModerationDialog`, que fala do **ban** — a ação
+irreversível —, não das duas.
+
+**Lacuna L3 — "`query.bans`/`query.timeouts` expõem `UserRef` vivo, sem rótulos congelados".**
+Leitura errada do normativo. O congelamento de §6.13 é da `ModerationEntry`: a linha do
+**log**, que é história e não pode mudar de nome depois. As tabelas `bans` e `timeouts` são
+**estado corrente** e o schema de §15.6 declara `UserRef` de propósito. Não havia o que
+corrigir — havia o que **escrever**, porque a spec nunca disse isso com todas as letras.
+
+**Lacuna L2 — "ausência de menu de contexto de membro no painel de membros".** Meio termo. 1.3
+lista só "clicar abre popover de perfil", então o painel não estava violando a própria seção.
+Mas §6 sempre descreveu o menu de contexto como acionável "em mensagem, **membro**, canal,
+comunidade", e o painel de membros era a única superfície de gente sem o gatilho. Ligado, com
+1.3 emendada para dizê-lo.
+
+### 131.5 As emendas normativas
+
+`backend-v2.md`:
+
+| # | Seção | O que passou a estar escrito |
+|---|---|---|
+| 1 | §20.3, regras 8 e 9 | A UI **não oferece** o que o `fold` já recusa por hierarquia ou anti-escalada, com a lista dos sete códigos previsíveis a partir do estado que a tela tem — e a regra 9, que a pré-checagem é affordance e **nunca** substitui a recusa recebida |
+| 2 | §15.6, `query.members` | Cada membro carrega `roleIds` com todos os cargos ativos, `rank` DESC |
+| 3 | §15.6, `query.timeouts` | Carve-out de `timeout_members`, simétrico ao de `ban_members` em `query.bans` — e o parágrafo de enforcement dizendo que **a permissão não é a mesma nas três** |
+| 4 | §15.6 | Esclarecimento: `bans`/`timeouts` respondem `UserRef` **vivo**; o rótulo congelado de §6.13 é da `ModerationEntry` |
+| 5 | §9.1 | `view_audit_log` não é a única porta de leitura de `bans` e `timeouts` |
+
+`frontend.md`:
+
+| # | Seção | O que passou a estar escrito |
+|---|---|---|
+| 6 | 3.1b | A aba Geral é de todo membro (o "Sair da comunidade" mora nela); a **seção de identidade** é de `manage_community` |
+| 7 | 3.2 | O que o editor não oferece, item a item: cargo acima do seu, cargo Fundador, as 11 de R-11 no cargo base, permissão fora de `efetiva(autor)`, o cargo base imóvel, o "Remover" que some, o cargo base que nunca sai de `setRoles` |
+| 8 | 3.3 | A aba abre para `view_audit_log`, `ban_members` **ou** `timeout_members`; cada sub-aba pela permissão da sua consulta; o botão da linha pela de **escrita** |
+| 9 | 1.3 | Botão direito no painel de membros abre o menu de contexto de §6 |
+| 10 | D12 | A nota de `L-7` é obrigatória no modal de ban, ao lado da de identidade nova |
+| 11 | §14 | "Carregar mais" do log paga o lote seguinte **na fonte**; o filtro vale sobre o que já veio, e a tela diz isso |
+
+### 131.6 O que foi medido
+
+- `core`: `npm run build` (barreira de camadas), `npm run typecheck`, `npm test` — **1285**
+  testes. Um novo em `test/moderacao-superficie.test.ts` (os carve-outs de `bans` e
+  `timeouts`, com cargos reais do `fold` e a membresia encenada na porta de leitura, mesmo
+  recorte da `intrusa` que já existia ali), mais a asserção de `roleIds` no roster.
+- `frontend`: `npm run lint`, `npm run build`, `npm test` — **596** testes. Doze novos:
+  `src/store/__testes__/hierarquia.test.ts` (imunidade do host pós-sucessão, união de §9.2,
+  R-4 no limite do "estritamente menor", Fundador imutável),
+  `src/live/__testes__/roster.test.ts` (todos os cargos no membro, o fallback para host
+  antigo, o cursor seguido até o fim, a falha no meio que não deixa meia lista) e três casos
+  novos em `moderacao.test.ts` (o moderador com só `ban_members`, a recusa de permissão que
+  zera **a lista dela**, e o "Carregar mais" que busca com o cursor da página anterior).
+- `app`: `npm run build`, `npm run typecheck` e **`smoke:voz`** — as doze afirmações passaram.
+  Foi rodado porque a correção do roster encosta em `live/sincronizacao.ts`, que é gatilho
+  declarado do smoke no `CLAUDE.md`, ainda que o caminho de mídia não tenha sido tocado.
+- Uma correção foi verificada por **mutação** (remover a conferência de `hostPeerId` derruba o
+  caso da sucessão em `hierarquia.test.ts`).
+
+### 131.7 O que não foi medido
+
+- **Nenhum componente desta fatia tem teste de render** — é o `B20` da lista, e continua
+  aberto. As correções de `RoleEditor`, `RoleList`, `ModerationTab`,
+  `ProfileModerationActions` e `CommunitySettings` estão cobertas pelos seletores que elas
+  consultam e pelo build, não pelo JSX que as desenha. O que isso deixa sem rede é a **ligação**
+  entre o seletor e o controle — um `disabled` esquecido num botão passa por tudo.
+- **O menu de contexto no painel de membros** foi ligado e typechecado; não há harness de
+  interação que o abra.
+- **O caminho de recusa continua vivo e não foi exercitado de novo nesta fatia.** A regra 9 de
+  §20.3 existe porque o espelho pode estar atrás do log: a tradução do erro nomeado segue nos
+  componentes, como estava.

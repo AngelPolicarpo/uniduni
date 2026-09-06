@@ -131,9 +131,15 @@ export function membroDeRef(communityId: string, u: UserRef, extra?: Partial<Mem
   };
 }
 
+/**
+ * `roleId` é o cargo do GRUPO — o de maior rank. Ele só é usado quando um host mais antigo
+ * responde sem `roleIds` (§15.6, emenda de 2026-09-06): o roster de hoje carrega o conjunto
+ * inteiro, e é ele que vale, porque §9.2 é união e R-3 exige o base em `member.setRoles`.
+ */
 export function membroDeEntrada(communityId: string, m: MemberEntry, roleId: string): Member {
+  const todos = Array.isArray(m.roleIds) && m.roleIds.length > 0 ? m.roleIds : [roleId];
   return membroDeRef(communityId, m, {
-    roleIds: [roleId],
+    roleIds: todos,
     joinedAt: iso(m.joinedAt),
     presence: presenca(m.presence),
   });

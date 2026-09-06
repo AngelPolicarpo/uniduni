@@ -19,13 +19,23 @@ export interface CommunitySettingsProps {
  * 3.1b Configurações da comunidade — metadados, convites e zona de perigo,
  * mais as abas de cargos (3.2) e moderação (3.3).
  *
- * A aba de moderação só existe para quem tem `view_audit_log`: §15 manda
- * esconder o que a permissão não autoriza, nunca mostrar desabilitado.
+ * §15 manda esconder o que a permissão não autoriza, nunca mostrar desabilitado. A aba de
+ * moderação não é gated só por `view_audit_log` (emenda de 2026-09-06, §15.6): §9.1 dá
+ * `mod.revokeBan` a `ban_members` e `mod.removeTimeout` a `timeout_members`, e as consultas
+ * correspondentes aceitam essas permissões — gatear a porta pela permissão de LEITURA
+ * deixava sem caminho quem tem a de escrita.
  */
 export function CommunitySettings({ community, onClose }: CommunitySettingsProps) {
   const canViewAudit = useHasPermission(community.id, "view_audit_log");
   const canManageRoles = useHasPermission(community.id, "manage_roles");
   const canInvite = useHasPermission(community.id, "create_invite");
+  const canBan = useHasPermission(community.id, "ban_members");
+  const canTimeout = useHasPermission(community.id, "timeout_members");
+  // §7.4.5 — `community.update` é de `manage_community`; sem ela o formulário de identidade
+  // nem aparece. A aba "Geral" continua alcançável por todo mundo: "Sair da comunidade"
+  // mora nela e é de todo membro.
+  const canManageCommunity = useHasPermission(community.id, "manage_community");
+  const canModerationTab = canViewAudit || canBan || canTimeout;
 
   const [tab, setTab] = useState("general");
   const hostStatus = useHostStatus(community);
@@ -36,7 +46,7 @@ export function CommunitySettings({ community, onClose }: CommunitySettingsProps
     ...(canManageRoles
       ? [{ id: "roles", label: "Cargos", icon: <Users size={16} strokeWidth={2} /> }]
       : []),
-    ...(canViewAudit
+    ...(canModerationTab
       ? [
           {
             id: "moderation",
@@ -57,7 +67,9 @@ export function CommunitySettings({ community, onClose }: CommunitySettingsProps
     >
       {tab === "general" && (
         <>
-          <CommunityIdentitySection community={community} semHost={semHost} />
+          {canManageCommunity && (
+            <CommunityIdentitySection community={community} semHost={semHost} />
+          )}
           {canInvite && <CommunityInvitesSection community={community} />}
           <CommunityDangerZone
             community={community}

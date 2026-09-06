@@ -236,6 +236,13 @@ export interface MessagesPage {
 export interface MemberEntry extends UserRef {
   presence: Presence;
   joinedAt: Ms;
+  /**
+   * TODOS os cargos ativos do membro, `rank` DESC — não só o do grupo (§15.6, emenda de
+   * 2026-09-06). §9.2 define permissão efetiva como UNIÃO dos cargos e R-3 exige o cargo
+   * base dentro de `member.setRoles`: com um cargo só, a tela escondia ação autorizada e
+   * mandava `setRoles` sem o base.
+   */
+  roleIds: string[];
 }
 
 export interface MembersPage {

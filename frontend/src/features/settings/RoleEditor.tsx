@@ -14,8 +14,33 @@ import { OFFLINE_HINT } from "../../live/recusas";
 import { useToastStore } from "../../store/toastStore";
 import { AVATAR_BG_CLASS } from "../../lib/avatar";
 import { PERMISSION_GROUPS } from "../../mocks/dataset";
-import { selectMemberRoleIds, useCommunityStore } from "../../store/communityStore";
+import {
+  selectCanActOnRole,
+  selectCanModerate,
+  selectLocalPermissions,
+  selectMemberRoleIds,
+  useCommunityStore,
+} from "../../store/communityStore";
 import type { Community, Member, Permission, Role, RoleColor } from "../../domain/types";
+
+/**
+ * R-11 (§8.3): as 11 permissões que o **cargo base** nunca pode ter. Ele é o cargo que todo
+ * membro presente, futuro e reingressante recebe (R-3), então gestão, moderação ou menção
+ * global ali valeria para a comunidade inteira — `E_BASE_ROLE_RESTRICTED` no núcleo.
+ */
+const PROIBIDAS_NO_BASE: ReadonlySet<Permission> = new Set<Permission>([
+  "manage_community",
+  "manage_channels",
+  "manage_roles",
+  "manage_messages",
+  "ban_members",
+  "kick_members",
+  "timeout_members",
+  "mention_everyone",
+  "view_audit_log",
+  "voice_mute_others",
+  "create_invite",
+]);
 
 /** §5.4 — conjunto curado fechado de 7; nunca color-picker livre. */
 const ROLE_COLORS: RoleColor[] = [
@@ -72,6 +97,29 @@ export function RoleEditor({
   onDeleted,
 }: RoleEditorProps) {
   const showToast = useToastStore((state) => state.showToast);
+  /**
+   * §20.3 (regra 8): a tela não oferece o que o `fold` já recusa. Três eixos independentes
+   * decidem o que fica inerte aqui — hierarquia (R-4), imutabilidade do Fundador
+   * (`E_FOUNDER_IMMUTABLE`) e as duas anti-escaladas de permissão (R-5 e R-11). Nenhum deles
+   * é autorização: quem decide continua sendo o núcleo, e a recusa nomeada segue sendo
+   * traduzida em `recusa`.
+   */
+  const podeMexer = useCommunityStore((state) =>
+    selectCanActOnRole(state, community.id, selected),
+  );
+  // Chave estável: o seletor devolveria um `Set` novo a cada render e a store re-renderizaria
+  // para sempre. Mesmo padrão que o popover de perfil já usa para os cargos do alvo.
+  const minhasPermissoesChave = useCommunityStore((state) =>
+    [...selectLocalPermissions(state, community.id)].sort().join("|"),
+  );
+  const minhasPermissoes = new Set<Permission>(
+    minhasPermissoesChave === "" ? [] : (minhasPermissoesChave.split("|") as Permission[]),
+  );
+  const motivoBloqueio = selected.isFounder
+    ? "O cargo Fundador não é editável"
+    : podeMexer
+      ? null
+      : "Este cargo está acima do seu na hierarquia";
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [rascunho, setRascunho] = useState<{
     roleId: string;
@@ -92,7 +140,9 @@ export function RoleEditor({
           permissions: selected.permissions,
         };
 
-  const canDelete = !selected.isFounder && !selected.isDefault;
+  // R-12 recusa deletar o cargo base (`E_BASE_ROLE_REQUIRED`); R-4 recusa o que está acima.
+  const canDelete = podeMexer && !selected.isDefault;
+
   /**
    * Conjuntos das permissões: um deles responde a comparação de "sujo", o
    * outro as caixas de PERMISSION_GROUPS. Montados uma vez, em vez de a lista
@@ -100,6 +150,18 @@ export function RoleEditor({
    */
   const salvas = new Set(selected.permissions);
   const marcadas = new Set(draft.permissions);
+
+  /** Motivo pelo qual uma permissão específica não é marcável, ou `null` se for. */
+  function bloqueioDaPermissao(permission: Permission): string | null {
+    if (motivoBloqueio !== null) return motivoBloqueio;
+    if (selected.isDefault && PROIBIDAS_NO_BASE.has(permission))
+      return "O cargo base é de todo mundo — permissão de gestão ou moderação nele valeria para a comunidade inteira";
+    // R-5: ninguém concede o que não tem. Permissão JÁ salva no cargo continua marcável para
+    // ser RETIRADA — tirar não é escalada, e travá-la deixaria o cargo sem quem o desfizesse.
+    if (!minhasPermissoes.has(permission) && !salvas.has(permission))
+      return "Você não tem esta permissão";
+    return null;
+  }
   const sujo =
     draft.name !== selected.name ||
     draft.color !== selected.color ||
@@ -157,8 +219,14 @@ export function RoleEditor({
       error={
         draft.name.trim() === "" ? "O cargo precisa de um nome" : undefined
       }
-      disabled={selected.isFounder}
+      disabled={motivoBloqueio !== null}
     />
+
+    {motivoBloqueio !== null && (
+      <p className="rounded-md border border-border-default bg-surface-primary p-3 text-meta text-text-secondary">
+        {motivoBloqueio}. Você continua vendo o que ele concede.
+      </p>
+    )}
 
     <div>
       <p className="text-caption text-text-tertiary uppercase">Cor</p>
@@ -169,14 +237,15 @@ export function RoleEditor({
             type="button"
             aria-label={color}
             aria-pressed={draft.color === color}
-            disabled={selected.isFounder}
+            disabled={motivoBloqueio !== null}
+            title={motivoBloqueio ?? undefined}
             onClick={() => setRascunho({ ...draft, color })}
             className={cn(
               "size-7 rounded-full transition-transform duration-(--duration-fast)",
               AVATAR_BG_CLASS[color],
               draft.color === color &&
                 "ring-2 ring-border-strong ring-offset-2 ring-offset-surface-elevated",
-              selected.isFounder && "cursor-not-allowed opacity-50",
+              motivoBloqueio !== null && "cursor-not-allowed opacity-50",
             )}
           />
         ))}
@@ -188,6 +257,7 @@ export function RoleEditor({
       onChange={(mentionable) => setRascunho({ ...draft, mentionable })}
       label="Mencionável"
       description="Permite escrever @cargo no composer."
+      disabled={motivoBloqueio !== null}
     />
 
     <Tabs
@@ -204,14 +274,19 @@ export function RoleEditor({
       {section === "permissions" &&
         PERMISSION_GROUPS.map((group) => (
           <SettingsSection key={group.id} title={group.label}>
-            {group.permissions.map((permission) => (
-              <Checkbox
-                key={permission.id}
-                checked={marcadas.has(permission.id)}
-                onChange={() => togglePermission(permission.id)}
-                label={permission.label}
-              />
-            ))}
+            {group.permissions.map((permission) => {
+              const bloqueio = bloqueioDaPermissao(permission.id);
+              return (
+                <Checkbox
+                  key={permission.id}
+                  checked={marcadas.has(permission.id)}
+                  onChange={() => togglePermission(permission.id)}
+                  label={permission.label}
+                  disabled={bloqueio !== null}
+                  {...(bloqueio !== null ? { title: bloqueio } : {})}
+                />
+              );
+            })}
           </SettingsSection>
         ))}
 
@@ -223,44 +298,30 @@ export function RoleEditor({
             </p>
           )}
           {membersWithRole.map((member) => (
-            <SettingsRow
+            <MembroDoCargo
               key={member.identityId}
-              action={
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={semHost || ocupado}
-                  title={semHost ? OFFLINE_HINT : undefined}
-                  onClick={() =>
-                    comRecusa(async () => {
-                      const atuais = selectMemberRoleIds(
-                        useCommunityStore.getState(),
-                        community.id,
-                        member.identityId,
-                      );
-                      await api.memberSetRoles({
-                        communityId: community.id,
-                        targetKey: member.identityId,
-                        roleIds: atuais.filter((id) => id !== selected.id),
-                      });
-                    })
-                  }
-                >
-                  Remover
-                </Button>
+              communityId={community.id}
+              member={member}
+              /* O cargo base é de todo mundo por R-3: retirá-lo de alguém é
+                 `E_BASE_ROLE_REQUIRED`, então nem se oferece. */
+              removivel={!selected.isDefault}
+              semHost={semHost}
+              ocupado={ocupado}
+              onRemove={() =>
+                comRecusa(async () => {
+                  const atuais = selectMemberRoleIds(
+                    useCommunityStore.getState(),
+                    community.id,
+                    member.identityId,
+                  );
+                  await api.memberSetRoles({
+                    communityId: community.id,
+                    targetKey: member.identityId,
+                    roleIds: atuais.filter((id) => id !== selected.id),
+                  });
+                })
               }
-            >
-              <span className="flex items-center gap-2">
-                <Avatar
-                  name={member.displayName}
-                  color={member.avatarColor}
-                  size="sm"
-                />
-                <span className="truncate text-body text-text-primary">
-                  {member.displayName}
-                </span>
-              </span>
-            </SettingsRow>
+            />
           ))}
         </div>
       )}
@@ -278,8 +339,8 @@ export function RoleEditor({
         size="sm"
         onClick={salvar}
         loading={ocupado}
-        disabled={!sujo || semHost || draft.name.trim() === ""}
-        title={semHost ? OFFLINE_HINT : undefined}
+        disabled={!sujo || semHost || motivoBloqueio !== null || draft.name.trim() === ""}
+        title={motivoBloqueio ?? (semHost ? OFFLINE_HINT : undefined)}
       >
         Salvar alterações
       </Button>
@@ -344,5 +405,58 @@ export function RoleEditor({
     </Modal>
   )}
     </>
+  );
+}
+
+/**
+ * Linha da aba "Membros com este cargo".
+ *
+ * O "Remover" é `member.setRoles` sobre outra pessoa, e por isso passa pelo estágio 12 de
+ * §9.3: Fundador original e host corrente são imunes, e alvo com hierarquia igual ou
+ * superior é `E_HIERARCHY`. Aqui é ação de moderação, então a regra de §15 é **esconder** —
+ * o botão some, não fica desabilitado. Precisa ser um componente próprio porque
+ * `selectCanModerate` é um hook e a lista é um `map`.
+ */
+function MembroDoCargo({
+  communityId,
+  member,
+  removivel,
+  semHost,
+  ocupado,
+  onRemove,
+}: {
+  communityId: string;
+  member: Member;
+  removivel: boolean;
+  semHost: boolean;
+  ocupado: boolean;
+  onRemove: () => void;
+}) {
+  const podeModerar = useCommunityStore((state) =>
+    selectCanModerate(state, communityId, member.identityId),
+  );
+  return (
+    <SettingsRow
+      action={
+        removivel && podeModerar ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={semHost || ocupado}
+            title={semHost ? OFFLINE_HINT : undefined}
+            onClick={onRemove}
+          >
+            Remover
+          </Button>
+        ) : undefined
+      }
+    >
+      <span className="flex items-center gap-2">
+        <Avatar name={member.displayName} color={member.avatarColor} size="sm" />
+        <span className="truncate text-body text-text-primary">
+          {member.displayName}
+        </span>
+      </span>
+    </SettingsRow>
   );
 }

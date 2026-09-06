@@ -143,13 +143,38 @@ export async function sincronizarComunidade(communityId: string): Promise<void> 
   });
 }
 
-/** `query.members` → roster. Os grupos vêm por cargo; o membro carrega o cargo do grupo. */
+/** Lote de `query.members` — o teto da consulta é 100 (§15.6). */
+const LOTE_MEMBROS = 100;
+/**
+ * Teto de segurança do laço de páginas: §8, 1.3 não pagina o painel de membros, então o
+ * roster é lido inteiro. Isto não é uma política de produto — é a garantia de que uma
+ * resposta com cursor patológico não roda para sempre.
+ */
+const MAX_PAGINAS_MEMBROS = 200;
+
+/**
+ * `query.members` → roster. Os grupos vêm por cargo; cada membro carrega TODOS os cargos
+ * ativos dele (§15.6, emenda de 2026-09-06) — é essa lista que decide permissão efetiva
+ * (§9.2) e hierarquia (§9.3) na tela.
+ *
+ * O roster é lido ATÉ O FIM, seguindo `nextCursor`. §8, 1.3 não pagina o painel de membros,
+ * e uma leitura truncada não era só uma lista curta: quem ficasse de fora aparecia com
+ * `roleIds` vazio para os seletores, e a tela deixava de oferecer ação que a pessoa tem.
+ */
 export async function sincronizarMembros(communityId: string): Promise<void> {
-  const pagina = await api.members({ communityId, limit: 100 }).catch(() => null);
-  if (pagina === null) return;
   const membros: Member[] = [];
-  for (const g of pagina.groups) {
-    for (const m of g.members) membros.push(membroDeEntrada(communityId, m, g.roleId));
+  let cursor: string | undefined;
+  for (let pagina = 0; pagina < MAX_PAGINAS_MEMBROS; pagina++) {
+    const resposta = await api
+      .members({ communityId, limit: LOTE_MEMBROS, ...(cursor !== undefined ? { cursor } : {}) })
+      .catch(() => null);
+    // Falha no meio do roster não substitui o espelho por meia lista.
+    if (resposta === null) return;
+    for (const g of resposta.groups) {
+      for (const m of g.members) membros.push(membroDeEntrada(communityId, m, g.roleId));
+    }
+    if (resposta.nextCursor === undefined) break;
+    cursor = resposta.nextCursor;
   }
   const store = useCommunityStore.getState();
   store.aplicarRemoto({
@@ -182,46 +207,85 @@ export async function sincronizarConvites(communityId: string): Promise<void> {
   });
 }
 
+/** Lote do log de auditoria — §14 pede 25 por vez, e "Carregar mais" busca o seguinte. */
+const LOTE_AUDITORIA = 25;
+
 /**
  * Leituras de moderação de §15.6 — `query.auditLog`/`query.bans`/`query.timeouts`.
- * As três exigem `view_audit_log`: a recusa `E_PERMISSION_DENIED` é ESTADO aqui
- * (a tela diz "sem permissão"), não silêncio que fingiria que nada aconteceu.
+ *
+ * A permissão NÃO é a mesma nas três (emenda de 2026-09-06): `query.auditLog` exige
+ * `view_audit_log`; `query.bans` aceita `view_audit_log` ou `ban_members`; `query.timeouts`
+ * aceita `view_audit_log` ou `timeout_members`. Por isso a recusa é registrada POR consulta:
+ * tratar as três como uma só apagava a lista que tinha respondido — quem só tem
+ * `ban_members` recebia recusa em duas, e o espelho jogava fora os bans que vieram.
+ *
+ * `E_PERMISSION_DENIED` é ESTADO aqui (a tela diz "sem permissão"), não silêncio que
+ * fingiria que nada aconteceu.
  */
 export async function sincronizarModeracao(communityId: string): Promise<void> {
   await comExclusao(`mod:${communityId}`, async () => {
     const [log, bans, timeouts] = await Promise.all([
-      api.auditLog({ communityId, limit: 50 }).catch((e) => e as Pagina<AuditItem> | Error),
+      api.auditLog({ communityId, limit: LOTE_AUDITORIA }).catch((e) => e as Pagina<AuditItem> | Error),
       api.bans({ communityId }).catch((e) => e as Pagina<BanItem> | Error),
       api.timeouts({ communityId }).catch((e) => e as Pagina<TimeoutItem> | Error),
     ]);
-    // A permissão é UMA para as três: só vale o flag quando TODAS negarem —
-    // falha parcial preserva o espelho e não mente sobre permissão.
-    const negadas = [log, bans, timeouts].filter((r) => r instanceof Error);
-    if (negadas.length > 0 && negadas.every((r) => codigoDoErro(r) === "E_PERMISSION_DENIED")) {
-      useModerationStore.getState().aplicarRemoto({
-        auditLog: [], bans: [], timeouts: [], semPermissao: true,
-      });
-      return;
-    }
+    const negada = (r: unknown): boolean =>
+      r instanceof Error && codigoDoErro(r) === "E_PERMISSION_DENIED";
+    const negadas = {
+      auditLog: negada(log),
+      bans: negada(bans),
+      timeouts: negada(timeouts),
+    };
     const store = useModerationStore.getState();
+    /** Recusa por permissão zera a lista dela; falha de outra natureza preserva o espelho. */
+    function resolver<T, R>(
+      r: Pagina<T> | Error,
+      foiNegada: boolean,
+      anterior: R[],
+      adaptar: (p: Pagina<T>) => R[],
+    ): R[] {
+      if (foiNegada) return [];
+      if (r instanceof Error) return anterior;
+      return adaptar(r);
+    }
     store.aplicarRemoto({
-      semPermissao: false,
-      auditLog:
-        log instanceof Error
-          ? store.auditLog
-          : log.items.map((item) => entradaDeAuditoria(item, communityId)),
-      bans:
-        bans instanceof Error
-          ? store.bans
-          : bans.items.map((item) => banido(item, communityId)),
-      timeouts:
-        timeouts instanceof Error
-          ? store.timeouts
-          : timeouts.items
-              .map((item) => adaptarTimeout(item, communityId))
-              .filter((t) => t !== null),
+      negadas,
+      // O flag antigo continua significando o que sempre significou: NENHUMA das três
+      // respondeu, e a tela inteira é "sem permissão".
+      semPermissao: negadas.auditLog && negadas.bans && negadas.timeouts,
+      auditLog: resolver(log, negadas.auditLog, store.auditLog, (p) =>
+        p.items.map((item) => entradaDeAuditoria(item, communityId)),
+      ),
+      auditCursor: log instanceof Error ? null : (log.nextCursor ?? null),
+      bans: resolver(bans, negadas.bans, store.bans, (p) =>
+        p.items.map((item) => banido(item, communityId)),
+      ),
+      timeouts: resolver(timeouts, negadas.timeouts, store.timeouts, (p) =>
+        p.items.map((item) => adaptarTimeout(item, communityId)).filter((t) => t !== null),
+      ),
     });
   });
+}
+
+/**
+ * Página seguinte do log de auditoria (§14 — "Carregar mais" paga o lote na FONTE).
+ * Devolve `false` quando não havia mais nada a buscar ou a consulta falhou; a tela usa isso
+ * para não deixar o botão prometendo uma página que nunca chega.
+ */
+export async function carregarMaisAuditoria(communityId: string): Promise<boolean> {
+  const cursor = useModerationStore.getState().auditCursor;
+  if (cursor === null) return false;
+  const pagina = await api
+    .auditLog({ communityId, cursor, limit: LOTE_AUDITORIA })
+    .catch(() => null);
+  if (pagina === null) return false;
+  useModerationStore
+    .getState()
+    .anexarAuditoria(
+      pagina.items.map((item) => entradaDeAuditoria(item, communityId)),
+      pagina.nextCursor ?? null,
+    );
+  return true;
 }
 
 /**

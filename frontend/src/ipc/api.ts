@@ -195,7 +195,8 @@ export const api = {
     direction?: "before" | "after";
   }) => req<MessagesPage>("query.messages", arg),
 
-  members: (arg: { communityId: string; limit?: number }) => req<MembersPage>("query.members", arg),
+  members: (arg: { communityId: string; limit?: number; cursor?: string }) =>
+    req<MembersPage>("query.members", arg),
 
   hostStatus: (communityId: string) => req<HostStatusDto>("query.hostStatus", { communityId }),
 

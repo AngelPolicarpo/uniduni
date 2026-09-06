@@ -23,12 +23,16 @@ import { Tabs } from "../../components/ui/Tabs";
 import { SettingsRow } from "./SettingsLayout";
 import { formatCountdown, formatRelativeTime } from "../../lib/format";
 import {
+  useAuditCursor,
   useAuditLog,
   useBans,
+  useModeracaoNegadas,
   useModeracaoSemPermissao,
   useTimeouts,
 } from "../../store/moderationStore";
+import { useHasPermission } from "../../store/communityStore";
 import {
+  carregarMaisAuditoria,
   sincronizarMembros,
   sincronizarModeracao,
 } from "../../live/sincronizacao";
@@ -102,9 +106,6 @@ const TYPE_FILTERS: { value: ModerationActionType | "all"; label: string }[] = [
   { value: "createRole", label: "Cargos criados" },
 ];
 
-/** §14 — feed, não tabela: "Carregar mais" em lotes de 25. */
-const PAGE_SIZE = 25;
-
 /** Contagem regressiva do timeout, recalculada a cada segundo. */
 function useNow(intervalMs = 1000): number {
   const [now, setNow] = useState(() => Date.now());
@@ -130,12 +131,18 @@ export interface ModerationTabProps {
 /**
  * 3.3 Ferramentas de moderação — log de auditoria, banidos e timeouts.
  *
- * As três leituras vêm do núcleo (`query.auditLog/bans/timeouts`, §15.6) e
- * exigem `view_audit_log`; sem ela a tela DIZ que falta permissão em vez de
- * fingir que nada aconteceu. Escopo por-comunidade via cargos, nunca
- * reputação global: `CLAUDE.md:49` marca moderação em escala como problema
- * em aberto, e a nota de honestidade do topo da lista de banidos diz isso
- * com todas as letras.
+ * As três leituras vêm do núcleo (`query.auditLog/bans/timeouts`, §15.6) e cada uma tem a
+ * SUA permissão: log é `view_audit_log`; banidos aceita `view_audit_log` ou `ban_members`;
+ * timeouts aceita `view_audit_log` ou `timeout_members`. Sub-aba cuja consulta foi recusada
+ * não aparece, e a tela só vira "sem permissão" inteira quando as três negam.
+ *
+ * O botão de cada linha depende da permissão de ESCRITA, não da de leitura (§9.1 —
+ * `mod.revokeBan` é de `ban_members`, `mod.removeTimeout` é de `timeout_members`): quem só
+ * lê o log não vê botão nenhum, porque ação de moderação sem permissão some (§15).
+ *
+ * Escopo por-comunidade via cargos, nunca reputação global: `CLAUDE.md:49` marca moderação
+ * em escala como problema em aberto, e a nota de honestidade do topo da lista de banidos diz
+ * isso com todas as letras.
  */
 export function ModerationTab({ community }: ModerationTabProps) {
   const showToast = useToastStore((state) => state.showToast);
@@ -144,15 +151,26 @@ export function ModerationTab({ community }: ModerationTabProps) {
     "all",
   );
   const [filterOpen, setFilterOpen] = useState(false);
-  const [visible, setVisible] = useState(PAGE_SIZE);
+  const [carregandoMais, setCarregandoMais] = useState(false);
 
   const entries = useAuditLog(community.id);
   const bans = useBans(community.id);
   const timeouts = useTimeouts(community.id);
   const semPermissao = useModeracaoSemPermissao();
+  const negadas = useModeracaoNegadas();
+  const auditCursor = useAuditCursor();
+  // Permissões de ESCRITA — são elas que decidem se o botão da linha existe (§9.1).
+  const canBan = useHasPermission(community.id, "ban_members");
+  const canTimeout = useHasPermission(community.id, "timeout_members");
   const now = useNow();
 
   const recarregar = () => void sincronizarModeracao(community.id);
+
+  function carregarMais(): void {
+    if (carregandoMais) return;
+    setCarregandoMais(true);
+    void carregarMaisAuditoria(community.id).finally(() => setCarregandoMais(false));
+  }
 
   async function revogar(identityId: string, label: string): Promise<void> {
     try {
@@ -187,8 +205,9 @@ export function ModerationTab({ community }: ModerationTabProps) {
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-3">
         <p className="rounded-md border border-border-default bg-surface-primary p-3 text-body text-text-secondary">
-          Seu cargo não tem permissão para ver o log de auditoria desta
-          comunidade (<code>view_audit_log</code>). Peça a quem pode e recarregue.
+          Seu cargo não tem permissão para ver nada da moderação desta comunidade — nem o
+          log (<code>view_audit_log</code>), nem os banidos (<code>ban_members</code>), nem
+          os timeouts (<code>timeout_members</code>). Peça a quem pode e recarregue.
         </p>
         <Button variant="secondary" size="sm" className="self-start" onClick={recarregar}>
           Tentar novamente
@@ -197,20 +216,25 @@ export function ModerationTab({ community }: ModerationTabProps) {
     );
   }
 
+  // Sub-aba cuja consulta foi recusada não aparece (§15). Se a ativa sumiu — porque a
+  // permissão mudou embaixo da tela —, a primeira disponível assume.
+  const subAbas = [
+    ...(negadas.auditLog ? [] : [{ id: "log", label: "Log de auditoria" }]),
+    ...(negadas.bans ? [] : [{ id: "bans", label: `Banidos (${bans.length})` }]),
+    ...(negadas.timeouts ? [] : [{ id: "timeouts", label: `Timeouts (${timeouts.length})` }]),
+  ];
+  const abaVisivel = subAbas.some((a) => a.id === tab) ? tab : (subAbas[0]?.id ?? "log");
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <Tabs
         orientation="horizontal"
-        activeId={tab}
+        activeId={abaVisivel}
         onSelect={setTab}
-        items={[
-          { id: "log", label: "Log de auditoria" },
-          { id: "bans", label: `Banidos (${bans.length})` },
-          { id: "timeouts", label: `Timeouts (${timeouts.length})` },
-        ]}
+        items={subAbas}
       />
 
-      {tab === "log" && (
+      {abaVisivel === "log" && (
         <div className="flex min-h-0 flex-1 flex-col gap-3">
           <div className="relative self-start">
             <Button
@@ -240,7 +264,7 @@ export function ModerationTab({ community }: ModerationTabProps) {
             </p>
           ) : (
             <ul className="flex flex-col gap-2">
-              {filtered.slice(0, visible).map((entry) => {
+              {filtered.map((entry) => {
                 const Icon = ACTION_ICON[entry.type] ?? RefreshCcw;
                 const author =
                   entry.authorLabel ?? `${entry.authorId.slice(0, 8)}…`;
@@ -275,20 +299,31 @@ export function ModerationTab({ community }: ModerationTabProps) {
             </ul>
           )}
 
-          {filtered.length > visible && (
-            <Button
-              variant="secondary"
-              size="sm"
-              className="self-start"
-              onClick={() => setVisible((count) => count + PAGE_SIZE)}
-            >
-              Carregar mais
-            </Button>
+          {/* §14 — o botão paga o lote seguinte NA FONTE (`nextCursor` de `query.auditLog`),
+              e some quando a consulta responde sem cursor. Filtrar o que já veio não é
+              paginar: sem isto, ação além do primeiro lote era inalcançável na tela. */}
+          {auditCursor !== null && (
+            <>
+              {typeFilter !== "all" && (
+                <p className="text-meta text-text-tertiary">
+                  O filtro vale sobre o que já foi carregado — há mais log a buscar.
+                </p>
+              )}
+              <Button
+                variant="secondary"
+                size="sm"
+                className="self-start"
+                loading={carregandoMais}
+                onClick={carregarMais}
+              >
+                Carregar mais
+              </Button>
+            </>
           )}
         </div>
       )}
 
-      {tab === "bans" && (
+      {abaVisivel === "bans" && (
         <div className="flex min-h-0 flex-1 flex-col gap-3">
           {/* Nota de honestidade fixa, nunca escondida num tooltip (§10). */}
           <p className="rounded-md border border-border-default bg-surface-primary p-3 text-meta text-text-secondary">
@@ -307,13 +342,15 @@ export function ModerationTab({ community }: ModerationTabProps) {
                 <li key={ban.identityId}>
                   <SettingsRow
                     action={
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void revogar(ban.identityId, ban.label)}
-                      >
-                        Revogar banimento
-                      </Button>
+                      canBan ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void revogar(ban.identityId, ban.label)}
+                        >
+                          Revogar banimento
+                        </Button>
+                      ) : undefined
                     }
                   >
                     <span className="block truncate font-mono text-body text-text-primary">
@@ -331,7 +368,7 @@ export function ModerationTab({ community }: ModerationTabProps) {
         </div>
       )}
 
-      {tab === "timeouts" && (
+      {abaVisivel === "timeouts" && (
         <div className="flex min-h-0 flex-1 flex-col gap-3">
           {timeouts.length === 0 ? (
             <p className="text-body text-text-tertiary">
@@ -343,13 +380,15 @@ export function ModerationTab({ community }: ModerationTabProps) {
                 <li key={timeout.identityId}>
                   <SettingsRow
                     action={
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void removerTimeout(timeout.identityId, timeout.label)}
-                      >
-                        Remover timeout
-                      </Button>
+                      canTimeout ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void removerTimeout(timeout.identityId, timeout.label)}
+                        >
+                          Remover timeout
+                        </Button>
+                      ) : undefined
                     }
                   >
                     <span className="block truncate text-body text-text-primary">

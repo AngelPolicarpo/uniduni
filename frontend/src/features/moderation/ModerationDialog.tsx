@@ -57,9 +57,13 @@ export interface ModerationDialogProps {
  * Confirmação de ação de moderação (§11, D12 · §15).
  *
  * Nunca é ação de um clique só, e o texto nomeia a consequência exata em vez
- * de perguntar "tem certeza?". No ban, a nota de honestidade de §10 (3.3)
- * aparece aqui também: banir não impede tecnicamente que a pessoa volte com
- * identidade nova, e a interface diz isso antes de o clique acontecer.
+ * de perguntar "tem certeza?". No ban são DUAS notas obrigatórias, não uma: a
+ * de honestidade de §10 (3.3) — banir não impede tecnicamente que a pessoa
+ * volte com identidade nova — e a de `L-7` (§6.12 do `backend-v2.md`), que a
+ * spec do núcleo obriga a UI a dizer **neste** modal: o ban corta a replicação
+ * futura, mas não retira do alvo o que ele já replicou para a máquina dele.
+ * Sem a segunda, o moderador aplica o ban achando que apagou o histórico da
+ * pessoa, o que o produto nunca fez.
  *
  * A escrita é op ⏱ de §15.4 (`mod.*`) e a decisão de hierarquia é DO FOLD —
  * a tela nunca decide quem pode em quem, só traduz a recusa nomeada.
@@ -157,11 +161,19 @@ export function ModerationDialog({
         )}
 
         {kind === "ban" && (
-          <p className="rounded-md border border-border-default bg-surface-primary p-3 text-meta text-text-secondary">
-            Banir impede a entrada com esta identidade específica. Como não há
-            autoridade central, a pessoa pode tecnicamente voltar com uma
-            identidade nova através de outro convite.
-          </p>
+          <div className="flex flex-col gap-2">
+            <p className="rounded-md border border-border-default bg-surface-primary p-3 text-meta text-text-secondary">
+              Banir impede a entrada com esta identidade específica. Como não há
+              autoridade central, a pessoa pode tecnicamente voltar com uma
+              identidade nova através de outro convite.
+            </p>
+            {/* L-7 (§6.12) — declaração obrigatória, e obrigatoriamente aqui. */}
+            <p className="rounded-md border border-border-default bg-surface-primary p-3 text-meta text-text-secondary">
+              O ban também não apaga nada da máquina de {targetLabel}: ele corta a
+              replicação daqui para a frente, mas o que já foi replicado continua no
+              dispositivo dele.
+            </p>
+          </div>
         )}
 
         <div className="flex justify-end gap-2">

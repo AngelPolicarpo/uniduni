@@ -3,7 +3,37 @@
 O que está aberto, hoje. Uma linha por item: **nome e ponteiro**. A descrição mora na
 referência — repetir aqui seria a segunda cópia a envelhecer.
 
-Não normativo. Atualizado em 2026-09-06 (§130). **§130** foi a verificação do relatório de
+Não normativo. Atualizado em 2026-09-06 (§131). **§131** foi a verificação do relatório de
+auditoria de **cargos, permissões e moderação** pela interface (GEMINI/SPARK). Dos 14
+achados, **treze confirmados** e **um refutado** — o de exigir confirmação em "Revogar
+banimento" e "Remover timeout": `frontend.md` §15 lista as ações que pedem modal, e isenta
+nominalmente "remover timeout" como destrutiva **reversível dentro da própria sessão**;
+revogar banimento é da mesma família e também não está na lista fechada. Das três lacunas de
+especificação, **duas** eram reais (o roster sem os cargos do membro; nenhum caminho para
+quem tem `ban_members`/`timeout_members` e não tem `view_audit_log`) e uma era leitura errada
+(§6.13 congela rótulo na `ModerationEntry`, que é história; `bans`/`timeouts` são estado
+corrente e respondem `UserRef` vivo por decisão declarada) — as três fecharam por emenda.
+
+O tema é um só: **a tela oferecia o que o `fold` já recusa**. Editar o cargo Fundador,
+mexer em cargo acima do seu, marcar no cargo base as permissões que R-11 proíbe, conceder
+permissão que o autor não tem, mover o cargo base, remover cargo de quem é imune — tudo
+clicável, tudo recusado no envio. Treze defeitos corrigidos. Três emendas normativas em
+`backend-v2.md`: **§20.3 regras 8 e 9** (a UI não oferece o que hierarquia ou anti-escalada
+já recusam, e a pré-checagem é affordance, nunca autorização), **§15.6** (o roster carrega
+`roleIds` com todos os cargos ativos do membro; `query.timeouts` ganha o carve-out de
+`timeout_members`, simétrico ao de `ban_members` em `query.bans`; e o esclarecimento sobre
+rótulo vivo) e **§9.1** (a nota de que `view_audit_log` não é a única porta de leitura de
+`bans`/`timeouts`). Quatro em `frontend.md`: 3.1b (a seção de identidade da comunidade é de
+`manage_community`), 3.2 (o que o editor de cargos não oferece, item a item), 3.3 (a aba e
+cada sub-aba pela permissão da sua consulta; o botão da linha pela de escrita) e §14 (o
+"Carregar mais" do log paga o lote seguinte **na fonte**, não revela linhas de um array já
+carregado), mais 1.3 (o botão direito no painel de membros abre o menu de contexto que §6
+sempre previu "em membro") e D12 (a nota de `L-7` é obrigatória no modal de ban). Um defeito
+a mais, encontrado ao verificar o primeiro achado: o roster era lido em um lote de 100 e
+parava ali — acima disso, quem ficasse de fora aparecia sem cargo nenhum para os seletores,
+que é a mesma cegueira do achado principal por outro caminho. Nenhum item desta lista fechou
+nem abriu por causa dela.
+Atualizado antes em 2026-09-06 (§130). **§130** foi a verificação do relatório de
 auditoria da **mídia de comunidade** pela interface (GEMINI/SPARK): voz, câmera, tela, Modo
 Música e gravação local. Dos 16 achados, treze confirmados, dois com o mecanismo certo e o
 alcance exagerado e **um refutado** (o empilhamento de ganho em `mixagem.ts` — o Web Audio

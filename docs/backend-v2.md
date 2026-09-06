@@ -1990,7 +1990,7 @@ removida.
 |---:|---|---|---|
 | 0 | Geral | `manage_community` | `community.update`; revogar qualquer convite; ver 3.1b |
 | 1 | | `manage_channels` | Todas as ops de `channel.*` e `category.*` |
-| 2 | | `view_audit_log` | Ler `moderation_log`, `bans`, `timeouts` (§15.6, enforcement real) |
+| 2 | | `view_audit_log` | Ler `moderation_log`, `bans`, `timeouts` (§15.6, enforcement real). Não é a **única** porta para as duas últimas: `ban_members` lê `bans` e `timeout_members` lê `timeouts` (§15.6) |
 | 3 | Texto | `send_messages` | `message.send`, `thread.create` |
 | 4 | | `attach_files` | Anexo em `message.send` |
 | 5 | | `add_reactions` | `reaction.set` |
@@ -3885,13 +3885,13 @@ type CoreStatus = {
 | `query.pinned` | `{communityId, channelId, cursor?, limit=25}` | `{ items: MessageDto[], nextCursor?, hasMore }` |
 | `query.files` | `{communityId, channelId, cursor?, limit=25}` | `{ items: [{ messageId, at, author: UserRef, attachment: AttachmentDto }], nextCursor?, hasMore }` |
 | `query.links` | `{communityId, channelId, cursor?, limit=25}` | `{ items: [{ messageId, at, author: UserRef, url, host }], nextCursor?, hasMore }` — fonte: `message_links` (§15.6.1) |
-| `query.members` | `{communityId, filter?:{query?, roleId?, onlyOnline?}, cursor?, limit=100}` | `{ groups: [{ roleId, roleName, roleColor, rank, members: (UserRef & {presence, joinedAt})[] }], offlineCount, total, nextCursor? }` |
+| `query.members` | `{communityId, filter?:{query?, roleId?, onlyOnline?}, cursor?, limit=100}` | `{ groups: [{ roleId, roleName, roleColor, rank, members: (UserRef & {presence, joinedAt, roleIds})[] }], offlineCount, total, nextCursor? }` |
 | `query.member` | `{communityId, identityKey}` | `{ ...UserRef, roleIds, roles: [{id,name,color,rank}], joinedAt, presence, banned, timeoutUntil?, canModerate, canKick, canBan, canTimeout, canSetRoles, storageUsedBytes }` |
 | `query.roles` | `{communityId}` | `{ roles: [{ id, name, color, rank, permissions, mentionable, isFounder, isDefault, memberCount }] }` ordenado por `rank DESC` |
 | `query.invites` | `{communityId}` | `{ items: [{ invitePublicKey, code?: string, codeAvailable: boolean, label?, createdBy: UserRef, createdAt, expiresAt?, maxUses?, uses, revokedAt? }] }` — `code` só nos criados nesta instalação (delta U-04) |
 | `query.auditLog` | `{communityId, type?, byKey?, from?, to?, cursor?, limit=25}` | `{ items: [{ id, seq, type, targetId?, targetKey?, targetLabel, by: UserRef, byLabel, reason?, at }], nextCursor?, hasMore }` — **exige `view_audit_log`**, senão `E_PERMISSION_DENIED` |
 | `query.bans` | `{communityId, cursor?, limit=25}` | `{ items: [{ target: UserRef, by: UserRef, at, reason? }], nextCursor?, hasMore }` — exige `view_audit_log` ou `ban_members` |
-| `query.timeouts` | `{communityId, cursor?, limit=25}` | `{ items: [{ target: UserRef, by: UserRef, at, until, reason?, expired: boolean }], nextCursor?, hasMore }` — `expired` é calculado contra o `hostTs` do último registro |
+| `query.timeouts` | `{communityId, cursor?, limit=25}` | `{ items: [{ target: UserRef, by: UserRef, at, until, reason?, expired: boolean }], nextCursor?, hasMore }` — exige `view_audit_log` ou `timeout_members`; `expired` é calculado contra o `hostTs` do último registro |
 | `query.search` | §23.1 | `{ messages: [{...MessageDto, channelId, channelName, snippet}], channels: [...], members: UserRef[], partial: boolean, partialReason?: 'host-offline'\|'catching-up'\|'stalled'\|'partial-interpretation' }` |
 | `query.outbox` | `{communityId?}` | `{ items: [{ opId, clientRef?, communityId, channelId?, channelName?, kind, kindLabel, state, attempts, enqueuedAt, nextAttemptAt, lastError?, droppedReason?, preview: { content?: string, emoji?: string, targetMessageId?: string } }], counts:{queued,sending,failed} }` — **`preview` é o que permite a UI redesenhar a fila ao reabrir** (fecha `F-16`). **Emenda de 2026-09-05:** `enqueuedAt` é o `created_at` do item em `local_outbox` (§11.2) — o instante em que a op foi enfileirada NESTA máquina. Sem ele o renderer não tinha carimbo honesto para a bolha redesenhada e inventava a época zero, com separador de data de 1970 na conversa. Não é `hostTs` nem substitui: enquanto a op não foi observada na réplica, o log não tem instante nenhum a dar |
 | `query.preferences` | `{}` | `{ device:{microphoneId?, cameraId?, outputId?, inputVolume, outputVolume}, notifications:{enabled, byCommunity:[{communityId, level}]}, channels:[{channelId, muted}], relayConsent:[{communityId, decision, at}], participantVolumes:[{communityId, identityKey, volume}] }` — fecha `RT-02` |
@@ -3973,7 +3973,25 @@ nem o log bruto dela, sem interpretação — sabe dizer em que canal cairia. O 
 nos status que já conhecem a mensagem.
 
 **Enforcement de leitura (fecha `DR-25`, `T-44`):** `query.auditLog`, `query.bans` e
-`query.timeouts` exigem a permissão e devolvem `E_PERMISSION_DENIED` sem ela.
+`query.timeouts` exigem a permissão e devolvem `E_PERMISSION_DENIED` sem ela. **A permissão
+não é a mesma nas três** (emenda de 2026-09-06): `query.auditLog` exige `view_audit_log`;
+`query.bans` aceita `view_audit_log` **ou** `ban_members`; `query.timeouts` aceita
+`view_audit_log` **ou** `timeout_members`. O carve-out de `timeout_members` é simétrico ao
+de `ban_members` e existe pela mesma razão: §9.1 dá `mod.revokeBan` a `ban_members` e
+`mod.removeTimeout` a `timeout_members`, e quem não consegue **ler** a lista de bans vivos
+ou de timeouts vigentes não tem por onde exercer a permissão que tem. Consequência para a
+UI: a superfície de moderação (§10, 3.3) **não** é gated por `view_audit_log` sozinha, e
+cada sub-lista é gated pela permissão da sua própria consulta — a aba de log de auditoria
+por `view_audit_log`, a de banidos por `view_audit_log`/`ban_members`, a de timeouts por
+`view_audit_log`/`timeout_members` —, e o botão de ação de cada linha pela permissão de
+escrita correspondente, nunca pela de leitura.
+
+**Rótulos vivos em `query.bans`/`query.timeouts` (emenda de 2026-09-06, esclarecimento).** O
+congelamento de `targetLabel`/`byLabel` de §6.13 é da `ModerationEntry` — a linha do **log**,
+que é história e não pode mudar de nome depois. As tabelas `bans` e `timeouts` são **estado
+corrente**, não história: elas respondem `UserRef` **vivo**, resolvido pelo roster do momento
+da leitura, e é isso que a UI mostra. Quem quiser o rótulo do momento da aplicação lê a
+entrada correspondente no log de auditoria.
 **LIMITAÇÃO DECLARADA (L-10):** como a replicação é integral, um cliente adulterado
 consegue ler as tabelas do próprio disco. `view_audit_log` é confidencialidade **local**,
 não segredo criptográfico. A UX precisa dizer isso (delta U-07).
@@ -6163,6 +6181,25 @@ fecharam três vezes —, então eles saem do catálogo em vez de ficar como let
 5. Erro terminal em op enfileirada vira `dropped` com motivo nomeado, nunca some calado.
 6. Falha parcial é reportada **por item** (§11.9).
 7. `E_DUPLICATE` **não** é erro na UI: é confirmação de que a op já estava aplicada.
+8. **A UI não oferece o que o `fold` já recusa por hierarquia ou anti-escalada** (emenda de
+   2026-09-06). O `fold` continua sendo o único juiz — a tela nunca é autoridade —, mas
+   `E_HIERARCHY`, `E_FOUNDER_IMMUTABLE`, `E_FOUNDER_IMMUNE`, `E_HOST_IMMUNE`,
+   `E_PERMISSION_ESCALATION`, `E_BASE_ROLE_RESTRICTED` e `E_BASE_ROLE_REQUIRED` são recusas
+   **previsíveis a partir do estado que a tela já tem** (`query.roles`, `query.members`,
+   `query.member`): oferecê-las é prometer uma ação que o produto sabe que vai falhar. Vale
+   para toda superfície de cargos e moderação (§10, 3.2/3.3 do `frontend.md`), e concretamente:
+   cargo com `rank ≥` o topo do autor não é editável, deletável, movível nem atribuível por
+   ele; o cargo Fundador não é editável em campo nenhum (nome, cor, mencionabilidade,
+   permissões); o cargo base não oferece as 11 permissões de R-11; nenhuma caixa concede
+   permissão fora de `efetiva(autor)` (R-5); o cargo base nunca sai de `member.setRoles`
+   (R-3); e Fundador original e host corrente nunca aparecem como alvo (R-16). A forma de
+   "não oferecer" é a de §15 do `frontend.md` — **esconder** ação que a permissão não
+   autoriza, **desabilitar com motivo** quando o controle precisa continuar visível para o
+   contexto ser legível (a caixa de uma permissão dentro do checklist do cargo, por exemplo,
+   que sumindo faria o catálogo parecer menor do que é).
+9. **Recusa prevista não substitui recusa recebida.** A pré-checagem da regra 8 é affordance,
+   não autorização: toda superfície continua traduzindo o erro nomeado que voltar do núcleo,
+   porque o estado da tela é um espelho e pode estar atrás do log.
 
 ---
 

@@ -338,12 +338,23 @@ describe('§52 membros — setRoles descarta o inexistente, apelido próprio, le
       const eu = r.identity.publicKey.toString('hex');
       const fundador = (await r.roles(communityId)).roles.find((x) => x.isFounder)!;
 
+      const base = (await r.roles(communityId)).roles.find((x) => x.isDefault)!;
+
       const cheio = await r.members(communityId);
       assert.equal(cheio.total, 1);
       assert.equal(cheio.offlineCount, 1, 'sem produtor de presença, todos estão offline — contagem agregada');
       assert.equal(cheio.groups.length, 1);
       assert.equal(cheio.groups[0]!.roleId, fundador.id, 'o grupo é o cargo de maior rank');
       assert.equal(cheio.groups[0]!.members[0]!['key'], eu);
+      // O GRUPO é um cargo só; o membro carrega TODOS os cargos ativos dele (emenda de
+      // 2026-09-06). §9.2 é união e R-3 exige o base em `member.setRoles`: entregar só o
+      // cargo do grupo fazia o renderer esconder ação autorizada e mandar `setRoles` sem o
+      // base — `E_BASE_ROLE_REQUIRED` garantido.
+      assert.deepEqual(
+        cheio.groups[0]!.members[0]!['roleIds'],
+        [fundador.id, base.id],
+        'roleIds vem em rank DESC e traz o cargo base junto com o do grupo',
+      );
       assert.equal('presence' in cheio.groups[0]!.members[0]!, false, 'campo sem fonte fica ausente (precedente §46/§50)');
       assert.equal(typeof cheio.groups[0]!.members[0]!['joinedAt'], 'number');
       assert.equal(cheio.nextCursor, undefined);
@@ -532,6 +543,52 @@ describe('§52 moderação — ban preventivo (R-28), inversos de não-membro, a
       // Consultas sem escopo de permissão seguem abertas para qualquer membro.
       assert.equal((intrusa.roles({ communityId }) as { roles: unknown[] }).roles.length, 2);
       assert.equal((intrusa.members({ communityId }) as { total: number }).total, 1);
+    } finally {
+      await r.close();
+    }
+  });
+
+  it('bans e timeouts têm carve-out próprio: ban_members lê bans, timeout_members lê timeouts', async () => {
+    const r = await rig('mod-carveout');
+    try {
+      const { communityId } = await r.comunidadeNova();
+      await r.ok('mod.ban', { communityId, targetKey: chaveEstranha(56) });
+      const c = r.runtime.get(communityId)!;
+
+      // Dois cargos com UMA permissão de moderação cada — nenhum tem `view_audit_log`.
+      const soBanir = (await r.ok('role.create', { communityId, name: 'Só banir', color: 1, permissions: ['ban_members'], mentionable: false })) as { roleId: string };
+      const soTimeout = (await r.ok('role.create', { communityId, name: 'Só timeout', color: 1, permissions: ['timeout_members'], mentionable: false })) as { roleId: string };
+
+      /**
+       * A porta de leitura com uma chave que o `DecisionState` diz ser membro do cargo dado.
+       * Os cargos são REAIS (vieram do `fold`); só a membresia é encenada, que é o mesmo
+       * recorte que a `intrusa` do teste anterior usa — a decisão exercitada continua sendo
+       * a de §15.6, não uma segunda implementação dela.
+       */
+      function porta(roleId: string, keyHex: string) {
+        const ds = c.projector.ds;
+        const members = new Map(ds.members);
+        members.set(keyHex, { ...members.values().next().value!, roleIds: new Set([roleId]) });
+        return queryReadPorts({
+          view: r.view,
+          manifest: r.manifest,
+          stateFor: () => ({ ...ds, members }) as typeof ds,
+          selfKeyHex: () => keyHex,
+          replicationOf: () => ({ state: 'synced', lag: 0 }),
+        });
+      }
+
+      const queBane = porta(soBanir.roleId, chaveEstranha(901));
+      assert.equal((queBane.bans({ communityId }) as { items: unknown[] }).items.length, 1, 'ban_members lê a lista que ele pode revogar (§9.1)');
+      assert.throws(() => queBane.auditLog({ communityId }), (e: { code?: string }) => e.code === 'E_PERMISSION_DENIED');
+      assert.throws(() => queBane.timeouts({ communityId }), (e: { code?: string }) => e.code === 'E_PERMISSION_DENIED');
+
+      const queSilencia = porta(soTimeout.roleId, chaveEstranha(902));
+      // Emenda de 2026-09-06: sem este carve-out, quem tem `timeout_members` não conseguia
+      // LER os timeouts vigentes e não tinha por onde exercer `mod.removeTimeout`.
+      assert.equal((queSilencia.timeouts({ communityId }) as { items: unknown[] }).items.length, 0);
+      assert.throws(() => queSilencia.auditLog({ communityId }), (e: { code?: string }) => e.code === 'E_PERMISSION_DENIED');
+      assert.throws(() => queSilencia.bans({ communityId }), (e: { code?: string }) => e.code === 'E_PERMISSION_DENIED');
     } finally {
       await r.close();
     }

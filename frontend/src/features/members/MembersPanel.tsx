@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Search, Volume2 } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { Avatar } from "../../components/ui/Avatar";
 import { SlidePanel } from "../../components/ui/SlidePanel";
+import { MemberContextMenu } from "./MemberContextMenu";
 import { ProfilePopover } from "./ProfilePopover";
 import { ROLE_TEXT_CLASS } from "../../lib/role";
 import { selectRole, useCommunityStore, useMemberLabel } from "../../store/communityStore";
@@ -39,14 +40,31 @@ interface MemberRowProps {
   role: Role | undefined;
   inVoice: boolean;
   onOpenProfile: (identityId: string, anchor: DOMRect) => void;
+  /** Botão direito / long-press: o menu de contexto de membro de §6. */
+  menuAberto: boolean;
+  onOpenMenu: () => void;
+  onCloseMenu: () => void;
 }
 
-function MemberRow({ member, role, inVoice, onOpenProfile }: MemberRowProps) {
+function MemberRow({
+  member,
+  role,
+  inVoice,
+  onOpenProfile,
+  menuAberto,
+  onOpenMenu,
+  onCloseMenu,
+}: MemberRowProps) {
   // Apelido definido nesta sessão vence o que o núcleo respondeu (§8, 1.4).
   const label = useMemberLabel(member.communityId, member.identityId);
+  // "Ver perfil" no menu abre o popover ancorado na MESMA linha que abriu o menu.
+  const linha = useRef<HTMLButtonElement>(null);
+  const ancoraDoMenu = () =>
+    linha.current?.getBoundingClientRect() ?? new DOMRect(0, 0, 0, 0);
   return (
-    <li>
+    <li className="relative">
       <button
+        ref={linha}
         type="button"
         onClick={(event) =>
           onOpenProfile(
@@ -54,6 +72,10 @@ function MemberRow({ member, role, inVoice, onOpenProfile }: MemberRowProps) {
             event.currentTarget.getBoundingClientRect(),
           )
         }
+        onContextMenu={(event) => {
+          event.preventDefault();
+          onOpenMenu();
+        }}
         className={cn(
           "flex w-full items-center gap-2 rounded-md px-2 py-1 text-left",
           "transition-colors duration-(--duration-fast) ease-out",
@@ -85,6 +107,17 @@ function MemberRow({ member, role, inVoice, onOpenProfile }: MemberRowProps) {
           />
         )}
       </button>
+
+      {/* §6 sempre previu o menu de contexto "em membro"; o painel era a única superfície
+          de gente que não tinha o gatilho, e o clique esquerdo continua abrindo o perfil
+          (1.4), que é o caminho equivalente de §19.4 para quem não tem botão direito. */}
+      <MemberContextMenu
+        communityId={member.communityId}
+        identityId={member.identityId}
+        open={menuAberto}
+        onClose={onCloseMenu}
+        onOpenProfile={() => onOpenProfile(member.identityId, ancoraDoMenu())}
+      />
     </li>
   );
 }
@@ -109,6 +142,7 @@ export function MembersPanel({ community, onClose }: MembersPanelProps) {
     identityId: string;
     anchor: DOMRect;
   } | null>(null);
+  const [menu, setMenu] = useState<string | null>(null);
 
   const roles = useCommunityStore(
     useShallow((state) =>
@@ -215,9 +249,13 @@ export function MembersPanel({ community, onClose }: MembersPanelProps) {
                   member={member}
                   role={role}
                   inVoice={voiceIds.has(member.identityId)}
-                  onOpenProfile={(identityId, anchor) =>
-                    setProfile({ identityId, anchor })
-                  }
+                  onOpenProfile={(identityId, anchor) => {
+                    setMenu(null);
+                    setProfile({ identityId, anchor });
+                  }}
+                  menuAberto={menu === member.identityId}
+                  onOpenMenu={() => setMenu(member.identityId)}
+                  onCloseMenu={() => setMenu(null)}
                 />
               ))}
             </ul>

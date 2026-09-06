@@ -1,9 +1,9 @@
 import { useMemo } from "react";
 import { create } from "zustand";
 // O log, os banidos e os timeouts vêm TODOS do núcleo (§15.6): `query.auditLog`,
-// `query.bans` e `query.timeouts` exigem `view_audit_log` e respondem
-// `E_PERMISSION_DENIED` a quem não tem. Ausência aqui é "não carregado ou sem
-// permissão", nunca "nada aconteceu" — o flag guarda a diferença.
+// `query.bans` e `query.timeouts` respondem `E_PERMISSION_DENIED` a quem não tem a
+// permissão DELAS — que não é a mesma nas três. Ausência aqui é "não carregado ou sem
+// permissão", nunca "nada aconteceu" — os flags guardam a diferença.
 import type { ModerationAction } from "../domain/types";
 
 /**
@@ -47,30 +47,66 @@ export const TIMEOUT_OPTIONS = [
   { value: "1440", label: "24 horas" },
 ];
 
+/**
+ * Qual das três leituras foi recusada por permissão (emenda de 2026-09-06). As três NÃO
+ * exigem a mesma coisa (§15.6): `query.auditLog` é `view_audit_log`; `query.bans` aceita
+ * `view_audit_log` ou `ban_members`; `query.timeouts` aceita `view_audit_log` ou
+ * `timeout_members`. Um flag só para as três apagava a lista que tinha respondido.
+ */
+export interface NegadasPorPermissao {
+  auditLog: boolean;
+  bans: boolean;
+  timeouts: boolean;
+}
+
+const NADA_NEGADO: NegadasPorPermissao = { auditLog: false, bans: false, timeouts: false };
+
 interface ModerationState {
   auditLog: ModerationAction[];
   bans: BanRecord[];
   timeouts: TimeoutRecord[];
   /**
-   * A última consulta desta comunidade bateu em `E_PERMISSION_DENIED`: quem vê
-   * esta tela não tem `view_audit_log`. As listas vazias então significam
-   * "sem permissão", não "sem registro".
+   * Cursor opaco da PRÓXIMA página de `query.auditLog` (§15.6). Ausente = a fonte já
+   * respondeu tudo, e "Carregar mais" some — §14 pede que o botão pague o lote seguinte
+   * NA FONTE, não que revele linhas de um array já carregado.
+   */
+  auditCursor: string | null;
+  /** Recusa por permissão, por consulta. */
+  negadas: NegadasPorPermissao;
+  /**
+   * As TRÊS bateram em `E_PERMISSION_DENIED`: quem vê esta tela não tem nenhuma das
+   * permissões de leitura. As listas vazias então significam "sem permissão", não
+   * "sem registro".
    */
   semPermissao: boolean;
   aplicarRemoto: (patch: {
     auditLog?: ModerationAction[];
     bans?: BanRecord[];
     timeouts?: TimeoutRecord[];
+    auditCursor?: string | null;
+    negadas?: NegadasPorPermissao;
     semPermissao?: boolean;
   }) => void;
+  /** Anexa a página seguinte do log sem reconsultar o que já está na tela. */
+  anexarAuditoria: (entries: ModerationAction[], cursor: string | null) => void;
 }
 
 export const useModerationStore = create<ModerationState>()((set) => ({
   auditLog: [],
   bans: [],
   timeouts: [],
+  auditCursor: null,
+  negadas: NADA_NEGADO,
   semPermissao: false,
   aplicarRemoto: (patch) => set(patch),
+  anexarAuditoria: (entries, cursor) =>
+    set((state) => {
+      const conhecidos = new Set(state.auditLog.map((e) => e.id));
+      return {
+        auditLog: [...state.auditLog, ...entries.filter((e) => !conhecidos.has(e.id))],
+        auditCursor: cursor,
+      };
+    }),
 }));
 
 /* ─── Seletores ──────────────────────────────────────────────────── */
@@ -104,4 +140,14 @@ export function useTimeouts(communityId: string): TimeoutRecord[] {
 
 export function useModeracaoSemPermissao(): boolean {
   return useModerationStore((state) => state.semPermissao);
+}
+
+/** Recusa por consulta — cada sub-aba de §10, 3.3 pergunta pela sua. */
+export function useModeracaoNegadas(): NegadasPorPermissao {
+  return useModerationStore((state) => state.negadas);
+}
+
+/** Há mais páginas de log na fonte (§14 — "Carregar mais" busca, não revela). */
+export function useAuditCursor(): string | null {
+  return useModerationStore((state) => state.auditCursor);
 }

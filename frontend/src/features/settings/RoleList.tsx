@@ -17,6 +17,11 @@ export interface RoleListProps {
   mover: (roleId: string, paraIndice: number) => void;
   desabilitado: boolean;
   motivoDesabilitado?: string;
+  /**
+   * `topRank(autor)` na ordinalização de `adaptadores.cargo` (§9.3). Cargo com posição maior
+   * ou igual a esta não é movível pelo autor — `E_HIERARCHY` no núcleo (R-4).
+   */
+  minhaPosicao: number;
 }
 
 /**
@@ -24,7 +29,15 @@ export interface RoleListProps {
  * por arrasto (§10, 3.2) **e** pelos botões de mover: arrastar é preciso,
  * mas não é alcançável por teclado, e §19.4 exige caminho equivalente.
  */
-export function RoleList({ roles, selectedId, onSelect, mover, desabilitado, motivoDesabilitado }: RoleListProps) {
+export function RoleList({
+  roles,
+  selectedId,
+  onSelect,
+  mover,
+  desabilitado,
+  motivoDesabilitado,
+  minhaPosicao,
+}: RoleListProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const dragState = useRef<{ id: string; lastY: number; indice: number } | null>(null);
   /**
@@ -35,12 +48,24 @@ export function RoleList({ roles, selectedId, onSelect, mover, desabilitado, mot
   const [preview, setPreview] = useState<Role[] | null>(null);
   const exibidos = preview ?? roles;
 
+  /**
+   * §20.3 (regra 8): a lista não oferece o movimento que o `fold` já recusa. Fundador é topo
+   * fixo (`E_FOUNDER_TOP`), o cargo base é o piso sentinela de §6.4.1 (`RANK_BOTTOM`), e
+   * cargo com `rank ≥` o topo do autor é `E_HIERARCHY` por R-4.
+   */
+  function motivoDeNaoMover(role: Role): string | null {
+    if (role.isFounder) return "Fundador é sempre o topo da hierarquia";
+    if (role.isDefault) return "O cargo base é sempre o último da hierarquia";
+    if (minhaPosicao <= role.position) return "Este cargo está acima do seu na hierarquia";
+    if (desabilitado) return motivoDesabilitado ?? null;
+    return null;
+  }
+
   function handlePointerDown(
     event: React.PointerEvent<HTMLButtonElement>,
     role: Role,
   ) {
-    // Fundador é sempre o topo, posição fixa (§10, D13, exceções).
-    if (role.isFounder || desabilitado) return;
+    if (motivoDeNaoMover(role) !== null) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     dragState.current = {
@@ -58,8 +83,12 @@ export function RoleList({ roles, selectedId, onSelect, mover, desabilitado, mot
     if (Math.abs(delta) < ROW_HEIGHT) return;
     const base = preview ?? roles;
     const de = base.findIndex((r) => r.id === drag.id);
-    // O Fundador ocupa o índice 0 e não sai de lá: ninguém passa por cima dele.
-    const para = Math.min(Math.max(de + (delta > 0 ? 1 : -1), 1), base.length - 1);
+    // O Fundador ocupa o índice 0 e não sai de lá; o cargo base ocupa o último e também não.
+    // E o teto do arrasto é o primeiro índice que o autor alcança: subir acima do próprio
+    // topo é `E_HIERARCHY`, e o preview não promete o que a op não entrega.
+    const teto = Math.max(base.findIndex((r) => minhaPosicao > r.position), 1);
+    const piso = base[base.length - 1]?.isDefault === true ? base.length - 2 : base.length - 1;
+    const para = Math.min(Math.max(de + (delta > 0 ? 1 : -1), teto), Math.max(piso, teto));
     if (para !== de) {
       const proxima = [...base];
       const [movido] = proxima.splice(de, 1);
@@ -83,9 +112,16 @@ export function RoleList({ roles, selectedId, onSelect, mover, desabilitado, mot
     <ul className="flex flex-col gap-0.5">
       {exibidos.map((role, index) => {
         const active = role.id === selectedId;
+        const bloqueio = motivoDeNaoMover(role);
+        const acima = exibidos[index - 1];
+        const abaixo = exibidos[index + 1];
         const canMoveUp =
-          !desabilitado && index > 0 && !role.isFounder && !exibidos[index - 1].isFounder;
-        const canMoveDown = !desabilitado && index < exibidos.length - 1 && !role.isFounder;
+          bloqueio === null &&
+          acima !== undefined &&
+          !acima.isFounder &&
+          minhaPosicao > acima.position;
+        const canMoveDown =
+          bloqueio === null && abaixo !== undefined && !abaixo.isDefault;
 
         return (
           <li
@@ -98,14 +134,7 @@ export function RoleList({ roles, selectedId, onSelect, mover, desabilitado, mot
               active && draggingId !== role.id && "bg-accent-muted-bg",
             )}
           >
-            <Tooltip
-              label={
-                role.isFounder
-                  ? "Fundador é sempre o topo da hierarquia"
-                  : "Arraste para reordenar"
-              }
-              side="top"
-            >
+            <Tooltip label={bloqueio ?? "Arraste para reordenar"} side="top">
               <button
                 type="button"
                 aria-label={`Arrastar ${role.name || "cargo sem nome"}`}
@@ -115,7 +144,7 @@ export function RoleList({ roles, selectedId, onSelect, mover, desabilitado, mot
                 onPointerCancel={endDrag}
                 className={cn(
                   "grid size-6 shrink-0 place-items-center rounded-sm text-text-tertiary",
-                  role.isFounder
+                  bloqueio !== null
                     ? "cursor-not-allowed opacity-40"
                     : "cursor-grab hover:text-text-secondary",
                 )}
@@ -155,7 +184,7 @@ export function RoleList({ roles, selectedId, onSelect, mover, desabilitado, mot
               <button
                 type="button"
                 disabled={!canMoveUp}
-                title={desabilitado ? motivoDesabilitado : undefined}
+                title={bloqueio ?? undefined}
                 onClick={() => mover(role.id, index - 1)}
                 aria-label={`Mover ${role.name || "cargo"} para cima`}
                 className="grid size-6 place-items-center rounded-sm text-text-tertiary hover:text-text-primary disabled:opacity-30"
@@ -165,7 +194,7 @@ export function RoleList({ roles, selectedId, onSelect, mover, desabilitado, mot
               <button
                 type="button"
                 disabled={!canMoveDown}
-                title={desabilitado ? motivoDesabilitado : undefined}
+                title={bloqueio ?? undefined}
                 onClick={() => mover(role.id, index + 1)}
                 aria-label={`Mover ${role.name || "cargo"} para baixo`}
                 className="grid size-6 place-items-center rounded-sm text-text-tertiary hover:text-text-primary disabled:opacity-30"

@@ -685,6 +685,9 @@ export function queryReadPorts(deps: QueryReadDeps) {
      *
      * O cursor percorre a ordem plana dos membros: `{seq: 0, id: última chave emitida}`.
      * `total`/`offlineCount` são do roster inteiro, independente do filtro.
+     *
+     * Cada membro carrega `roleIds` com TODOS os cargos ativos dele (`rank` DESC), e não só o
+     * do grupo: §9.2 é união e R-3 exige o cargo base em `member.setRoles`.
      */
     members(a: { communityId: string; filter?: { query?: unknown; roleId?: unknown; onlyOnline?: unknown }; cursor?: string; limit?: number }) {
       const estado = ds(a.communityId);
@@ -729,7 +732,24 @@ export function queryReadPorts(deps: QueryReadDeps) {
         return topo;
       }
 
-      type Entrada = { key: string; joinedAt: number; ref: QueryUserRef; group: Cargo };
+      /**
+       * TODOS os cargos ativos do membro, `rank` DESC (emenda de 2026-09-06).
+       * O grupo é UM cargo — o de maior rank —, mas §9.2 define a permissão efetiva como a
+       * UNIÃO dos cargos, e R-3 exige o cargo base dentro de `member.setRoles`. Um roster que
+       * só entregasse o cargo do grupo obrigava o renderer a esconder ação que o `fold`
+       * autoriza e a mandar `setRoles` sem o base — recusado com `E_BASE_ROLE_REQUIRED`.
+       */
+      function cargosDoMembro(hex: string): string[] {
+        return [...(vinculos.get(hex) ?? [])]
+          .filter((roleId) => cargos.has(roleId))
+          .sort((x, y) => {
+            const rx = cargos.get(x)!.rank;
+            const ry = cargos.get(y)!.rank;
+            return ry < rx ? -1 : ry > rx ? 1 : 0;
+          });
+      }
+
+      type Entrada = { key: string; joinedAt: number; ref: QueryUserRef; group: Cargo; roleIds: string[] };
       const entradas: Entrada[] = [];
       const ativos = view
         .prepare('SELECT identity_key AS k, joined_at AS joinedAt FROM members WHERE community_id = ? AND left_at IS NULL AND banned = 0')
@@ -755,7 +775,7 @@ export function queryReadPorts(deps: QueryReadDeps) {
         if (buscaTexto !== null && !rotulo.includes(buscaTexto) && !r.handle.toLowerCase().includes(buscaTexto)) continue;
         const grupo = cargoDeMaiorRank(hex);
         if (grupo === null) continue;
-        entradas.push({ key: hex, joinedAt: linha.joinedAt, ref: r, group: grupo });
+        entradas.push({ key: hex, joinedAt: linha.joinedAt, ref: r, group: grupo, roleIds: cargosDoMembro(hex) });
       }
 
       // Filtro por cargo: UM grupo só, com os portadores dele — mesmo que o cargo de maior
@@ -799,11 +819,11 @@ export function queryReadPorts(deps: QueryReadDeps) {
       const hasMore = pagina.length > n;
       const lote = hasMore ? pagina.slice(0, n) : pagina;
       const ultima = lote[lote.length - 1];
-      const groups = new Map<string, { cargo: Cargo; members: Array<QueryUserRef & { presence?: unknown; joinedAt: number }> }>();
+      const groups = new Map<string, { cargo: Cargo; members: Array<QueryUserRef & { presence?: unknown; joinedAt: number; roleIds: string[] }> }>();
       for (const e of lote) {
         const saco = groups.get(e.group.id) ?? { cargo: e.group, members: [] };
         const presence = presencas?.get(e.key);
-        saco.members.push({ ...e.ref, ...(presence !== undefined ? { presence } : {}), joinedAt: e.joinedAt });
+        saco.members.push({ ...e.ref, ...(presence !== undefined ? { presence } : {}), joinedAt: e.joinedAt, roleIds: e.roleIds });
         groups.set(e.group.id, saco);
       }
       return {
@@ -960,13 +980,15 @@ export function queryReadPorts(deps: QueryReadDeps) {
     },
 
     /**
-     * `query.timeouts` (§15.6): vigentes, mais recentes primeiro; exige `view_audit_log`
-     * (§9.1 — ler `timeouts` é dela; só `ban_members` tem carve-out próprio, para bans).
+     * `query.timeouts` (§15.6): vigentes, mais recentes primeiro; exige `view_audit_log` ou
+     * `timeout_members` (emenda de 2026-09-06 — simétrica ao carve-out de `ban_members` em
+     * `query.bans`: §9.1 dá `mod.removeTimeout` a `timeout_members`, e sem ler a lista de
+     * vigentes não havia como exercer a permissão).
      * `expired` é calculado contra o `hostTs` do último registro interpretado.
      */
     timeouts(a: { communityId: string; cursor?: string; limit?: number }) {
       const estado = ds(a.communityId);
-      this.exigir(estado, ['view_audit_log']);
+      this.exigir(estado, ['view_audit_log', 'timeout_members']);
       const n = limite(a.limit, LIMITE_LISTAS);
       const cursor = a.cursor === undefined ? null : decodeCursor(a.cursor);
       const params: unknown[] = [a.communityId];

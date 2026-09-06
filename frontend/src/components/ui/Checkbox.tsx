@@ -6,17 +6,36 @@ export interface CheckboxProps {
   onChange: (checked: boolean) => void;
   label: string;
   className?: string;
+  /**
+   * Caixa visível e inerte. É o que §20.3 (regra 8) pede no checklist de permissões: a
+   * permissão que o autor não pode conceder continua no catálogo — se sumisse, o catálogo
+   * pareceria menor do que é —, mas não é marcável.
+   */
+  disabled?: boolean;
+  /** Motivo do desabilitado, dito e não escondido. */
+  title?: string;
 }
 
 /**
  * Checkbox (§6) — em cima do input nativo, que continua sendo o alvo real de
  * clique e teclado; o quadrado desenhado é só a camada visual.
  */
-export function Checkbox({ checked, onChange, label, className }: CheckboxProps) {
+export function Checkbox({
+  checked,
+  onChange,
+  label,
+  className,
+  disabled = false,
+  title,
+}: CheckboxProps) {
   return (
     <label
+      title={title}
       className={cn(
-        "flex cursor-pointer items-center gap-2 text-body text-text-secondary",
+        "flex items-center gap-2 text-body",
+        disabled
+          ? "cursor-not-allowed text-text-disabled"
+          : "cursor-pointer text-text-secondary",
         className,
       )}
     >
@@ -24,8 +43,13 @@ export function Checkbox({ checked, onChange, label, className }: CheckboxProps)
         <input
           type="checkbox"
           checked={checked}
+          disabled={disabled}
           onChange={(event) => onChange(event.target.checked)}
-          className="peer size-4 cursor-pointer appearance-none rounded-sm border border-border-strong bg-surface-primary checked:border-accent-default checked:bg-accent-default"
+          className={cn(
+            "peer size-4 appearance-none rounded-sm border border-border-strong bg-surface-primary",
+            "checked:border-accent-default checked:bg-accent-default",
+            disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
+          )}
         />
         <Check
           size={12}

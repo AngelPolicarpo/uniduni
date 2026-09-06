@@ -6,6 +6,7 @@ import { AVATAR_BG_CLASS } from "../../lib/avatar";
 import { api } from "../../ipc/api";
 import {
   selectCanModerate,
+  selectLocalTopPosition,
   selectMemberRoleIds,
   useCommunityStore,
   useHasPermission,
@@ -58,6 +59,11 @@ export function ProfileModerationActions({
     selectMemberRoleIds(state, communityId, identityId).join("|"),
   );
   const localMemberId = useLocalMemberId(communityId);
+  // `topRank(autor)` de §9.3: cargo com `rank ≥` o meu é `E_HIERARCHY` por R-4, então não é
+  // oferecido. O cargo Fundador sai antes disso, por `E_FOUNDER_IMMUTABLE`.
+  const minhaPosicao = useCommunityStore((state) =>
+    selectLocalTopPosition(state, communityId),
+  );
 
   const [assigning, setAssigning] = useState(false);
   const [moderation, setModeration] = useState<ModerationKind | null>(null);
@@ -87,7 +93,13 @@ export function ProfileModerationActions({
             {assigning && (
               <ul className="flex flex-col gap-1">
                 {communityRoles
-                  .filter((role) => !role.isFounder)
+                  .filter(
+                    (role) =>
+                      !role.isFounder &&
+                      // O cargo base é de todo mundo (R-3): não se atribui nem se retira.
+                      !role.isDefault &&
+                      minhaPosicao > role.position,
+                  )
                   .map((role) => {
                     const has = atribuidos.has(role.id);
                     return (
