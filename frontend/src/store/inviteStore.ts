@@ -17,6 +17,13 @@ import type { MessageRef } from "../lib/messageLink";
  */
 interface PendingInviteState {
   pendingInviteCode: string | null;
+  /**
+   * O link trazia um código que não é código (§12.1). Distinto de "não havia link":
+   * mapear os dois para `null` fazia um `comunidadep2p://join/` truncado terminar em
+   * onboarding comum, sem nada na tela dizendo que um convite tinha sido perdido pelo
+   * caminho — e é o convite que trouxe a pessoa até aqui.
+   */
+  pendingInviteInvalid: boolean;
   setPendingInvite: (rawCodeOrLink: string) => void;
   clearPendingInvite: () => void;
 }
@@ -25,15 +32,17 @@ export const usePendingInviteStore = create<PendingInviteState>()(
   persist(
     (set) => ({
       pendingInviteCode: null,
+      pendingInviteInvalid: false,
 
       setPendingInvite: (rawCodeOrLink) => {
         const code = normalizeInviteCode(rawCodeOrLink);
-        set({ pendingInviteCode: code || null });
+        set({ pendingInviteCode: code, pendingInviteInvalid: code === null });
       },
 
-      clearPendingInvite: () => set({ pendingInviteCode: null }),
+      clearPendingInvite: () =>
+        set({ pendingInviteCode: null, pendingInviteInvalid: false }),
     }),
-    { name: "comunidade-p2p:pending-invite", version: 1 },
+    { name: "comunidade-p2p:pending-invite", version: 2 },
   ),
 );
 

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 import {
   selectFirstTextChannelId,
   useCommunityStore,
@@ -15,19 +15,31 @@ import { useVoiceStore } from "../../store/voiceStore";
  */
 
 /**
- * Convite guardado por `/invite/:code` retoma o preview automaticamente,
- * sem exigir colar o código de novo (§11, A2 passo 3).
+ * Convite guardado por `/invite/:code` ou por um deep link `join/` retoma o preview
+ * automaticamente, sem exigir colar o código de novo (§11, A2 passo 3; §3.5 regra 3).
+ *
+ * **`useLayoutEffect`, e não `useEffect`.** Com o efeito comum, o shell pintava um quadro
+ * inteiro antes de o modal existir: quem chega por convite sem nenhuma comunidade via o
+ * Hub vazio piscar antes da prévia. O layout effect roda antes do paint, então a decisão
+ * "há convite pendente" já vale no primeiro quadro.
+ *
+ * O código **inválido** também abre a tela: mapeá-lo para "não havia convite" mandava a
+ * pessoa para o app comum sem nada dizer que o link que a trouxe não servia.
  */
 export function usePendingInviteOverlay() {
   const pendingInviteCode = usePendingInviteStore(
     (state) => state.pendingInviteCode,
   );
+  const pendingInviteInvalid = usePendingInviteStore(
+    (state) => state.pendingInviteInvalid,
+  );
   const overlay = useUiStore((state) => state.overlay);
   const openJoinCommunity = useUiStore((state) => state.openJoinCommunity);
 
-  useEffect(() => {
-    if (pendingInviteCode && overlay === null) openJoinCommunity("link");
-  }, [pendingInviteCode, overlay, openJoinCommunity]);
+  useLayoutEffect(() => {
+    if ((pendingInviteCode || pendingInviteInvalid) && overlay === null)
+      openJoinCommunity("link");
+  }, [pendingInviteCode, pendingInviteInvalid, overlay, openJoinCommunity]);
 }
 
 /** Comunidade ativa some do rail (ou nunca existiu) → cai na primeira. */

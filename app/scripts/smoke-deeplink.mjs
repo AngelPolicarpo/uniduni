@@ -9,9 +9,21 @@
  *
  *   npm run smoke:deeplink
  *
- * Requer `npm run build` em app/ (roda contra `dist/main/deeplink.js`).
+ * **E a gramática não era o defeito.** Ela estava certa e o link não fazia nada: o main
+ * entregava `{route,…}` ao `webContents`, o preload virava evento de janela e o renderer
+ * **nunca registrava a escuta** — `assinarDeepLinks` existia e ninguém a chamava. Um smoke
+ * que só valida o parse passa com o produto inteiro surdo, e passou. Por isso a segunda
+ * parte: preload real, bundle real do renderer, e a pergunta que importa — o link mudou
+ * alguma coisa do outro lado?
+ *
+ *   xvfb-run -a npm run smoke:deeplink       (a parte de ponta a ponta precisa de display)
+ *
+ * Requer `npm run build` em app/ (roda contra `dist/main/deeplink.js`) e em frontend/.
  */
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { fileURLToPath } from 'node:url';
@@ -60,4 +72,71 @@ if (falhas > 0) {
   console.error(`\nsmoke:deeplink REPROVADO — ${falhas} de ${casos.length} casos`);
   process.exit(1);
 }
-console.log(`smoke:deeplink OK — ${casos.length} casos da gramática de §3.5`);
+console.log(`gramática ok — ${casos.length} casos de §3.5`);
+
+// ── Parte 2: o link chega ao renderer, e o renderer faz algo com ele ──────────────────
+//
+// O observável é o convite pendente de §11 A2, que o store persiste: se ele está no
+// `localStorage` depois do evento, a escuta foi registrada, `receber` correu e a rota
+// `join` posicionou a prévia. Se `assinarDeepLinks` voltar a não ser chamada, sai `null`.
+
+const RAIZ = path.resolve(AQUI, '..');
+const PRELOAD = path.join(RAIZ, 'dist/preload/index.js');
+const INDEX = path.resolve(RAIZ, '../frontend/dist/index.html');
+const ELECTRON = path.join(RAIZ, 'node_modules/electron/cli.js');
+const JANELA = path.join(AQUI, 'smoke-deeplink-renderer.cjs');
+const CODIGO = '0123456789ABCDEF';
+
+if (!fs.existsSync(PRELOAD)) {
+  console.error(`preload não encontrado em ${PRELOAD} — rode \`npm run build\` em app/.`);
+  process.exit(2);
+}
+if (!fs.existsSync(INDEX)) {
+  console.error(`renderer não encontrado em ${INDEX} — rode \`npm run build\` em frontend/.`);
+  process.exit(2);
+}
+if (process.env.DISPLAY === undefined && process.platform === 'linux') {
+  console.error('sem DISPLAY: rode por `xvfb-run -a` ou aponte um display.');
+  process.exit(2);
+}
+
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-deeplink-'));
+const saida = await new Promise((resolve) => {
+  const pedacos = [];
+  const filho = spawn(
+    process.execPath,
+    [
+      ELECTRON, JANELA,
+      `--preload=${PRELOAD}`,
+      `--index=${INDEX}`,
+      `--codigo=${CODIGO}`,
+      '--no-sandbox',
+      '--password-store=basic_text',
+      `--user-data-dir=${path.join(tmp, 'ud')}`,
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  const morte = setTimeout(() => filho.kill('SIGKILL'), 30_000);
+  filho.stdout.on('data', (d) => pedacos.push(String(d)));
+  filho.stderr.on('data', (d) => pedacos.push(String(d)));
+  filho.on('exit', () => {
+    clearTimeout(morte);
+    resolve(pedacos.join(''));
+  });
+});
+fs.rmSync(tmp, { recursive: true, force: true });
+
+const linha = /PENDENTE=(.*)/.exec(saida);
+const chegou = linha !== null && linha[1].includes(CODIGO);
+if (!chegou) {
+  console.error(saida);
+  console.error(
+    `\nsmoke:deeplink REPROVADO — o link não chegou ao renderer.\n` +
+      `O main enviou \`deeplink\` e o convite pendente não apareceu: a escuta ` +
+      `(\`assinarDeepLinks\`) não está registrada, ou a rota \`join\` não posiciona nada.`,
+  );
+  process.exit(1);
+}
+
+console.log(`ponta a ponta ok — o link \`join\` virou convite pendente no renderer`);
+console.log('smoke:deeplink OK');

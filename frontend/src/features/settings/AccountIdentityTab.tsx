@@ -79,7 +79,7 @@ export function AccountIdentityTab({ identity }: { identity: Identity }) {
           label="Nome de exibição"
           value={identity.displayName}
           onChange={(value) => updateIdentity({ displayName: value })}
-          maxLength={32}
+          limiteCp={32}
           showCounter
           counterWarningAt={28}
         />

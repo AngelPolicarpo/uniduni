@@ -8,9 +8,16 @@ import { cn } from "../../lib/cn";
 import { avatarColorFromSeed, nextAvatarColor } from "../../lib/avatar";
 import { mensagemDeErro, useSessao } from "../../live/sessao";
 import { numeroDaCor } from "../../ipc/cores";
+import { codePointsNormalizados } from "../../lib/texto";
 import type { AvatarColor } from "../../domain/types";
 
-/** §13 — Nome: obrigatório, 2-32 caracteres, sem checagem de unicidade. */
+/**
+ * §8.6 — `displayName`: 2 a 32 **code points**, medidos DEPOIS de `trim`, colapso de
+ * espaço interno e NFKC. É a mesma conta de `checkDisplayName` no núcleo, e a tela
+ * precisa fazê-la igual: contando `String.length` (UTF-16) ela aceitava um emoji
+ * sozinho — 2 unidades, 1 code point — que o núcleo devolvia como `E_VALIDATION`,
+ * e recusava vinte emojis, que o núcleo aceitaria.
+ */
 const NAME_MIN = 2;
 const NAME_MAX = 32;
 /** Acima disto o contador vira `feedback-warning` (§7, 0.1). */
@@ -22,10 +29,15 @@ const SUCCESS_TRANSITION_MS = 320;
 type Phase = "editing" | "submitting" | "gate" | "success";
 
 function validate(rawName: string): string | undefined {
-  const name = rawName.trim();
-  if (name.length === 0) return "Digite um nome de exibição.";
-  if (name.length < NAME_MIN)
+  const n = codePointsNormalizados(rawName);
+  if (n === 0) return "Digite um nome de exibição.";
+  if (n < NAME_MIN)
     return `O nome precisa ter pelo menos ${NAME_MIN} caracteres.`;
+  // O campo já clampa em `NAME_MAX` code points, mas o colapso de espaço e o NFKC
+  // rodam depois: o ramo existe porque o núcleo mede o texto normalizado, e sem ele
+  // a tela não tinha o que dizer quando essa conta discordasse.
+  if (n > NAME_MAX)
+    return `O nome pode ter no máximo ${NAME_MAX} caracteres.`;
   return undefined;
 }
 
@@ -228,7 +240,7 @@ export function OnboardingScreen() {
                 onBlur={() => setError(validate(name))}
                 error={error}
                 placeholder="Como as pessoas vão te ver"
-                maxLength={NAME_MAX}
+                limiteCp={NAME_MAX}
                 counterWarningAt={NAME_WARNING_AT}
                 showCounter
                 autoFocus

@@ -54,6 +54,22 @@ const ESPERA_CANAL_MS = 8_000;
  */
 const RODADAS_CANAL = 3;
 
+/**
+ * §12.3 desfecho 6 — "host offline / inalcançável (**decidido pelo cliente**)".
+ *
+ * É desfecho de `inviteResolve`, e não recusa: a coluna de §12.5 lista `unreachable` ao
+ * lado de `invalid`, e U-03 exige que a tela diga que o convite pode estar bom e ofereça
+ * tentar de novo — o oposto de "este convite não vale". A implementação rejeitava com
+ * `E_HOST_UNAVAILABLE`, então o único desfecho que o cliente decide sozinho era o único
+ * que nunca chegava à tela: o renderer tinha o ramo escrito e ele era inalcançável, e a
+ * pessoa via o banner genérico de erro com um código de §20 dentro.
+ *
+ * `redeem` continua recusando: lá o desfecho vira código pela coluna de §15.4
+ * (`desfechoParaCodigo` devolve `E_HOST_UNAVAILABLE` para `unreachable`), porque resgatar
+ * é escrita e escrita que não aconteceu é recusa.
+ */
+const INALCANCAVEL: InvitePreview = { status: 'unreachable' };
+
 function b64(b: Uint8Array): string {
   return Buffer.from(b).toString('base64');
 }
@@ -221,11 +237,11 @@ export class AdmissionService {
     const identity = this.#deps.selfKey();
     if (identity === null) return { ok: false, code: 'E_NO_IDENTITY' };
     const transporte = await this.#garantirTransporte();
-    if (transporte === null) return { ok: false, code: 'E_HOST_UNAVAILABLE' };
+    if (transporte === null) return { ok: true, preview: INALCANCAVEL };
 
     const sessao = this.#sessao(parsed.normalized, parsed.secret);
     transporte.seekInviteTopic(sessao.topicHex);
-    if (!(await this.#esperarCanal(sessao, transporte))) return { ok: false, code: 'E_HOST_UNAVAILABLE' };
+    if (!(await this.#esperarCanal(sessao, transporte))) return { ok: true, preview: INALCANCAVEL };
     const cliente = sessao.client!;
     if (sessao.lastPreview !== null) return { ok: true, preview: sessao.lastPreview };
 

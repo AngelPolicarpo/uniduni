@@ -2957,7 +2957,11 @@ export async function bootCore(deps: BootDeps): Promise<CoreRuntime> {
           .map((c) => ({ communityId: c.communityId, name: c.projector.ds.community.name }));
       },
       onlineCount: (cid) => runtime.get(cid)?.host?.connections.size ?? 0,
-      inCallCount: (cid) => runtime.get(cid)?.host?.voice.sessionCount ?? 0,
+      // **Pessoas, não canais** (emenda de 2026-09-06 em §18.7). `sessionCount` conta
+      // sessões abertas: o modal de U-06 dizia "1 em chamada" para oito pessoas no mesmo
+      // canal, e dizia o mesmo para o host sozinho num canal — oferecendo a própria
+      // presença como motivo para não fechar o app. Quem fecha não se conta.
+      inCallCount: (cid) => runtime.get(cid)?.host?.voice.participantCount(selfKeyHex() ?? undefined) ?? 0,
       // §18.7 passo 1 — "quantas ops ainda não replicaram" é contra a barreira de PARES,
       // não contra a projeção local: um host em dia consigo mesmo e sozinho no swarm lia
       // zero, que é justamente o caso em que fechar perde tudo (B10).

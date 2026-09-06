@@ -294,6 +294,26 @@ export class VoiceHostSessions {
     return this.#sessions.size;
   }
 
+  /**
+   * Quantas **pessoas** estão em chamada nesta comunidade, sem repetir quem aparece em
+   * mais de uma sessão e sem contar `exceptKeyHex` (§18.7, `host.exitImpact`).
+   *
+   * `sessionCount` conta CANAIS, e era ele que o DTO de saída do host publicava como
+   * `inCallCount`: oito pessoas no mesmo canal viravam "1 em chamada", e o host sozinho
+   * num canal virava "1 em chamada" — um aviso de que fechar o app derrubaria alguém, com
+   * a única pessoa da chamada sendo quem estava fechando. Quem sai não é impactado pela
+   * própria saída, então `exceptKeyHex` é a chave de quem pergunta.
+   */
+  participantCount(exceptKeyHex?: KeyHex): number {
+    const vistos = new Set<KeyHex>();
+    for (const s of this.#sessions.values()) {
+      for (const keyHex of s.participants.keys()) {
+        if (keyHex !== exceptKeyHex) vistos.add(keyHex);
+      }
+    }
+    return vistos.size;
+  }
+
   sessionOf(channelId: Id): { sessionId: string; participants: readonly RosterEntry[] } | null {
     const s = this.#sessions.get(channelId);
     if (s === undefined) return null;

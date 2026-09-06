@@ -1,6 +1,7 @@
 import type { ComponentPropsWithRef } from "react";
 import { useId } from "react";
 import { cn } from "../../lib/cn";
+import { codePoints, cortarCodePoints } from "../../lib/texto";
 
 export interface TextFieldProps
   extends Omit<ComponentPropsWithRef<"input">, "onChange"> {
@@ -18,6 +19,15 @@ export interface TextFieldProps
    * (§7, 0.1: acima de 28 num limite de 32).
    */
   counterWarningAt?: number;
+  /**
+   * Teto em **code points** (§8.6), para campo cujo limite é do log.
+   *
+   * Substitui o `maxLength` do DOM, que conta unidades UTF-16 e por isso cortava
+   * um nome de vinte emojis no meio — e substitui também a base do contador, que
+   * mostrava "40/32" para o mesmo nome. Quando presente, o campo clampa a
+   * digitação por code point e o `maxLength` do DOM não é aplicado.
+   */
+  limiteCp?: number;
 }
 
 export function TextField({
@@ -29,6 +39,7 @@ export function TextField({
   showCounter = false,
   counterWarningAt,
   maxLength,
+  limiteCp,
   className,
   ...rest
 }: TextFieldProps) {
@@ -37,8 +48,12 @@ export function TextField({
   const hintId = `${inputId}-hint`;
 
   const hasError = Boolean(error);
+  // §8.6 — quando o limite é do log, a conta é em code points; senão, o que o
+  // `maxLength` do DOM de fato aplica, que é unidade UTF-16.
+  const contagem = limiteCp === undefined ? value.length : codePoints(value);
+  const teto = limiteCp ?? maxLength;
   const isNearLimit =
-    counterWarningAt !== undefined && value.length > counterWarningAt;
+    counterWarningAt !== undefined && contagem > counterWarningAt;
 
   return (
     <div className={cn("flex flex-col gap-2", className)}>
@@ -50,7 +65,7 @@ export function TextField({
           {label}
         </label>
 
-        {showCounter && maxLength !== undefined && (
+        {showCounter && teto !== undefined && (
           <span
             className={cn(
               "text-meta tabular-nums",
@@ -58,7 +73,7 @@ export function TextField({
             )}
             aria-hidden="true"
           >
-            {value.length}/{maxLength}
+            {contagem}/{teto}
           </span>
         )}
       </div>
@@ -66,8 +81,14 @@ export function TextField({
       <input
         id={inputId}
         value={value}
-        maxLength={maxLength}
-        onChange={(event) => onChange(event.target.value)}
+        {...(limiteCp === undefined ? { maxLength } : {})}
+        onChange={(event) =>
+          onChange(
+            limiteCp === undefined
+              ? event.target.value
+              : cortarCodePoints(event.target.value, limiteCp),
+          )
+        }
         aria-invalid={hasError || undefined}
         aria-describedby={hasError ? errorId : hint ? hintId : undefined}
         className={cn(

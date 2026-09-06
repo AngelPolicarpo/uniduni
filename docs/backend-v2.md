@@ -422,6 +422,35 @@ de "Nova conversa", e abrir exige o clique explícito depois da prévia. O campo
 chave continua existindo (é a reserva onde o handler não alcança) e aceita o link
 colado, extraindo a chave.
 
+**Emenda de 2026-09-06 — qual superfície do renderer consome cada rota.**
+
+A regra 2 fixou o contrato main→renderer e a regra 3 fixou o que o link pode fazer; nenhuma
+das duas dizia **onde** o link chega, e o resultado foi que ele não chegava a lugar nenhum:
+a escuta do renderer (`assinarDeepLinks`) existia e nenhum arquivo em produção a chamava,
+de modo que todo `comunidadep2p://…` com o app aberto era descartado em silêncio. Havia
+ainda um segundo caminho paralelo — um store guardando a prévia do convite resolvida por
+`invite.resolve` — que nenhum componente lia. Duas implementações para o mesmo desfecho,
+nenhuma com superfície. A tabela abaixo passa a ser normativa:
+
+| Rota | Superfície de confirmação | Como chega lá |
+|---|---|---|
+| `join/<CODE16>` | A prévia de convite de §12.3 (delta **0.3**/U-03) — a mesma tela do código colado à mão, com os seis desfechos | O código vira **convite pendente** (§11 A2) e a prévia abre; sem identidade, passa pelo onboarding e retoma depois, sem pedir o código de novo |
+| `m/<MSGREF>` | Os cinco desfechos de `query.resolveMessageLink` (§15.6) como estados de tela | O MSGREF fica pendente até **haver núcleo**; resolver antes disso devolveria `malformed`, que é a resposta certa para um link alterado e a errada para um link bom que chegou cedo |
+| `u/<KEY64>` | A confirmação de "Nova conversa" (B63(a)) | A chave preenche o destino e a UI troca para o destino de conversas |
+
+Três consequências normativas:
+
+1. **Uma superfície por rota, e é uma já existente.** Deep link não ganha tela própria: ele
+   posiciona a pessoa numa tela que o produto já tem, com os desfechos que a especificação
+   já fixou. Superfície nova para deep link seria um segundo lugar onde `invalid`,
+   `unreachable` e `already-member` precisariam ser mantidos em dia.
+2. **A escuta é montada acima do guarda de conexão.** Um link pode chegar enquanto o núcleo
+   ainda está subindo; se quem escuta só existe depois de `pronto`, o link se perde. É a
+   mesma razão pela qual o atendente de U-06 mora na raiz (§92).
+3. **A rota `join` também troca de destino**, pela regra 3 emendada: posicionar inclui
+   chegar lá, e uma confirmação de convite flutuando sobre a lista de conversas não é a
+   tela que a regra descreve.
+
 **Emenda de 2026-08-22 — o conteúdo do MSGREF.** São os 64 bytes
 `communityId(32) ‖ opId(32)` da op `message.send` que criou a mensagem: os dois são
 estáveis entre réplicas por construção, a primeira metade nomeia a comunidade **antes** de
@@ -1971,6 +2000,41 @@ falso. v2 não depende disso: depende de o `fold` **não ler configuração nem 
 (§1.5), o que torna a convergência estrutural, e de a validação do cliente ser
 explicitamente advisória.
 
+#### Emenda de 2026-09-06 — advisório é o veredito, não a **unidade**
+
+§8.6 diz que o contador do formulário "pode ser grafêmico, e é advisório por §8.7", e a
+interface leu isso como licença para contar do jeito que desse. Ela contava
+`String.length`, que é **unidade UTF-16** — nem code point, nem grafema, nem uma escolha:
+o valor que o JavaScript devolve por acaso. Os dois desfechos, nos dois extremos do mesmo
+campo de `displayName` (2–32 code points):
+
+- um emoji sozinho tem `length === 2` e **um** code point. A tela o aceitava e o núcleo o
+  recusava com `E_VALIDATION` — o erro inline de §8.7 existe exatamente para isso não
+  acontecer, e ele nunca disparava;
+- vinte emojis têm 40 unidades UTF-16 e **vinte** code points. O `maxLength` do DOM travava
+  a digitação de um nome que o núcleo aceitaria, e travava **no meio de um par
+  substituto**.
+
+O que a linha de §8.6 permite é o contador **grafêmico**, que agrupa o que a pessoa vê como
+um caractere e nunca é mais permissivo que o log: um grafema tem ≥ 1 code point, então um
+campo que cabe em grafemas cabe em code points. O que ela não permite é UTF-16, que é mais
+permissivo na entrada (corta um nome válido) e mais frouxo na saída (aceita um nome
+inválido) ao mesmo tempo.
+
+Normativo, portanto:
+
+1. **Todo teto que a UI aplica na entrada é em code points**, ou em grafemas — nunca em
+   unidades UTF-16, e nunca via `maxLength` do DOM, que é UTF-16 por definição.
+2. **O corte respeita o code point**: truncar por `slice` parte par substituto e produz
+   texto que nem o campo nem o log aceitam.
+3. **A validação da UI mede o texto NORMALIZADO** — a mesma normalização da coluna de §8.6
+   (para `displayName`: `trim`, colapso de espaço interno, NFKC). Medir o texto cru e
+   deixar o núcleo medir o normalizado é como os dois discordam sem que nenhum esteja
+   errado sobre a própria conta.
+
+A validação continua advisória no sentido de §8.7 — ela pode divergir por estar atrás do
+host, e divergir assim é inofensivo. Divergir por **contar outra coisa** não é.
+
 ---
 
 ## 9. Autorização e permissões
@@ -2756,6 +2820,34 @@ Canal **pré-membro** (§14.4), com o orçamento e os tetos mais restritos do si
 ```
 
 **Seis desfechos, normativos.** A UX tem quatro — delta U-03.
+
+**Emenda de 2026-09-06 — o desfecho 6 é resposta de `inviteResolve`, não recusa dele.**
+
+O passo 6 diz "decidido pelo cliente", e era o único dos seis que nunca chegava à tela: a
+composição devolvia `{ ok: false, code: 'E_HOST_UNAVAILABLE' }` quando não conseguia abrir
+o canal pré-membro, e a fronteira transformava isso numa promessa rejeitada. O renderer
+tinha o ramo de `unreachable` escrito — com o texto que U-03 exige e o botão de tentar de
+novo — e ele era **inalcançável por construção**; quem tentava um convite cujo host está
+fora via o banner genérico de erro com um código de §20 dentro.
+
+A leitura certa já estava em duas linhas desta mesma seção: §12.5 lista `unreachable` na
+tabela do que o **preview** vaza, ao lado de `invalid`, e §12.3 o numera entre os desfechos.
+Um desfecho não é um erro: `invalid` diz "este convite não vale", `unreachable` diz "o
+convite pode estar bom e eu não achei quem hospeda". São telas diferentes porque são frases
+diferentes, e a segunda é retentável.
+
+Normativo:
+
+| Comando | Host inalcançável | Por quê |
+|---|---|---|
+| `invite.resolve` | `{ ok: true, preview: { status: 'unreachable', hint? } }` | É leitura, e o desfecho 6 é uma das seis respostas possíveis dela |
+| `invite.redeem` | `{ ok: false, code: 'E_HOST_UNAVAILABLE' }` | É escrita, e escrita que não aconteceu é recusa — a coluna de §15.4 já mapeia `unreachable` para este código |
+
+Continuam sendo **recusa** de `invite.resolve`, e não desfecho: `E_MALFORMED` (a gramática
+do código, §15.4) e `E_NO_IDENTITY`. Nenhum dos dois é uma resposta do host sobre o convite;
+são condições anteriores a haver pergunta. O desfecho `unreachable` **não é memorizado** na
+sessão de admissão: repetir o resolve tenta a descoberta de novo, que é o que o botão de
+U-03 promete.
 
 **`liveProof` fecha `T-06`:** ele amarra `hostPk` e `candidatePk`, então quem observa o
 tópico e captura a prova não consegue reusá-la para si nem contra outro host.
@@ -3720,7 +3812,7 @@ com `E_HIERARCHY`/`E_FOUNDER_IMMUNE`/`E_HOST_IMMUNE`/`E_SELF_TARGET` é o `fold`
 |---|---|---|---|---|
 | `invite.create` | `{communityId, expiresInDays?, maxUses?, label?}` | `create_invite` | `{invitePublicKey, code, expiresAt?, maxUses?, seq}` — **`code` só aqui e só para quem cria** | `E_LIMIT_EXCEEDED`, `E_VALIDATION` |
 | `invite.revoke` | `{communityId, invitePublicKey}` | autor \| `manage_community` | `{seq}` | `E_NOT_FOUND`, `E_PERMISSION_DENIED` |
-| `invite.resolve` | `{codeOrLink}` | open | `InvitePreview` (§15.6) | `E_MALFORMED` |
+| `invite.resolve` | `{codeOrLink}` | open | `InvitePreview` (§15.6) — os **seis** desfechos de §12.3, `unreachable` incluído (emenda de 2026-09-06) | `E_MALFORMED`, `E_NO_IDENTITY` — host fora **não** é erro aqui |
 | `invite.redeem` | `{codeOrLink, displayName?, avatarColor?}` | standard | `{communityId, defaultChannelId, seq}` | `E_INVITE_INVALID`, `E_INVITE_EXHAUSTED`, `E_BANNED`, `E_HOST_UNAVAILABLE`, `E_LIMIT_EXCEEDED` |
 
 **Gramática de `codeOrLink` (fecha `DR-34`), normativa:**
@@ -3772,7 +3864,7 @@ HTTP em lugar nenhum.
 | `blob.reveal` | `{blobsCoreKey, blobId, mode:'open'\|'folder'}` | standard / main-confirmed | `{}` | `E_NOT_DOWNLOADED`, `E_TYPE_NOT_OPENABLE` |
 | `diag.run` | `{}` | standard | `{natType, peerCount, relayAvailable, stunReachable, ranAt}` | — |
 | `diag.snapshot` | `{}` | standard | Métricas de §24.3 | — |
-| `host.exitImpact` | `{}` | standard | `[{communityId, name, onlineCount, inCallCount, pendingReplication}]` | — |
+| `host.exitImpact` | `{}` | standard | `[{communityId, name, onlineCount, inCallCount, pendingReplication}]` — `inCallCount` são **pessoas** distintas, sem o próprio host (§18.7, emenda de 2026-09-06) | — |
 
 **`host.notifyBeforeExit` foi removido.** Ver §18.7 e delta U-06.
 
@@ -4073,6 +4165,33 @@ qualquer maneira; é o que `rpcClient`/`rpcServer` fazem. Some-se a isso §16.3,
 `protomux-rpc`. A implementação usa portanto um **canal `protomux`** por protocolo, chaveado
 como esta tabela manda, carregando os quadros de §16.2/§16.3. Nenhum parâmetro, método,
 tópico ou código de erro muda.
+
+**Emenda de 2026-09-06 — o prazo de 30 s de `redeem` é do REQUEST, não da pessoa.**
+
+A tabela dá 30 000 ms a `redeem` porque o resgate atravessa descoberta, canal pré-membro,
+desafio fresco e a fila de admissão do host (§12.4). O prazo está certo para o request e
+estava sendo aplicado à **tela**: a prévia de convite bloqueava `Esc`, clique fora e o botão
+de cancelar enquanto o resgate corria, e com o host inalcançável a pessoa ficava presa num
+spinner por meio minuto, sem saída.
+
+A especificação não dizia se `invite.redeem` deve expor cancelamento cooperativo. Ela não
+precisa: **não há o que cancelar**. O resgate é decidido no log do host (§12.4 passo 4,
+dentro da seção crítica de §11.4); uma vez que o `redeem` saiu, nenhum sinal do candidato
+desfaz o `member.join` que o host venha a aplicar, e um `AbortSignal` que só encerrasse a
+espera local prometeria um cancelamento que não existe.
+
+O que a UI pode fazer, e passa a ser normativo que faça:
+
+1. **Sair da espera é sempre possível.** Nenhuma tela pode ser presa a um prazo de §16.1 —
+   nem por `guardClose`, nem desabilitando a ação de cancelar. Vale para todo comando ⏱.
+2. **Sair abandona a espera, não o comando.** A resposta que chegar depois **não navega**:
+   quem fechou a tela não é levado a outro lugar por ela.
+3. **Se o resgate completar, a participação chega pelo caminho normal.** O `member.join`
+   está no log do host, e o resync de §15.5 traz a comunidade como traria qualquer outra —
+   sem nova prévia e sem novo clique.
+4. **A tela diz isso.** "Dá para fechar — se o resgate completar, a comunidade aparece
+   sozinha" é informação sobre o que o produto faz, e omiti-la faz o botão de cancelar
+   parecer uma promessa de desfazer.
 
 **Quem abre o canal é o membro; o host responde.** Um canal aberto contra um par que ainda
 não o registrou é recusado pelo `protomux` e morre. Como o membro só descobre quem é o host
@@ -5741,7 +5860,8 @@ none → requested → swarm-down → cores-closed → view-deleted → manifest
 ### 18.7 Saída do host
 
 `host.exitImpact` devolve, por comunidade hospedada, `{onlineCount, inCallCount,
-pendingReplication}` lidos do roster **efêmero** e do estado de replicação.
+pendingReplication}` lidos do roster **efêmero** e do estado de replicação. O que cada um
+conta está na emenda de 2026-09-06, abaixo.
 
 **Mudança normativa (fecha `F-43`, `DR-36`, `RT-13`):** a opção "avisar quem está online"
 de v1 appendava uma mensagem assinada pelo host e desligava em seguida — quase certamente
@@ -5777,6 +5897,43 @@ afirmações diferentes, e o modal de U-06 mostrava a primeira chamando-a de seg
 E o botão **"avisar quem está online"** ainda existia no renderer, appendando a mensagem que
 esta seção diz ter removido. Ele saiu junto (`F-43`, delta U-06): o que fica no modal são os
 números, incluindo o que ainda não replicou.
+
+#### Emenda de 2026-09-06 — o que cada campo de `host.exitImpact` conta (fecha a lacuna de `inCallCount`)
+
+A seção nomeava os três campos e definia só `pendingReplication`. `inCallCount` ficou sem
+definição e a implementação publicou o número que estava à mão: `sessionCount`, o tamanho
+do mapa de **sessões** do coordenador de voz. Os dois desfechos errados, ambos no modal de
+U-06:
+
+- oito pessoas no mesmo canal são **uma** sessão, e o modal dizia "1 em chamada" —
+  subdimensionando exatamente o impacto que ele existe para mostrar;
+- o host sozinho num canal também é uma sessão, e o modal dizia "1 em chamada" ao ser
+  fechado — oferecendo a própria presença de quem fecha como motivo para não fechar.
+
+A tabela abaixo é normativa. A regra que a atravessa: **`host.exitImpact` mede o que o
+fechamento faz com OS OUTROS.** Quem pergunta nunca entra na conta — é ele que está saindo.
+
+| Campo | Conta | Não conta |
+|---|---|---|
+| `onlineCount` | Pares conectados a esta comunidade agora | O próprio host (ele não é conexão de si mesmo) |
+| `inCallCount` | **Pessoas** distintas em sessão de voz da comunidade, deduplicadas entre sessões | Canais; o próprio host; ninguém duas vezes |
+| `pendingReplication` | Registros da cabeça que ainda não alcançaram o alvo de pares (emenda de 2026-08-28) | O atraso da projeção local |
+
+E uma regra sobre a **ausência** de resposta, que é o outro lado do mesmo modal: a leitura
+que falha ou não chega **não vale zero**. Zero em `pendingReplication` é uma afirmação sobre
+o disco dos outros, e sem resposta do núcleo não há como fazê-la — inventá-la produz a frase
+tranquilizadora exatamente no caso em que §18.7 existe (núcleo reiniciando, com fila cheia).
+Normativo para a UI de U-06:
+
+1. **Não medido ≠ zero.** O impacto sem leitura é apresentado como não medido, e o modal
+   diz que não deu para medir em vez de afirmar que não há.
+2. **A decisão de fechar sem perguntar exige leitura completa.** Auto-confirmar a saída só é
+   permitido quando `host.exitImpact` respondeu **e** respondeu vazio. Sobre uma leitura
+   ausente — o estado do primeiro instante, antes da primeira resposta — a saída é
+   perguntada, não presumida.
+3. **Quem decide e quem desenha leem a mesma coisa.** Duas leituras independentes do mesmo
+   número, com sondagens defasadas, deixam o main receber "vou perguntar" e a tela não
+   mostrar nada, até o prazo de 10 s vencer sozinho.
 
 #### Emenda de 2026-09-05 — a rede sai **depois** do dreno, e isso é o passo 2
 

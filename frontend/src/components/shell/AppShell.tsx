@@ -214,7 +214,7 @@ export function AppShell() {
         <SearchPanel community={activeCommunity} activeChannel={activeChannel} />
       )}
 
-      <ShellOverlays community={activeCommunity} hostedImpact={hostedImpact} />
+      <ShellOverlays community={activeCommunity} />
 
       {/*
         §16: no Mobile a barra de chamada é a única coisa que sobrevive à

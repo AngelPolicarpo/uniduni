@@ -63,7 +63,7 @@ export function ProfileOwnSettings({
             label="Apelido nesta comunidade"
             value={nicknameDraft}
             onChange={setNicknameDraft}
-            maxLength={32}
+            limiteCp={32}
             showCounter
             autoFocus
             autoComplete="off"

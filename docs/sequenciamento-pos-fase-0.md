@@ -9445,7 +9445,7 @@ Junto saíram duas coisas menores que só apareceram por causa disto:
 
 ## 129. Varredura da conversa direta pela interface: o que o relatório acertou — 2026-09-05
 
-Verificação do relatório consolidado GEMINI/SPARK sobre a **interface** da conversa direta
+Verificação do relatório consolidado sobre a **interface** da conversa direta
 (não confundir com §127, que foi o relatório sobre o núcleo da DM): 14 achados e 2 "lacunas
 de especificação". A regra é a de sempre — **cada achado é confirmado na fonte antes de virar
 correção**. Doze confirmados, um refutado, um com o mecanismo certo e a causa errada. As duas
@@ -9611,7 +9611,7 @@ esconde a linha inteira", que nasceu depois em *A observar*, passou a **B75**.
 
 ## 130. Varredura da mídia de comunidade pela interface: voz, câmera, tela e música — 2026-09-06
 
-Verificação do relatório consolidado GEMINI/SPARK sobre o caminho de **mídia da comunidade**
+Verificação do relatório consolidado de auditoria sobre o caminho de **mídia da comunidade**
 no renderer (voz, câmera, compartilhamento de tela, Modo Música e gravação local): 16 achados
 e 6 "lacunas de especificação". A regra é a de sempre — **cada achado é confirmado na fonte
 antes de virar correção**. Treze confirmados como escritos, dois com o mecanismo certo e o
@@ -9771,7 +9771,7 @@ E duas emendas fecharam limitações que estavam sendo lidas como ausência de m
 
 ## 131. Varredura de cargos, permissões e moderação pela interface — 2026-09-06
 
-Verificação do relatório consolidado GEMINI/SPARK sobre a superfície de **cargos,
+Verificação do relatório consolidado de auditoria sobre a superfície de **cargos,
 permissões e moderação** no renderer: 14 achados e 3 "lacunas de especificação". A regra é a
 de sempre — **cada achado é confirmado na fonte antes de virar correção**. Treze confirmados
 como escritos, **um refutado**. Das três lacunas, duas eram reais e uma era leitura errada do
@@ -9946,3 +9946,273 @@ comunidade", e o painel de membros era a única superfície de gente sem o gatil
 - **O caminho de recusa continua vivo e não foi exercitado de novo nesta fatia.** A regra 9 de
   §20.3 existe porque o espelho pode estar atrás do log: a tradução do erro nomeado segue nos
   componentes, como estava.
+
+---
+
+## 132. Varredura do frontend e da integração com o núcleo — 2026-09-06
+
+Verificação do relatório consolidado de auditoria sobre o **renderer inteiro e sua
+integração com o núcleo**: 13 achados (1 crítico, 6 altos, 4 médios, 2 baixos) e 4 "lacunas
+de especificação". A regra é a de sempre — **cada achado é confirmado na fonte antes de
+virar correção**. **Treze confirmados**, nenhum refutado; dois com o alcance exagerado, e o
+exagero está registrado em §132.9. As quatro lacunas eram reais e fecharam por emenda.
+
+O tema é um só, e ele atravessa o crítico e três dos altos: **o caminho existia e ninguém o
+percorria.** Não são funcionalidades ausentes — são funcionalidades escritas, testadas em
+isolamento, e **desconectadas do produto**:
+
+- `assinarDeepLinks()` estava definida, tinha teste, e nenhum arquivo em produção a chamava.
+  O main parseava, o preload despachava, e o renderer nunca ouvia.
+- O ramo `preview.status === "unreachable"` na prévia de convite estava escrito, com o texto
+  que U-03 exige e o botão de tentar de novo, e era **inalcançável por construção**: a
+  composição recusava com `E_HOST_UNAVAILABLE` em vez de devolver o desfecho 6 de §12.3.
+- O `HostExitListener` tinha sido movido para a raiz em §92, com o comentário explicando por
+  quê — e continuava **dentro** do `Sincronizador`, que não renderiza os filhos enquanto o
+  núcleo sobe. O defeito que a mudança devia fechar continuava aberto pelo mesmo motivo.
+- O store de deep link guardava a prévia do convite resolvida por `invite.resolve` e nenhum
+  componente a lia: um segundo caminho para o mesmo desfecho, sem superfície.
+
+E um segundo tema, com raiz comum: **a UI afirmava números que não tinha.** O impacto de
+saída do host inventava `pendingReplication: 0` quando a leitura falhava — a frase
+tranquilizadora exatamente no caso em que §18.7 existe —, e o `inCallCount` do núcleo contava
+canais chamando-os de pessoas.
+
+### 132.1 O crítico: o deep link que não chegava a lugar nenhum
+
+`app/src/main/index.ts` parseia (`parseDeepLink`), enfileira e entrega ao `webContents`; o
+preload converte em evento de janela. Do outro lado, `frontend/src/live/deeplink.ts`
+exportava `assinarDeepLinks()`, que registra a escuta — e a busca textual em `frontend/src`
+não achava chamada nenhuma. Todo `comunidadep2p://…` com o app aberto era descartado em
+silêncio.
+
+O teste de unidade passava porque chamava `receber()` direto, que é **o degrau depois do que
+faltava**. É a forma de cobertura que engana: exercita a função e não a ligação dela.
+
+E, mesmo registrada, a escuta teria efeito parcial: das três fatias do store, só `contato`
+(a rota `u/`) tinha consumidor — `DmDestino`. As fatias `convite` e `mensagem` não eram
+lidas por componente nenhum.
+
+Três correções, e a terceira é a que evita a repetição:
+
+1. `App` assina no efeito de montagem, **acima** do `Sincronizador` — um link pode chegar
+   enquanto o núcleo conecta.
+2. A rota `join` deixou de ter caminho próprio: ela guarda o convite pendente de §11 A2 e
+   abre a prévia de 0.3, que é a mesma tela do código colado à mão, com os seis desfechos de
+   §12.3 já implementados. A fatia `convite` do store saiu.
+3. A rota `m/` ganhou `DeepLinkMensagem`, que desenha os cinco desfechos de §15.6 — e
+   **espera o núcleo** antes de resolver, porque `query.resolveMessageLink` sem sessão é
+   `E_NO_PORT`, que o catch transformava em `malformed`: a tela de "link alterado" para um
+   link bom que chegou cedo demais.
+
+A lacuna 4 do relatório fechou por emenda em **§3.5**: a regra 2 fixou o contrato
+main→renderer e a regra 3 fixou o que o link pode fazer, e nenhuma das duas dizia **onde** o
+link chega. A emenda traz a tabela rota → superfície, e três regras: uma superfície por rota
+e sempre uma já existente; a escuta acima do guarda de conexão; e a rota `join` também troca
+de destino, pela regra 3 emendada ("posicionar inclui chegar lá").
+
+### 132.2 O `smoke:deeplink` que passava com o produto surdo
+
+O smoke existente valida a **gramática** de §3.5 contra `dist/main/deeplink.js`: 16 casos,
+todos corretos, todos passando — enquanto o link não fazia nada. A gramática nunca foi o
+defeito.
+
+A segunda parte que ele ganhou é a pergunta que importa: preload real, bundle real do
+renderer (`frontend/dist`), o main enviando `deeplink` e a checagem de que **algo mudou do
+outro lado**. O observável é o convite pendente de §11 A2, que o store persiste — se está no
+`localStorage` depois do evento, a escuta foi registrada, `receber` correu e a rota `join`
+posicionou a prévia.
+
+Verificado por **mutação**: comentar a linha `useEffect(() => assinarDeepLinks(), [])` em
+`App.tsx` faz o smoke reprovar com `PENDENTE=null`. É a mesma classe de verificação que
+§92 pediu para o ciclo de fechamento, e pelo mesmo motivo — este defeito é invisível para
+teste de unidade por definição.
+
+### 132.3 A prévia de convite: três defeitos numa tela
+
+**O desfecho 6 era recusa (achado 10, lacuna 3).** §12.3 numera seis desfechos e diz que o
+sexto é "decidido pelo cliente"; §12.5 o lista ao lado de `invalid` na tabela do que vaza.
+`AdmissionService.resolve` devolvia `{ ok: false, code: 'E_HOST_UNAVAILABLE' }` quando não
+conseguia abrir o canal pré-membro, e a fronteira transformava isso em promessa rejeitada.
+Emenda em **§12.3**: `invite.resolve` devolve o desfecho; `invite.redeem` continua recusando
+(escrita que não aconteceu é recusa, e a coluna de §15.4 já mapeava). `E_MALFORMED` e
+`E_NO_IDENTITY` continuam recusa dos dois — não são resposta do host sobre o convite, são
+condições anteriores a haver pergunta. O desfecho **não** é memorizado na sessão, que é o que
+faz o botão "Tentar novamente" de U-03 significar alguma coisa.
+
+**E isso fecha `B13`.** O item pedia exatamente esta troca — "desfecho certo seria
+`unreachable`, não `E_TIMEOUT`" — e o que faltava era o aval normativo. Ele fecha inteiro
+porque o prazo já cabe: as três rodadas de descoberta de §12.3 somam 24 s (o corte de quatro
+para três foi feito por esta razão), então o núcleo responde `unreachable` **antes** dos 30 s
+que o IPC-R dá a `resolve`. O `E_TIMEOUT` que chegava à tela era o teto do renderer vencendo
+uma corrida que o núcleo agora ganha com folga.
+
+**A tela ficava presa 30 s (achado 4, lacuna 1).** `guardClose={() => !entrando}` bloqueava
+`Esc`, clique fora e o X; `cancelDisabled={entrando}` desabilitava cancelar. Com o host
+inalcançável, meio minuto de spinner sem saída.
+
+A lacuna perguntava se `invite.redeem` deveria expor `AbortSignal`. A resposta, na emenda de
+**§16.1**, é que **não há o que cancelar**: o resgate é decidido no log do host (§12.4 passo
+4, dentro da seção crítica de §11.4), e nenhum sinal do candidato desfaz um `member.join` já
+aplicado — um `AbortSignal` que só encerrasse a espera local prometeria um cancelamento que
+não existe. O que a UI passa a dever: sair da espera é sempre possível; sair abandona a
+espera e não o comando; se o resgate completar, a participação chega pelo resync de §15.5; e
+a tela **diz isso**, senão o botão de cancelar parece uma promessa de desfazer.
+
+**O erro cru por cima da prévia velha (achado 9).** Convite que expira ou esgota entre a
+prévia e o clique produzia `Não foi possível entrar (E_INVITE_INVALID)` — o código de §20 na
+tela — mantendo o preview antigo e o botão "Entrar" ativo sobre um convite morto. A coluna de
+§15.4 mapeia desfecho → código na ida; `desfechoDaRecusa` é a volta, e leva a tela ao
+desfecho de §12.3 que descreve o que aconteceu. `E_VALIDATION` e o resto de §20 continuam
+recusa nomeada, porque não são desfechos de convite.
+
+### 132.4 O código de convite que a interface corrompia
+
+`normalizeInviteCode` em `frontend/src/mocks/dataset.ts` era uma segunda implementação da
+gramática de §12.1, divergente da do núcleo em quatro pontos: casava só `invite/…` (o deep
+link nativo caía num fallback que só removia pontuação, produzindo
+`comunidadep2pjoinX7K2…`), não aplicava caixa, não aplicava os aliases Crockford (`I`/`L`→1,
+`O`→0) e não validava comprimento nem alfabeto — devolvia string em todo caso.
+
+Passou a ser a mesma normalização de `core/src/l2/invites`: tudo depois da última `/`, `-` e
+espaço ignorados, caixa alta, aliases, e então comprimento e alfabeto conferidos. E devolve
+`string | null`, o que fecha o achado 13 junto: `setPendingInvite` mapeava a normalização
+vazia para `null` e a rota navegava para `/` sem aviso — um link truncado virava onboarding
+comum, sem nada dizendo que havia um convite. O store passa a distinguir "não havia link" de
+"o link não servia", e a prévia abre no desfecho `invalid`.
+
+### 132.5 A saída do host: decidir sobre o que não se sabe
+
+Três defeitos encadeados (achado 7), mais dois de contagem (5 e 8) e um de estado (12).
+
+**A decisão vinha de uma leitura que podia nunca ter acontecido.** `useImpactoDoNucleo`
+começava com o mapa vazio, e `HostExitListener` auto-confirmava a saída quando
+`impact.length === 0` — fechar o app no boot, com a comunidade cheia, não perguntava nada.
+Agora o pedido do main dispara `host.exitImpact` e **espera por ele**, com prazo de 2,5 s
+dentro dos 10 s do main.
+
+**Zero era inventado.** `pendingReplication` vinha com `?? 0`. Zero é uma afirmação sobre o
+disco dos outros; sem resposta do núcleo não há como fazê-la. Passou a ser `null`, e impacto
+não medido **entra** na lista — é o caso de não poder dizer que não há.
+
+**Ouvinte e shell liam cópias diferentes.** Duas chamadas de `useHostedImpact()` criavam dois
+mapas e dois `setInterval` de 3 s independentes; o shell só renderizava o diálogo se a
+**cópia dele** fosse não-vazia, então dava para o main receber "vou perguntar" e nada
+aparecer, até o prazo vencer sozinho. Virou store único com sondagem por contagem de
+observadores, e **quem responde ao main é quem desenha**: o diálogo saiu de `ShellOverlays`
+e mora no `HostExitListener`.
+
+**`inCallCount` contava canais.** `voice.sessionCount` é o tamanho do mapa de sessões: oito
+pessoas no mesmo canal viravam "1 em chamada", e o host sozinho num canal também. Agora é
+`participantCount(selfKeyHex)` — pessoas distintas, deduplicadas entre sessões, sem quem
+está fechando.
+
+**E o aviso descartava o que estava aberto.** `openHostExit` escrevia no slot único de
+`overlay`: abrir o aviso apagava a criação de comunidade ou o editor de cargos junto com o
+que não tinha sido salvo, e cancelar não os trazia de volta. Um pedido do main não é
+navegação da pessoa — saiu do `overlay`.
+
+A lacuna 2 fechou por emenda em **§18.7**: a tabela do que cada campo conta, a regra de que
+`host.exitImpact` mede o efeito sobre **os outros** (quem pergunta nunca entra na conta), e
+as três regras sobre a ausência de resposta — não medido ≠ zero, auto-confirmar exige
+leitura completa, e quem decide e quem desenha leem a mesma coisa.
+
+### 132.6 O `HostExitListener` que continuava dentro do guarda
+
+§92 moveu o ouvinte para a raiz e escreveu por quê: fechar a janela numa tela anterior ao
+shell não pode custar os 10 s de prazo do main. A montagem ficou em `App.tsx` — como
+**filha** do `Sincronizador`, que não renderiza os filhos em `inicial`, `conectando`,
+`falhou` e `sem-shell`. Fechar a janela durante a conexão continuava custando os dez
+segundos inteiros, com o comentário na tela do código explicando que não deveria.
+
+A montagem passou a ser **irmã** do `Sincronizador`, junto com `DeepLinkMensagem` e o
+`ToastViewport`. O `smoke:fechamento` continua verde nos três cenários.
+
+### 132.7 A unidade em que a interface conta caracteres
+
+`OnboardingScreen` validava com `trimmed.length` e limitava com `maxLength={32}` no DOM. Os
+dois são **unidade UTF-16**; §8.6 conta **code points**, depois de `trim` + colapso de espaço
+interno + NFKC. Os dois extremos do mesmo campo:
+
+- um emoji sozinho tem `length === 2` e um code point: a tela aceitava, o núcleo recusava com
+  `E_VALIDATION` — e o erro inline de §8.7 existe exatamente para isso não acontecer;
+- vinte emojis têm 40 unidades UTF-16 e vinte code points: o `maxLength` travava a digitação
+  de um nome válido, e travava no meio de um par substituto.
+
+§8.6 permite contador **grafêmico** e o chama de advisório. A emenda de **§8.7** separa as
+duas coisas: advisório é o veredito (pode divergir por estar atrás do host, e divergir assim
+é inofensivo), não a **unidade** — grafema nunca é mais permissivo que o log, UTF-16 é mais
+permissivo na entrada e mais frouxo na saída ao mesmo tempo. Três regras normativas: teto em
+code points (ou grafemas), nunca via `maxLength`; corte que respeita o code point; e
+validação sobre o texto **normalizado**.
+
+`TextField` ganhou `limiteCp`, que conta e clampa em code points e substitui o `maxLength` do
+DOM. Aplicado aos três campos de nome de pessoa (onboarding, identidade da conta, apelido na
+comunidade). Os campos de nome de comunidade, canal e cargo continuam com `maxLength` — a
+mesma divergência existe neles, e está registrada em §132.10.
+
+### 132.8 O convite pendente que reabria para sempre
+
+`handleClose` limpava o convite pendente, mas fechar a **janela** com a prévia aberta deixava
+o código no `localStorage`: a inicialização seguinte reabria o mesmo convite por cima do que
+a pessoa fosse fazer — inclusive um convite já inválido, indefinidamente. O convite passa a
+ser consumido **quando a tela abre**, que é quando ele deixa de ser pendente; o código já
+está no estado local do componente.
+
+E `usePendingInviteOverlay` passou a `useLayoutEffect`: com o efeito comum, o shell pintava
+um quadro inteiro antes de o modal existir, e quem chegava por convite sem nenhuma comunidade
+via o Hub vazio piscar antes da prévia.
+
+### 132.9 Onde o relatório exagerou
+
+Dois achados descrevem o mecanismo certo com alcance maior do que o código sustenta. Ficam
+registrados porque a diferença importa para quem for reler o relatório:
+
+- **Achado 2 — a truncagem por espaço.** O texto atribui a `normalizeInviteCode` um
+  `split(/\s+/)[0]` que "trunca silenciosamente códigos com espaços acidentais". Essa linha
+  não existe no código auditado; espaço já era removido junto com `-`. A corrupção do deep
+  link nativo, essa sim, era real, e é o que foi corrigido.
+- **Achado 11 — o convite que reabre.** O texto diz que `pendingInviteCode` "só é limpo ao
+  clicar em Cancelar". `handleClose` era chamado também por `Esc`, clique fora e pela
+  navegação de sucesso — o que sobrevivia era o fechamento da **janela**, que é um caminho
+  que não passa por `handleClose` nenhum. O defeito é o mesmo; a descrição não.
+
+### 132.10 O que não foi medido, e o que ficou aberto
+
+- **Nenhum componente desta fatia tem teste de render** — é o `B20`, e continua aberto. As
+  correções de `JoinCommunityOverlay`, `HostExitGuard`, `DeepLinkMensagem` e `TextField` estão
+  cobertas pelas funções puras que elas consomem (`montarImpacto`, `normalizeInviteCode`,
+  `codePointsNormalizados`, `desfechoDaRecusa` via build) e pelo `smoke:deeplink`, não pelo
+  JSX. O que fica sem rede é a ligação entre a função e o controle.
+- **A unidade de contagem foi corrigida só nos campos de nome de pessoa.** `Community.name`,
+  `Community.description`, `Channel.name`, `Channel.topic`, `Role.name` e `reason` continuam
+  com `maxLength` do DOM, que é UTF-16 — a mesma divergência do §132.7, no mesmo produto. A
+  emenda de §8.7 vale para todos; a correção parou onde o relatório apontou.
+- **O link interno de mensagem não casa a gramática de §3.5.** `MessageActions` copia
+  `p2p.app/m/<base64url do JSON>` e o handler de deep link só aceita
+  `comunidadep2p://m/<MSGREF de 86 chars>`, que é `communityId(32) ‖ opId(32)` decidido pelo
+  núcleo. São dois formatos, e o produto não consegue abrir o link que ele mesmo copia por
+  fora do app. Não estava no relatório e **não foi corrigido nesta fatia** — exige o núcleo
+  expor o MSGREF de uma mensagem, que é decisão de contrato, não de renderer. Virou **B77**
+  no backlog.
+- **O prazo de 2,5 s da leitura de impacto não foi medido sob carga.** Ele é folgado contra
+  os 10 s do main e apertado o bastante para não gastá-los; a escolha é de projeto, não de
+  medição.
+
+### 132.11 Validação
+
+- `core`: `npm run build` (barreira de camadas), `npm run typecheck`, `npm test` — **1292**
+  testes. Sete novos: `test/convite-inalcancavel.test.ts` (o desfecho 6 como resposta de
+  `resolve` e como recusa de `redeem`, mais `E_MALFORMED` continuando recusa) e três casos em
+  `test/voice-host.test.ts` (duas pessoas num canal são duas, quem pergunta não se conta, e
+  duas sessões sem contar ninguém duas vezes).
+- `frontend`: `npm run lint`, `npm run build`, `npm test` — **623** testes. Vinte e um novos:
+  `convite-codigo.test.ts` (a gramática de §12.1 na interface, incluindo o deep link nativo
+  que virava lixo de 33 caracteres), `nome-de-exibicao.test.ts` (a unidade de §8.6 nos dois
+  extremos, e o corte que não parte par substituto), `saida-do-host.test.ts` (não medido ≠
+  zero, e impacto não medido entrando na lista) e seis casos novos em `deeplink.test.ts` —
+  entre eles o que faltava: **`assinarDeepLinks` registra a escuta**, e desfazê-la a remove.
+- `app`: `npm run build`, `npm run typecheck`, **`smoke:fechamento`** (as sete afirmações dos três cenários) e
+  **`smoke:deeplink`** (16 casos de gramática + a parte de ponta a ponta).
+- Uma correção foi verificada por **mutação**: comentar `assinarDeepLinks()` em `App.tsx`
+  derruba o `smoke:deeplink` com `PENDENTE=null`, e só ele — a suíte de unidade continua
+  verde, que é precisamente por que ela não pegou o defeito original.

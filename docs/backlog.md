@@ -3,8 +3,36 @@
 O que está aberto, hoje. Uma linha por item: **nome e ponteiro**. A descrição mora na
 referência — repetir aqui seria a segunda cópia a envelhecer.
 
-Não normativo. Atualizado em 2026-09-06 (§131). **§131** foi a verificação do relatório de
-auditoria de **cargos, permissões e moderação** pela interface (GEMINI/SPARK). Dos 14
+Não normativo. Atualizado em 2026-09-06 (§132). **§132** foi a verificação do relatório
+consolidado de auditoria do **frontend e da integração com o núcleo** (união de dois
+relatórios, 13 achados). **Treze confirmados**, nenhum refutado — mas dois com o alcance
+exagerado: o `split(/\s+/)[0]` que o achado 2 descreve não existe mais no código
+(a truncagem por espaço é história), e o achado 11 diz que o convite pendente "só é limpo ao
+clicar em Cancelar" quando o que ele de fato sobrevivia era o fechamento da **janela** — o
+cancelamento sempre limpou. As **quatro** lacunas de especificação eram reais e fecharam por
+emenda.
+
+O tema é um só: **o caminho existia e ninguém o percorria.** `assinarDeepLinks` estava
+escrita e nenhum arquivo em produção a chamava, então todo `comunidadep2p://…` com o app
+aberto era descartado em silêncio; o ramo de `unreachable` na prévia de convite estava
+escrito e era inalcançável, porque a composição recusava em vez de devolver o desfecho; o
+`HostExitListener` tinha sido movido para a raiz e continuava **dentro** do guarda de
+conexão, que não renderiza os filhos enquanto o núcleo sobe. Treze defeitos corrigidos.
+Cinco emendas normativas em `backend-v2.md`: **§3.5** (qual superfície do renderer consome
+cada rota de deep link — a tabela que faltava), **§8.7** (advisório é o veredito, não a
+unidade: o contador da UI conta code points ou grafemas, nunca UTF-16, e mede o texto
+normalizado), **§12.3** (o desfecho 6 é resposta de `inviteResolve`, não recusa dele — e
+continua sendo recusa em `redeem`), **§16.1** (o prazo de 30 s é do request, não da pessoa:
+sair da espera é sempre possível, e sair não cancela o comando) e **§18.7** (o que cada
+campo de `host.exitImpact` conta — `inCallCount` são **pessoas**, deduplicadas, sem o
+próprio host —, mais a regra de que leitura ausente não vale zero). O `smoke:deeplink`
+ganhou a parte que faltava: preload e bundle reais, o main enviando o link e a pergunta que
+importa — mudou alguma coisa do outro lado? Verificado por mutação. **B13 fechou** — ele pedia
+exatamente o desfecho `unreachable` no lugar de `E_TIMEOUT`, e a emenda de §12.3 o entrega
+dentro do teto: as três rodadas de descoberta somam 24 s, então o núcleo responde antes dos
+30 s do IPC-R. Abriu **B77**, abaixo.
+Atualizado antes em 2026-09-06 (§131). **§131** foi a verificação do relatório de
+auditoria de **cargos, permissões e moderação** pela interface. Dos 14
 achados, **treze confirmados** e **um refutado** — o de exigir confirmação em "Revogar
 banimento" e "Remover timeout": `frontend.md` §15 lista as ações que pedem modal, e isenta
 nominalmente "remover timeout" como destrutiva **reversível dentro da própria sessão**;
@@ -34,7 +62,7 @@ parava ali — acima disso, quem ficasse de fora aparecia sem cargo nenhum para 
 que é a mesma cegueira do achado principal por outro caminho. Nenhum item desta lista fechou
 nem abriu por causa dela.
 Atualizado antes em 2026-09-06 (§130). **§130** foi a verificação do relatório de
-auditoria da **mídia de comunidade** pela interface (GEMINI/SPARK): voz, câmera, tela, Modo
+auditoria da **mídia de comunidade** pela interface: voz, câmera, tela, Modo
 Música e gravação local. Dos 16 achados, treze confirmados, dois com o mecanismo certo e o
 alcance exagerado e **um refutado** (o empilhamento de ganho em `mixagem.ts` — o Web Audio
 ignora conexões repetidas entre os mesmos extremos). As **seis** lacunas de especificação eram
@@ -48,7 +76,7 @@ o microfone capta), §17.4 L-12 (o conselho tem um caminho, e ele é `voice.mute
 §17.5 (apresentar e parar são serializados entre si; e a fonte de sistema é reaproveitada na
 remontagem do grafo). Nenhum item desta lista fechou nem abriu por causa dela.
 Atualizado antes em 2026-09-05 (§129). **§129** foi a verificação do relatório de
-auditoria da **interface** da conversa direta (GEMINI/SPARK; §127 foi o do núcleo dela): dos
+auditoria da **interface** da conversa direta (§127 foi o do núcleo dela): dos
 14 achados, doze confirmados, um refutado e um com o mecanismo certo e a causa errada. As
 **duas** lacunas de especificação eram reais e fecharam por emenda. Doze defeitos corrigidos —
 o mais grave sendo bloquear ou esquecer no meio de uma chamada, que deixava a captura acesa no
@@ -77,7 +105,7 @@ operador: §15.3 vence §13.6 sobre `archive` (abrir compactado é permitido, at
 nativa — bloquear não removia o risco, mudava-o para "Mostrar na pasta" + duplo clique, que
 não tem confirmação nenhuma), e a UI passou a saber o que oferecer por um campo novo do
 núcleo (`revealMode`) em vez de uma terceira cópia da tabela de extensões. **§127** foi a verificação do relatório de
-auditoria da conversa direta (GEMINI/SPARK, `auditoria.md`): oito achados confirmados e
+auditoria da conversa direta (`auditoria.md`): oito achados confirmados e
 corrigidos — um crítico (escritas concorrentes duplicavam `authorSeq` e invalidavam o próprio
 lado para sempre), dois altos, três médios e dois baixos — e sete emendas normativas: §31.10
 (o caminho de escrita é serializado por conversa), §31.7.4 (`dm.react{present:false}` nunca é
@@ -164,11 +192,11 @@ aqui sem decisão seria inventá-lo, que é o que `CLAUDE.md` proíbe.
 | B66 | **RD-11 não é verificável como está escrita.** A regra manda o `dmFold` conferir que o `blobsCoreKey` de um anexo é "o core de blobs de DM do **autor** daquela mensagem", mas `dmBlobsSeed = BLAKE2b('ns/dmblobs/1' ‖ identitySeed ‖ conversationId)` (§31.3) só é derivável por quem tem o `identitySeed`, e a chave resultante **não é declarada em lugar nenhum**: não está no payload de `dm.hello` (§31.5), não está no `dmHello` de §31.8, e o catálogo de 6 `kind`s é fechado. Verificar só sobre o próprio lado tornaria a regra assimétrica e faria as duas réplicas divergirem, contra §31.1. B54 implementa o que é determinístico e simétrico sem mudar o fio — o **primeiro** anexo de um lado vincula a chave e os seguintes precisam repetir —, o que fecha "cada anexo aponta para um core diferente" e **não** fecha o caso que RD-11 nomeia. **§108 acrescentou a metade da escrita**, que é total: `dm.send` recusa com `E_VALIDATION` um anexo cujo `blobsCoreKey` não seja o core de blobs desta conversa. O que sobra é só a leitura do **primeiro** anexo do par | A forma da declaração: um campo `key blobsCoreKey` em `dm.hello` (mudança de `DM_VERSION`) ou outra âncora. Definido isso, a implementação é do agente e cabe em duas linhas do handler | §31.7.4 RD-11, §31.14, §31.5, `core/src/l1/dmFold/state.ts` |
 | B67 | **§31.7.1 e §31.7.2 não carregam o que RD-1 e RD-5 exigem.** Dois campos faltam, e nos dois casos não há segunda leitura possível — B54 os acrescentou e documentou no ponto, como `communityInvalid` e `originFinalSeq` já haviam sido. (a) `DmContext` não tem as chaves dos dois cores de DM, e sem elas RD-1 não consegue verificar o `coreProof` (a chave do core não viaja no registro; ela é a do core que se está lendo, e o handshake de §31.8 já a carrega). (b) `SideState` só tem `lastTs`, e `clockSkewed` é definido sobre o `ts` do registro no índice `ack − 1` do **outro** lado — que na ordem canônica pode não ser o último interpretado; usar `lastTs` marcaria `clockSkewed` sem impossibilidade causal nenhuma | O aval para o texto: acrescentar os dois campos aos schemas de §31.7.1 e §31.7.2, ou dizer outra coisa. É emenda de duas linhas, não decisão de desenho | §31.7.1, §31.7.2, RD-1, RD-5, §31.6 |
 | B30 | **O voluntário de relay não tem endereço nem credencial no protocolo.** A parte implementável saiu em §95: consentimento persistido, kinds 60/61 no log, `DecisionState.relays` com entradas. O que sobra são **três decisões de protocolo**: §6.14 carrega chave/prazo/posse e nenhum endereço; §16.3 tem tabela fechada sem tópico de relay; e a credencial do TURN do host deriva do `hostTurnSecret`, que o voluntário não tem. "Seleção por menor RTT" pressupõe a lista de candidatos com endereço, que é o que falta | A forma dos três em §17.7/§16.3 — é superfície de protocolo, não detalhe de implementação. A **prova**, depois disso, continua dependendo de CGNAT real — que **§123 não mediu**, e que saiu da lista de bloqueios sem deixar de ser verdade (§123.2 item 1). **`B52` propõe uma resposta comum às três**, aproveitando a conexão UDX que já atravessa | §17.7, §6.14, §16.3, L-11, B52 |
-| B13 | Prazo de `invite.resolve` × teto do IPC-R: desfecho certo seria `unreachable`, não `E_TIMEOUT` | O aval para trocar um código de erro de §15.x. A direção já está proposta na referência; falta virar normativa | §62.4 |
 | B15 | Divergências de aparência: `hostStatus` 9×3, tombstone, `hiddenByBan`, `clockSkewed`, `createdAt`/`description` sem fonte | Qual é a fonte de cada um desses estados. Hoje a UI mostra o que o mock inventou, e escolher a fonte é decisão de produto | §60.5 |
 | B70 | **`blocked` e `forked` continuam sem produtor.** §14.5 declara os dois estados e o `communityClient` tem os marcadores (`markBlocked`, `markForked`), mas ninguém os chama: nada liga evento de conflito do Hypercore v10 a `forked`, e não existe critério de detecção de `gap` para `blocked`. `unauthorized` fechou em §126 (a recusa de §14.3(1) passou a viajar); estes dois não, e por razões diferentes — `forked` precisa saber qual evento do hypercore vale como conflito, e `blocked` precisa de um critério que §14.5 não dá ("o core anuncia comprimento maior do que o disponível em qualquer par" não diz como se observa isso nem por quanto tempo) | A forma dos dois critérios em §14.5 — é texto normativo, não detalhe de implementação | §126, §14.5, §5.5 L-4 |
 | B71 | **O "digitando…" está morto de ponta a ponta no renderer.** O núcleo serve os dois lados (§17.6: `presencePublish{typingChannelId}`, `subscribeChannel`, fan-out por assinatura) e o `TypingIndicator` existe na tela, mas o renderer **nunca assina** (`channelSubscribeTyping` só aparece no teste de contrato), **nunca publica** (não há comando de IPC-R que mande `typingChannelId`) e o `setTyping` do `messageStore` não tem chamador. Sem assinante, `#typingDeltaFor` devolve `null` e nada sai do host. A conversa direta (`dm.setTyping`) é outro caminho e está viva | A decisão de produto: o "digitando…" entra no v1 em canal de comunidade, ou o indicador sai da tela? Definido isso, ligar as três pontas é do agente | §126, §17.6, `frontend/src/features/channel/TypingIndicator.tsx` |
 | B72 | **`community.partialInterpretation` é um tópico morto — o gêmeo do que §127 acabou de ligar na DM.** §15.5 declara `{communityId, unknownKinds[], unknownVersions[]}` e §7.2 regra 5 manda ligar a marca, mas o `fold` da comunidade guarda só o booleano e ninguém emite o tópico. Na conversa direta isso foi corrigido em §127 (listas em `DmState`, evento por lote no `dmProjector`), e o desenho é transferível linha a linha. O que **não** é transferível é o snapshot: o `DecisionState` da comunidade é rematerializado de linhas de `view.db` (§8.1), e duas listas que não têm tabela voltariam vazias depois de um restart — o evento re-dispararia. É a mesma família de B44 e B49 (tópico declarado, sem produtor), mas aqui a decisão de conteúdo já existe | Onde as duas listas moram para sobreviver ao snapshot: coluna nova em `communities`, tabela própria, ou aceitar que o evento re-dispare depois de reprojeção. É §10.3 e §8.1, que são normativos | §127, §15.5, §7.2 regra 5, §31.7.2 |
+| B77 | **O link de mensagem que o produto copia não casa a gramática de §3.5.** `MessageActions` e `ChannelContextMenu` copiam `p2p.app/m/<base64url do JSON {communityId, channelId, messageId}>`, montado pela própria interface; o handler de deep link só aceita `comunidadep2p://m/<MSGREF>`, 86 chars de `communityId(32) ‖ opId(32)` (§3.5, emenda de 2026-08-22), que é o que `query.resolveMessageLink` resolve. São dois formatos para a mesma coisa, e o produto **não abre o link que ele mesmo copia** por fora do app: colado num chat, o `comunidadep2p://` nunca casa e o `p2p.app/…` não é rota de protocolo. A rota interna `/m/:code` do `MemoryRouter` funciona porque nunca é alcançada de fora. É a família de B44/B49/B71/B72 — superfície declarada sem produtor —, aqui com o produtor existindo e produzindo outra coisa | A decisão de contrato: o núcleo passa a devolver o MSGREF de uma mensagem (campo novo em `query.message`/`query.messages` de §15.6, ou comando próprio em §15.4), ou §3.5 aceita um segundo formato. Definido isso, trocar o que a interface copia é do agente e cabe em duas funções | §132.10, §3.5, §15.6 |
 | B69 | **Thread cujo canal foi apagado continua listada.** §6.8 manda o `fold` marcar `rootDeleted` quando a **raiz é deletada**, e nada diz sobre a raiz ficar `orphaned` por `channel.delete`. Depois de §124 o `reply_count` cai (§8.4 exclui `orphaned`), mas `root_deleted` fica `0` e `query.threads` filtra por ele | A decisão: canal apagado esconde as threads dele do indicador global, ou elas continuam alcançáveis? O código faz o que a spec manda hoje; mudar exige texto novo em §6.8 | §124.5, §6.8, §8.4 |
 
 ### Máquina, rede ou sessão que não existe aqui

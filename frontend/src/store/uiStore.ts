@@ -14,8 +14,14 @@ export type OverlayKind =
   | "account-settings"
   /** §10, 3.1b — configurações da comunidade ativa (Geral/Cargos/Moderação). */
   | "community-settings"
-  /** §10, 3.5 — fechar o app hospedando gente conectada. */
-  | "host-exit"
+  /*
+   * §10, 3.5 — o aviso de saída do host **não** entra aqui.
+   *
+   * Ele chegou a ser um `overlay`, e o slot é único: abrir o aviso descartava o modal que
+   * estivesse aberto (criar comunidade, editar cargo) junto com o que não tinha sido
+   * salvo, e cancelar o fechamento devolvia a tela vazia. Um pedido do main não é
+   * navegação da pessoa — mora no `HostExitListener`, que é quem responde ao main.
+   */
   | null;
 
 /** De onde 0.3 foi aberta — muda se o passo 1 (colar código) aparece. */
@@ -102,7 +108,6 @@ interface UiState {
   openCreateCommunity: () => void;
   openAccountSettings: () => void;
   openCommunitySettings: () => void;
-  openHostExit: () => void;
   closeOverlay: () => void;
   setMobilePane: (pane: MobilePane) => void;
   toggleMembersPanel: () => void;
@@ -144,8 +149,6 @@ export const useUiStore = create<UiState>()((set) => ({
   openAccountSettings: () => set({ overlay: "account-settings" }),
 
   openCommunitySettings: () => set({ overlay: "community-settings" }),
-
-  openHostExit: () => set({ overlay: "host-exit" }),
 
   closeOverlay: () => set({ overlay: null }),
 

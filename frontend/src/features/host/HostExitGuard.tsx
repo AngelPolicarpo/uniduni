@@ -1,56 +1,102 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, CloudUpload, Users, Volume2 } from "lucide-react";
 import { Avatar } from "../../components/ui/Avatar";
 import { Button } from "../../components/ui/Button";
 import { Modal } from "../../components/ui/Modal";
-import { useUiStore } from "../../store/uiStore";
-import { confirmarSaida, ouvirPedidoDeSaida } from "../../ipc/bridge";
-import { useHostedImpact, type HostedImpact } from "./hostExit";
+import { cancelarSaida, confirmarSaida, ouvirPedidoDeSaida } from "../../ipc/bridge";
+import { selectJoinedCommunities, useCommunityStore } from "../../store/communityStore";
+import { useIdentityStore } from "../../store/identityStore";
+import { useVoiceStore } from "../../store/voiceStore";
+import { montarImpacto, useImpactoDoNucleo, type HostedImpact } from "./hostExit";
+
+/** Quanto se espera pela leitura fresca antes de decidir sem ela (o main dá 10 s). */
+const PRAZO_DA_LEITURA_MS = 2_500;
 
 /**
- * U-06 — quem atende o pedido de saída do main, e mora **na raiz**.
+ * U-06 — quem atende o pedido de saída do main, e mora **na raiz**, fora do
+ * `Sincronizador`.
  *
  * O main segura o PRIMEIRO fechamento da janela e pergunta aqui qual é o impacto; sem
  * resposta ele solta por prazo, e o prazo é de 10 s. Enquanto isto vivia dentro do
  * `AppShell`, toda tela anterior ao shell — onboarding, identidade, restauração — ficava
- * sem ninguém do outro lado: fechar a janela ali dava dez segundos de janela morta antes
- * de o prazo agir. Medido no produto real, com o núcleo em `awaiting-identity`.
+ * sem ninguém do outro lado. Mover para dentro do `Sincronizador` não bastava: ele **não
+ * renderiza os filhos** em `inicial`, `conectando`, `falhou` e `sem-shell`, então fechar a
+ * janela durante a conexão continuava custando os dez segundos inteiros. Por isso a
+ * montagem é irmã do `Sincronizador`, não filha (§92).
  *
- * A escuta é registrada UMA vez e lê o impacto por `ref`: o impacto muda a cada pessoa que
- * entra ou sai de uma chamada, e reinscrever a cada mudança dependia de o `off` da ponte
- * funcionar — que era justamente o outro defeito de §92.
+ * **A decisão é tomada sobre uma leitura feita agora.** Antes ela vinha do último render
+ * de um hook que começava com o mapa vazio: fechar o app no boot, com a comunidade cheia,
+ * auto-confirmava a saída sem perguntar nada ao núcleo. Agora o pedido dispara
+ * `host.exitImpact` e espera por ele, com prazo — e o que falha em ser medido abre o
+ * diálogo em vez de virar "não há impacto".
  */
 export function HostExitListener() {
-  const impact = useHostedImpact();
-  const openHostExit = useUiStore((state) => state.openHostExit);
-  const atual = useRef(impact);
-  // A escrita vai num efeito, não no corpo do render: render pode ser repetido ou
-  // descartado pelo React, e o ref guardaria um impacto de uma UI que nunca foi ao ar.
-  // O pedido de saída chega do main por IPC, sempre depois do commit, então o efeito
-  // já correu quando a escuta lê `atual.current`.
-  useEffect(() => {
-    atual.current = impact;
-  }, [impact]);
+  const ler = useImpactoDoNucleo((s) => s.ler);
+  const [impacto, setImpacto] = useState<HostedImpact[] | null>(null);
+  /** A medição não voltou a tempo: o diálogo diz isso em vez de afirmar zero. */
+  const [semMedicao, setSemMedicao] = useState(false);
+
+  const medir = useCallback(async (): Promise<{ impacto: HostedImpact[]; medido: boolean }> => {
+    // O `ler` do store não rejeita: devolve `null` quando a leitura falha. O prazo cobre
+    // o outro caso — a resposta que simplesmente não vem.
+    const prazo = new Promise<null>((r) => setTimeout(() => r(null), PRAZO_DA_LEITURA_MS));
+    const doNucleo = await Promise.race([ler(), prazo]);
+    const voz = useVoiceStore.getState();
+    return {
+      impacto: montarImpacto({
+        communities: selectJoinedCommunities(useCommunityStore.getState()),
+        doNucleo,
+        euId: useIdentityStore.getState().identity?.id,
+        voiceCommunityId: voz.communityId,
+        outrosNaChamada: voz.participants.filter((p) => p.identityId !== voz.localId).length,
+      }),
+      medido: doNucleo !== null,
+    };
+  }, [ler]);
 
   useEffect(
     () =>
       ouvirPedidoDeSaida(() => {
-        // `useHostedImpact` só devolve comunidade hospedada COM gente online ou em
-        // chamada. Vazio = ninguém cai por este fechamento, e não há o que perguntar.
-        if (atual.current.length === 0) {
-          void confirmarSaida();
-          return;
-        }
-        openHostExit();
+        void medir().then(({ impacto: agora, medido }) => {
+          // Impacto vazio E medido = ninguém cai por este fechamento, e não há o que
+          // perguntar. Vazio por não ter sido medido é outra coisa, e `montarImpacto`
+          // já não produz lista vazia nesse caso.
+          if (agora.length === 0 && medido) {
+            void confirmarSaida();
+            return;
+          }
+          setSemMedicao(!medido);
+          setImpacto(agora);
+        });
       }),
-    [openHostExit],
+    [medir],
   );
 
-  return null;
+  if (impacto === null) return null;
+
+  return (
+    <HostExitDialog
+      impact={impacto}
+      semMedicao={semMedicao}
+      // Fechar o modal por qualquer caminho — botão, `Esc`, clique fora — é desistir de
+      // sair, e o main precisa saber: ele está com a janela segurada e um prazo correndo.
+      // Sem o aviso, "Cancelar" só adiava o fechamento em dez segundos.
+      onClose={() => {
+        setImpacto(null);
+        void cancelarSaida();
+      }}
+      onConfirm={() => {
+        setImpacto(null);
+        void confirmarSaida();
+      }}
+    />
+  );
 }
 
 export interface HostExitDialogProps {
   impact: HostedImpact[];
+  /** A leitura de `host.exitImpact` não voltou: o modal não afirma números que não tem. */
+  semMedicao?: boolean;
   onClose: () => void;
   /**
    * Confirmar de verdade. Ausente no caminho do afinador de §19.1 (não há janela para
@@ -71,10 +117,11 @@ export interface HostExitDialogProps {
  * produto, alcançável pelo afinador de §19.1 e pronta para a versão
  * empacotada (premissa 1), que consegue cumpri-la de verdade.
  */
-export function HostExitDialog({ impact, onClose, onConfirm }: HostExitDialogProps) {
+export function HostExitDialog({ impact, semMedicao = false, onClose, onConfirm }: HostExitDialogProps) {
   const totalOnline = impact.reduce((sum, item) => sum + item.online, 0);
   const totalEmChamada = impact.reduce((sum, item) => sum + item.inCall, 0);
-  const totalPendente = impact.reduce((sum, item) => sum + item.pendingReplication, 0);
+  const totalPendente = impact.reduce((sum, item) => sum + (item.pendingReplication ?? 0), 0);
+  const algoNaoMedido = impact.some((item) => item.pendingReplication === null);
 
   /*
     O título conta gente, e só conta o que existe. "Fechar o app desconecta 0
@@ -89,7 +136,11 @@ export function HostExitDialog({ impact, onClose, onConfirm }: HostExitDialogPro
       ? `Fechar o app desconecta ${totalOnline} ${totalOnline === 1 ? "pessoa" : "pessoas"}`
       : totalEmChamada > 0
         ? `Fechar o app encerra ${totalEmChamada === 1 ? "a chamada de voz" : "as chamadas de voz"}`
-        : `${totalPendente} ${totalPendente === 1 ? "operação ainda não foi" : "operações ainda não foram"} para outro dispositivo`;
+        : totalPendente > 0
+          ? `${totalPendente} ${totalPendente === 1 ? "operação ainda não foi" : "operações ainda não foram"} para outro dispositivo`
+          // §18.7: sem a leitura do núcleo não há como dizer que nada ficou para trás. O
+          // título passa a ser a pergunta que de fato está sendo feita.
+          : "Fechar o app agora?";
 
   return (
     <Modal open onClose={onClose} title={titulo} size="lg">
@@ -146,7 +197,7 @@ export function HostExitDialog({ impact, onClose, onConfirm }: HostExitDialogPro
                     mesmo e sozinho no swarm, que é o caso em que fechar perde tudo): é o
                     que falta para a barreira de PARES de §18.7 passo 2.
                   */}
-                  {pendingReplication > 0 && (
+                  {pendingReplication === null ? (
                     <span className="flex items-center gap-1.5 text-conn-degraded">
                       <CloudUpload
                         size={14}
@@ -154,8 +205,21 @@ export function HostExitDialog({ impact, onClose, onConfirm }: HostExitDialogPro
                         aria-hidden="true"
                         className="shrink-0"
                       />
-                      {pendingReplication} {pendingReplication === 1 ? "op sem replicar" : "ops sem replicar"}
+                      não deu para medir o que falta replicar
                     </span>
+                  ) : (
+                    pendingReplication > 0 && (
+                      <span className="flex items-center gap-1.5 text-conn-degraded">
+                        <CloudUpload
+                          size={14}
+                          strokeWidth={2}
+                          aria-hidden="true"
+                          className="shrink-0"
+                        />
+                        {pendingReplication}{" "}
+                        {pendingReplication === 1 ? "op sem replicar" : "ops sem replicar"}
+                      </span>
+                    )
                   )}
                 </p>
               </div>
@@ -173,11 +237,23 @@ export function HostExitDialog({ impact, onClose, onConfirm }: HostExitDialogPro
             className="mt-0.5 shrink-0 text-conn-degraded"
             aria-hidden="true"
           />
-          <p className="text-meta text-text-secondary">
-            Enquanto seu dispositivo estiver fechado, ninguém envia novas
-            mensagens {impact.length === 1 ? "nesta comunidade" : "nestas comunidades"} — só
-            leem o que já sincronizaram.
-          </p>
+          <div className="flex flex-col gap-1.5 text-meta text-text-secondary">
+            {/*
+              §18.7 — a leitura que não veio não vale zero. Sem ela, o modal não afirma que
+              nada se perde: diz que não sabe, que é a única coisa verdadeira aqui.
+            */}
+            {(semMedicao || algoNaoMedido) && (
+              <p>
+                O núcleo não respondeu quanto ainda falta replicar, então não dá para
+                afirmar que nada se perde ao fechar agora.
+              </p>
+            )}
+            <p>
+              Enquanto seu dispositivo estiver fechado, ninguém envia novas mensagens{" "}
+              {impact.length === 1 ? "nesta comunidade" : "nestas comunidades"} — só leem o
+              que já sincronizaram.
+            </p>
+          </div>
         </div>
 
         {/*

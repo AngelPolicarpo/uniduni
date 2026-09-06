@@ -745,3 +745,55 @@ describe('setSharing — quem escreve o `sharing` do roster (§6.16, 2026-09-06)
     assert.equal(r.rosters.at(-1)!.participants.find((p) => p.keyHex === aliceHex)?.sharing, false);
   });
 });
+
+describe('§18.7 — `inCallCount` conta pessoas, não canais', () => {
+  /*
+    O DTO de `host.exitImpact` publicava `sessionCount`, que é o tamanho do mapa de
+    SESSÕES. Os dois desfechos errados que isso produzia no modal de U-06:
+
+      - oito pessoas no mesmo canal viravam "1 em chamada" (uma sessão), subdimensionando
+        exatamente o impacto que o modal existe para mostrar;
+      - o host sozinho num canal virava "1 em chamada" (uma sessão, a dele), e fechar o
+        app avisava que derrubaria alguém — sendo o alguém quem estava fechando.
+  */
+  it('duas pessoas no mesmo canal são duas, e a sessão continua sendo uma', () => {
+    const { g, vozId, alice, bob } = voiceWorld();
+    const r = rig();
+    const aliceHex = alice.publicKey.toString('hex');
+    const bobHex = bob.publicKey.toString('hex');
+
+    r.sessions.join({ state: g.world.state, channelId: vozId, memberKeyHex: aliceHex });
+    r.sessions.join({ state: g.world.state, channelId: vozId, memberKeyHex: bobHex });
+
+    assert.equal(r.sessions.sessionCount, 1);
+    assert.equal(r.sessions.participantCount(), 2);
+  });
+
+  it('quem pergunta não se conta — host sozinho no canal lê zero', () => {
+    const { g, vozId, alice } = voiceWorld();
+    const r = rig();
+    const aliceHex = alice.publicKey.toString('hex');
+
+    r.sessions.join({ state: g.world.state, channelId: vozId, memberKeyHex: aliceHex });
+
+    assert.equal(r.sessions.sessionCount, 1);
+    assert.equal(r.sessions.participantCount(aliceHex), 0);
+  });
+
+  it('duas sessões com gente diferente somam; a mesma pessoa nas duas conta uma vez', () => {
+    const { g, vozId, alice, bob } = voiceWorld();
+    const outraVoz = addVoiceChannel(g, 'voz-2', T0 + 60);
+    const r = rig();
+    const aliceHex = alice.publicKey.toString('hex');
+    const bobHex = bob.publicKey.toString('hex');
+
+    assert.equal(r.sessions.join({ state: g.world.state, channelId: vozId, memberKeyHex: aliceHex }).ok, true);
+    assert.equal(r.sessions.join({ state: g.world.state, channelId: outraVoz, memberKeyHex: bobHex }).ok, true);
+
+    assert.equal(r.sessions.sessionCount, 2);
+    assert.equal(r.sessions.participantCount(), 2);
+    // "Voz é uma só" (§17.4): entrar na segunda tira da primeira, e o total não sobe.
+    assert.equal(r.sessions.join({ state: g.world.state, channelId: outraVoz, memberKeyHex: aliceHex }).ok, true);
+    assert.equal(r.sessions.participantCount(), 2);
+  });
+});

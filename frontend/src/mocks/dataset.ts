@@ -67,13 +67,46 @@ export const PERMISSION_GROUPS: {
 
 export const INVITE_LINK_HOST = "p2p.app";
 
+/** §12.1 — Base32 Crockford, sem `I`, `L`, `O` e `U`. */
+const CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+/** §12.1 — `I` e `L` valem `1`, `O` vale `0`. Caixa é irrelevante. */
+const CROCKFORD_ALIAS = new Map([
+  ["I", "1"],
+  ["L", "1"],
+  ["O", "0"],
+]);
+/** 80 bits / 5 = 16 chars exatos (§12.1). */
+const INVITE_CODE_CHARS = 16;
+
 /**
- * Aceita link completo ou código curto, em qualquer caixa:
- * "p2p.app/invite/x7K2qM", "https://p2p.app/invite/x7K2qM", "X7K2QM".
+ * A gramática de `codeOrLink` de §15.4, do lado da interface.
+ *
+ * **Devolve `null` quando o que foi colado não é um código.** A versão anterior
+ * devolvia string em todo caso: um `comunidadep2p://join/…` não casava no regex de
+ * `invite/…` e caía no ramo que só removia pontuação, produzindo
+ * `comunidadep2pjoinX7K2…` — 33 caracteres que o núcleo recusa com `E_MALFORMED`,
+ * sem que a tela soubesse dizer por quê. E não aplicava nem os aliases Crockford
+ * nem a caixa, então `x7k2-qm9f-rt4b-n8zp` e `X7K2QM9FRT4BN8ZP` viravam pendências
+ * diferentes para o mesmo convite.
+ *
+ * É a mesma normalização de `normalizeInviteCode` em `core/src/l2/invites`: tudo
+ * depois da última `/` (que cobre `p2p.app/invite/…`, `https://…` e
+ * `comunidadep2p://join/…`), `-` e espaço ignorados, caixa alta, aliases, e então
+ * o comprimento e o alfabeto conferidos. O núcleo continua sendo quem decide —
+ * aqui a conta serve para a tela não guardar lixo achando que guardou convite.
  */
-export function normalizeInviteCode(raw: string): string {
-  const trimmed = raw.trim();
-  const fromLink = trimmed.match(/invite\/([A-Za-z0-9_-]+)/);
-  const code = fromLink ? fromLink[1] : trimmed;
-  return code.replace(/[^A-Za-z0-9_-]/g, "");
+export function normalizeInviteCode(raw: string): string | null {
+  let s = raw.trim();
+  const barra = s.lastIndexOf("/");
+  if (barra !== -1) s = s.slice(barra + 1);
+
+  let limpo = "";
+  for (const ch of s) {
+    if (ch === "-" || ch === " " || ch === "\t" || ch === "\n") continue;
+    const alto = ch.toUpperCase();
+    limpo += CROCKFORD_ALIAS.get(alto) ?? alto;
+  }
+  if (limpo.length !== INVITE_CODE_CHARS) return null;
+  for (const ch of limpo) if (!CROCKFORD_ALPHABET.includes(ch)) return null;
+  return limpo;
 }

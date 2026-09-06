@@ -37,6 +37,42 @@ function falhaDe(e: unknown): Falha {
   return { codigo: codigoDoErro(e), mensagem: mensagemDeErro(e) };
 }
 
+/**
+ * A recusa de `invite.redeem` de volta ao desfecho de §12.3 que a descreve.
+ *
+ * A coluna de §15.4 mapeia desfecho → código no caminho de ida; esta é a volta, e ela
+ * existe porque o convite pode morrer **entre** a prévia e o clique: um convite de uso
+ * único resgatado noutro dispositivo, uma expiração que venceu no meio, a comunidade
+ * encerrada pelo host. A tela mostrava `Não foi possível entrar (E_INVITE_INVALID)` por
+ * cima da prévia antiga — o código cru de §20, e um botão "Entrar" ainda ativo sobre um
+ * convite morto. Os desfechos já têm tela; o que faltava era chegar nelas.
+ */
+function desfechoDaRecusa(codigo: string, previaAtual: InvitePreview | null): InvitePreview | null {
+  switch (codigo) {
+    case "E_INVITE_INVALID":
+    case "E_INVITE_EXHAUSTED":
+    case "E_MALFORMED":
+      return { status: "invalid" };
+    case "E_COMMUNITY_ENDED":
+      return {
+        status: "ended",
+        communityName: previaAtual?.status === "ok" ? previaAtual.community.name : "Esta comunidade",
+      };
+    case "E_BANNED":
+      return {
+        status: "banned",
+        communityName: previaAtual?.status === "ok" ? previaAtual.community.name : "Esta comunidade",
+      };
+    case "E_HOST_UNAVAILABLE":
+    case "E_TIMEOUT":
+      return { status: "unreachable" };
+    default:
+      // `E_VALIDATION`, `E_NO_IDENTITY` e o resto de §20 não são desfechos de convite:
+      // continuam como recusa nomeada em cima da prévia, que é onde a pessoa está.
+      return null;
+  }
+}
+
 function CommunityGlyph({
   name,
   iconEmoji,
@@ -82,16 +118,15 @@ function PreviewSkeleton() {
 
 function AcoesFinais({
   onCancel,
-  cancelDisabled,
   children,
 }: {
   onCancel: () => void;
-  cancelDisabled?: boolean;
   children: ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-3 tablet:flex-row tablet:justify-end">
-      <Button variant="secondary" size="lg" onClick={onCancel} disabled={cancelDisabled}>
+      {/* Nunca desabilitado: sair da espera é sempre possível (§16.1, 30 s). */}
+      <Button variant="secondary" size="lg" onClick={onCancel}>
         Cancelar
       </Button>
       {children}
@@ -120,6 +155,9 @@ export function JoinCommunityOverlay({ layout }: JoinCommunityOverlayProps) {
   const pendingInviteCode = usePendingInviteStore(
     (state) => state.pendingInviteCode,
   );
+  const pendingInviteInvalid = usePendingInviteStore(
+    (state) => state.pendingInviteInvalid,
+  );
   const clearPendingInvite = usePendingInviteStore(
     (state) => state.clearPendingInvite,
   );
@@ -130,17 +168,46 @@ export function JoinCommunityOverlay({ layout }: JoinCommunityOverlayProps) {
   const setActiveChannel = useCommunityStore((state) => state.setActiveChannel);
 
   const fromLink = source === "link";
+  /**
+   * §12.1 — o link trouxe algo que não é código. Não há o que resolver: é `invalid`.
+   *
+   * Lido **uma vez**, na montagem: o convite pendente é consumido logo abaixo, e um valor
+   * recalculado a cada render viraria `false` no instante seguinte — reabrindo a resolução
+   * com o código vazio que não existe.
+   */
+  const [linkInvalido] = useState(() => fromLink && pendingInviteInvalid);
   const [step, setStep] = useState<"input" | "preview">(
     fromLink ? "preview" : "input",
   );
   const [code, setCode] = useState(fromLink ? (pendingInviteCode ?? "") : "");
-  const [preview, setPreview] = useState<InvitePreview | null>(null);
+  const [preview, setPreview] = useState<InvitePreview | null>(
+    linkInvalido ? { status: "invalid" } : null,
+  );
   const [resolvendo, setResolvendo] = useState(false);
   const [erro, setErro] = useState<Falha | null>(null);
   const [entrando, setEntrando] = useState(false);
   const [erroDeEntrada, setErroDeEntrada] = useState<Falha | null>(null);
   /** Sequência da resolução em voo — só a última escreve estado. */
   const resolucaoAtual = useRef(0);
+  /**
+   * A pessoa saiu da tela enquanto o resgate corria. O resultado que chegar depois não
+   * navega mais: quem fechou não quer ser levado para outro lugar (ver `handleJoin`).
+   */
+  const abandonado = useRef(false);
+
+  /*
+   * **O convite pendente é consumido quando esta tela abre, não quando ela é cancelada.**
+   *
+   * Ele só era limpo no "Cancelar": fechar a JANELA com o preview aberto deixava o código
+   * no `localStorage`, e a inicialização seguinte reabria o mesmo convite sozinha por cima
+   * do que a pessoa fosse fazer — inclusive um convite já inválido, para sempre. O código
+   * já está em `code` aqui; o store não precisa mais guardá-lo.
+   */
+  useEffect(() => {
+    if (fromLink) clearPendingInvite();
+    // Só na montagem: `clearPendingInvite` mudaria a dependência e reexecutaria o efeito.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function resolver() {
     if (resolvendo) return;
@@ -167,7 +234,7 @@ export function JoinCommunityOverlay({ layout }: JoinCommunityOverlayProps) {
   // Passo 2: o preview resolve uma vez ao entrar nele; o código já está
   // congelado aqui. `unreachable` tem botão próprio para repetir (U-03).
   useEffect(() => {
-    if (step !== "preview") return;
+    if (step !== "preview" || linkInvalido) return;
     const sequencia = resolucaoAtual;
     void resolver();
     // Sair do passo aposenta a resolução em voo: o incremento faz o `vivo()` dela dar
@@ -176,12 +243,15 @@ export function JoinCommunityOverlay({ layout }: JoinCommunityOverlayProps) {
       sequencia.current++;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step]);
+  }, [step, linkInvalido]);
 
   function handleClose() {
-    // A URL do convite já foi consumida; cancelar não deve deixá-la
-    // reabrindo o preview em loop.
-    if (fromLink) clearPendingInvite();
+    // §16.1 — `invite.redeem` corre sob 30 s contra o host, e a tela não pode ficar
+    // presa a esse prazo. Fechar **abandona a espera**, não o comando: o resgate é
+    // decidido no log do host (§12.4 passo 4), e se ele completar depois a comunidade
+    // chega pelo resync como qualquer outra participação. O que não pode acontecer é a
+    // resposta atrasada arrastar a navegação de quem já saiu daqui.
+    abandonado.current = true;
     closeOverlay();
   }
 
@@ -207,10 +277,22 @@ export function JoinCommunityOverlay({ layout }: JoinCommunityOverlayProps) {
       // §12.4 — o resgate registra a participação, abre a comunidade no
       // runtime e devolve o canal padrão; o resync já trouxe o rail novo.
       const r = await useSessao.getState().entrarComunidade({ codeOrLink: code });
+      if (abandonado.current) return;
       goToCommunity(r.communityId, r.defaultChannelId);
     } catch (e) {
+      if (abandonado.current) return;
       setEntrando(false);
-      setErroDeEntrada(falhaDe(e));
+      const falha = falhaDe(e);
+      // O convite morreu entre a prévia e o clique: a tela vai para o desfecho de §12.3
+      // que descreve o que aconteceu, em vez de escrever o código de §20 por cima de uma
+      // prévia que já não vale.
+      const desfecho = desfechoDaRecusa(falha.codigo, preview);
+      if (desfecho !== null) {
+        setPreview(desfecho);
+        setErroDeEntrada(null);
+        return;
+      }
+      setErroDeEntrada(falha);
     }
   }
 
@@ -269,7 +351,6 @@ export function JoinCommunityOverlay({ layout }: JoinCommunityOverlayProps) {
       onClose={handleClose}
       title="Entrar numa comunidade"
       size="md"
-      guardClose={() => !entrando}
     >
       {body}
     </Modal>
@@ -476,11 +557,23 @@ function PreviewCard({
         </div>
       )}
 
-      <AcoesFinais onCancel={onCancel} cancelDisabled={entrando}>
+      {/*
+        "Cancelar" continua ativo durante o resgate, e `Esc`/clique fora continuam
+        fechando: §16.1 dá 30 s a `invite.redeem` contra o host, e um host inalcançável
+        deixava a pessoa presa no spinner meio minuto, sem saída. Sair não cancela o
+        comando — cancela a espera; a linha abaixo é quem diz isso.
+      */}
+      <AcoesFinais onCancel={onCancel}>
         <Button size="lg" loading={entrando} onClick={onJoin}>
           Entrar em {community.name}
         </Button>
       </AcoesFinais>
+      {entrando && (
+        <p className="mt-2 text-meta text-text-tertiary">
+          Falando com quem hospeda. Dá para fechar — se o resgate completar, a comunidade
+          aparece sozinha.
+        </p>
+      )}
     </>
   );
 }
