@@ -1,15 +1,3 @@
-  /*
-   * §17.2/§25.4 — o que uma janela pode pedir ao Chromium. A lista e a razão de cada
-   * entrada moram em `main/permissoes.ts`, que é o que o `smoke:clipboard` exercita: aqui
-   * dentro nada é alcançável sem abrir um app inteiro (§114.5), e foi assim que a falta de
-   * `clipboard-sanitized-write` passou despercebida enquanto quatro botões de copiar
-   * rejeitavam em silêncio.
-   */
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(permissaoConcedida(permission));
-  });
-  session.defaultSession.setPermissionCheckHandler((_wc, permission) => permissaoConcedida(permission));
-
 /**
  * `app` — Electron main (§3.1, §3.2, §3.3, §10.8, A13, §15.2)
  *
@@ -962,30 +950,16 @@ app.whenReady().then(() => {
   if (link) handleDeepLinkRaw(link);
 
   /*
-   * §17.2 — a mídia é toda do renderer, então microfone e câmera passam por aqui. Sem um
-   * handler explícito a decisão fica com o default do Electron, que varia por versão: uma
-   * porta de captura não deve depender disso. O resto — geolocalização, notificações do SO,
-   * MIDI, USB, HID, serial — é recusado, porque §25.4 diz que este produto não fala com
-   * nada além dos pares.
-   *
-   * **`clipboard-sanitized-write` entra na lista, e a ausência dela quebrava todo botão de
-   * copiar do produto.** `navigator.clipboard.writeText` pede essa permissão ao Chromium; o
-   * handler acima respondia `false` e a promessa rejeitava com `NotAllowedError: Write
-   * permission denied`. Medido no `smoke:clipboard`: com só `media`, a área de transferência
-   * fica com o conteúdo anterior; com esta linha, recebe o texto. Valia para o link de
-   * convite, o link do canal, o link da mensagem e a chave pública — quatro botões que
-   * diziam "copiado" e não copiavam nada.
-   *
-   * Isto **não** é "falar com o mundo" no sentido de §25.4: é a afordância local que a
-   * pessoa acabou de pedir com um clique, e o Chromium só a concede com gesto e foco. A
-   * LEITURA da área de transferência (`clipboard-read`) continua recusada — o produto nunca
-   * precisa saber o que está lá.
+   * §17.2/§25.4 — o que uma janela pode pedir ao Chromium. A lista e a razão de cada
+   * entrada moram em `main/permissoes.ts`, que é o que o `smoke:clipboard` exercita: aqui
+   * dentro nada é alcançável sem abrir um app inteiro (§114.5), e foi assim que a falta de
+   * `clipboard-sanitized-write` passou despercebida enquanto quatro botões de copiar
+   * rejeitavam em silêncio.
    */
-  const PERMISSOES = new Set(['media', 'clipboard-sanitized-write']);
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(PERMISSOES.has(permission));
+    callback(permissaoConcedida(permission));
   });
-  session.defaultSession.setPermissionCheckHandler((_wc, permission) => PERMISSOES.has(permission));
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => permissaoConcedida(permission));
 
   spawnUtility();
   createWindow();
