@@ -15,6 +15,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useVoiceStore, type PortaDeTelaStore } from "../../store/voiceStore";
+import {
+  configurarPortaDeStream,
+  esquecerTodasAsTelas,
+  guardarTelaRecebida,
+  telaRecebida,
+} from "../telaStreams";
 
 const EU = "aa".repeat(32);
 const OUTRO = "bb".repeat(32);
@@ -146,5 +152,33 @@ describe("§94.3 — a falha de quem assiste é da transmissão que ele assiste"
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("telaDoParChegou incrementa telaSeq para que os ouvintes no React reajam", () => {
+    const seqInicial = useVoiceStore.getState().telaSeq;
+    useVoiceStore.getState().telaDoParChegou(OUTRO);
+    expect(useVoiceStore.getState().telaSeq).toBe(seqInicial + 1);
+  });
+
+  it("telaRecebida busca da porta da malha quando não está em cache", () => {
+    esquecerTodasAsTelas();
+    const fakeStream = { id: "stream-da-malha" } as unknown as MediaStream;
+    const porta = {
+      streamDe: vi.fn((parHex: string, slot: "camera" | "tela" | "voz") => {
+        if (parHex === OUTRO && slot === "tela") return fakeStream;
+        return null;
+      }),
+    };
+    configurarPortaDeStream(porta);
+
+    expect(telaRecebida(OUTRO)).toBe(fakeStream);
+    expect(porta.streamDe).toHaveBeenCalledWith(OUTRO, "tela");
+
+    // Segunda chamada lê do cache
+    expect(telaRecebida(OUTRO)).toBe(fakeStream);
+    expect(porta.streamDe).toHaveBeenCalledTimes(1);
+
+    esquecerTodasAsTelas();
+    expect(telaRecebida(OUTRO)).toBeNull();
   });
 });

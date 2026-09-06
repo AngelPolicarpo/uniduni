@@ -55,6 +55,10 @@ export interface PortaDaMalha {
     track: MediaStreamTrack,
     stream: MediaStream,
   ): Promise<EnvioDeTrilha | null>;
+  streamDe?(
+    parHex: string,
+    slot: "camera" | "tela" | "voz",
+  ): MediaStream | null;
 }
 
 /** A superfície de §15.4 que a tela usa. */
@@ -335,6 +339,10 @@ export class EstrelaDeTela {
    * aqui criaria uma segunda fonte de verdade para a mesma regra.
    */
   async atualizarEspectadores(chaves: readonly string[]): Promise<void> {
+    return this.#enfileirar(() => this.#atualizarEspectadores(chaves));
+  }
+
+  async #atualizarEspectadores(chaves: readonly string[]): Promise<void> {
     if (this.#track === null || this.#stream === null) return;
     const vivos = new Set(
       chaves.map((k) => k.toLowerCase()).filter((k) => k !== this.#euHex),

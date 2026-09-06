@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { telaDoApresentador, telaRecebida } from "../../live/telaStreams";
+import { useVoiceStore } from "../../store/voiceStore";
 
 /**
  * Quanto tempo os controles ficam sobre a imagem depois do último movimento.
@@ -43,6 +44,9 @@ export function useShareVideoElement({
   outputVolume,
   surdo,
 }: ShareVideoParams) {
+  // O aviso de que há `MediaStream` de tela novo ou atualizado fora do React.
+  const telaSeq = useVoiceStore((state) => state.telaSeq);
+
   /**
    * O `MediaStream` mora fora do React (`live/telaStreams`): ele precisa sobreviver a
    * re-render, e um `srcObject` recriado a cada render pisca a imagem. O apresentador vê o
@@ -60,12 +64,28 @@ export function useShareVideoElement({
     }
     const stream = isPresenter ? telaDoApresentador() : telaRecebida(presenterId);
     if (stream === null) return;
-    el.srcObject = stream;
+    // Reatribuir o MESMO stream reinicia a decodificação e pisca a imagem — e este efeito
+    // roda de novo a cada tela que entra na chamada ou a cada tick de telaSeq.
+    if (el.srcObject !== stream) {
+      el.srcObject = stream;
+    }
     void el.play().catch(() => undefined);
+  }, [videoRef, isPresenter, oculto, presenterId, phase, telaSeq]);
+
+  /**
+   * Desmontar solta o stream. Fica num efeito próprio, sem dependências dinâmicas,
+   * porque juntá-lo ao de cima faria a limpeza rodar a cada troca de dependência — e
+   * um `srcObject` que vai a `null` e volta no mesmo fôlego pisca a imagem ou
+   * deixa a tela preta caso o stream esteja em transição.
+   */
+  useEffect(() => {
+    const el = videoRef.current;
     return () => {
-      el.srcObject = null;
+      if (el !== null) {
+        el.srcObject = null;
+      }
     };
-  }, [videoRef, isPresenter, oculto, presenterId, phase]);
+  }, [videoRef]);
 
   // Propriedade do elemento, não atributo: `volume` não existe como prop do `<video>` e
   // um `srcObject` novo não a reaplica. O volume GERAL de saída (§10, 3.1, B47) multiplica

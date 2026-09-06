@@ -1248,7 +1248,7 @@ export class CoreRuntime {
     // saída, queda de conexão, revogação), a sessão de tela precisa ser reconferida contra
     // ele: apresentador que saiu da chamada não continua apresentando. Mesmo motivo do
     // holder acima — `share` nasce depois do `voice`.
-    const conciliarTela = { agora: (): void => {} };
+    const conciliarTela = { agora: (_channelId?: string, _alvos?: readonly string[]): void => {} };
     const paradas: Array<() => void> = [];
 
     // §13.1/§19.1 passo 3 — o core de blobs LOCAL desta comunidade é **derivado** da
@@ -1471,7 +1471,7 @@ export class CoreRuntime {
           // (§17.4 passo 4) e a chamada não fecha. Achado no smoke de §78.
           renovarTickets.agora();
           // E quem saiu da chamada deixa de ser apresentador ou audiência (§17.5, A19).
-          conciliarTela.agora();
+          conciliarTela.agora(snapshot.channelId, alvos);
         },
         onRevoked: (targets: readonly RevokedTarget[]) => {
           // §19.8 — "o host encerra a sessão de voz imediatamente, emitindo
@@ -1613,8 +1613,13 @@ export class CoreRuntime {
       host = { admission, voice, share, shareHealth: saude, connections, invites, vistoEm, fila };
       // Fecha o laço da tela: `share` só existe agora, e o roster (lá em cima) precisa
       // reconferi-lo a cada mudança.
-      conciliarTela.agora = () => {
+      conciliarTela.agora = (channelId?: string, alvos?: readonly string[]) => {
         share.sweepAgainst(voiceStateOf(projector.ds));
+        if (channelId !== undefined && alvos !== undefined && alvos.length > 0) {
+          for (const s of share.sessionsOf(channelId)) {
+            empurra('share.started', { sessionId: s.sessionId, presenterKey: s.presenterKeyHex, channelId: s.channelId }, alvos);
+          }
+        }
       };
       // §17.4/§19.8 — a revogação derivada do log. `sweepAgainst` existia nos dois módulos,
       // com teste, e **nunca era chamado em produção**: nenhum ponto da composição o ligava

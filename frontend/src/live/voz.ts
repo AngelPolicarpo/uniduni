@@ -576,6 +576,11 @@ interface Par {
    */
   prontas: Promise<unknown>;
   /**
+   * Resolução de `prontas` para quem responde. Notificado quando `#adotarMLines`
+   * conclui a configuração dos 4 m-lines reservados.
+   */
+  resolverProntas?: () => void;
+  /**
    * Quantas reconstruções de ICE este par já usou. A queda de rede tem remédio
    * (`restartIce`), mas remédio sem teto é retentativa infinita contra par morto.
    */
@@ -1394,7 +1399,10 @@ export class MalhaDeVoz {
      * está transmitindo para mim". A autorização continua sendo a de §17.4/§17.5.
      */
     if (par.tx === null) {
-      await par.prontas;
+      await Promise.race([
+        par.prontas,
+        new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+      ]);
     }
     if (par.tx === null) {
       log(`trilha para ${parHex.slice(0, 8)} IGNORADA — os m-lines ainda não negociaram`);
@@ -1437,6 +1445,17 @@ export class MalhaDeVoz {
         await sender.replaceTrack(null).catch(() => undefined);
       },
     };
+  }
+
+  /**
+   * O `MediaStream` recebido para o slot indicado ("camera", "tela" ou "voz").
+   * Permite que consumidores (como `telaStreams`) resgatem o stream vivo mesmo
+   * se o evento de chegada foi perdido ou ocorreu antes da inicialização do receptor.
+   */
+  streamDe(parHex: string, slot: OrigemDaTrilha | "voz"): MediaStream | null {
+    const p = this.#pares.get(parHex.toLowerCase()) ?? this.#pares.get(parHex);
+    if (p === undefined) return null;
+    return p.recebidos.get(slot) ?? null;
   }
 
   /**
@@ -1490,6 +1509,7 @@ export class MalhaDeVoz {
     }
     par.tx = tx;
     await this.#aplicarTrilhasLocais(tx);
+    par.resolverProntas?.();
   }
 
   /**
@@ -1634,8 +1654,13 @@ export class MalhaDeVoz {
      * da oferta — transmitia normalmente. Os dois lados conectavam, e a chamada ficava
      * muda num sentido só.
      */
+    let resolverProntas: (() => void) | undefined;
     const prontas: Promise<unknown> =
-      tx === null ? Promise.resolve() : this.#aplicarTrilhasLocais(tx);
+      tx !== null
+        ? this.#aplicarTrilhasLocais(tx)
+        : new Promise<void>((resolve) => {
+            resolverProntas = resolve;
+          });
     // O id sai do ticket que o host emitiu para NÓS DOIS — não é opaco nem inventado.
     const par: Par = {
       pc,
@@ -1643,6 +1668,7 @@ export class MalhaDeVoz {
       renegociacaoPendente: false,
       tx,
       prontas,
+      resolverProntas,
       candidatosLocais: [],
       candidatosRemotos: [],
       recebidos: new Map(),
@@ -2115,6 +2141,7 @@ export class MalhaDeVoz {
     const p = this.#pares.get(parHex);
     if (p === undefined) return;
     this.#pares.delete(parHex);
+    p.resolverProntas?.();
     if (p.reinicioAgendado !== null) {
       clearTimeout(p.reinicioAgendado);
       p.reinicioAgendado = null;

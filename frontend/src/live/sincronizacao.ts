@@ -37,6 +37,7 @@ import { acharMonitorDeSistema } from "./dispositivos";
 import { EstrelaDeTela } from "./tela";
 import { CameraDaChamada, motivoDoErroDeCamera } from "./camera";
 import {
+  configurarPortaDeStream,
   esquecerTelaRecebida,
   esquecerTodasAsTelas,
   guardarTelaDoApresentador,
@@ -1036,6 +1037,7 @@ function configurarVoz(): void {
             .shares.find((s) => s.presenterId.toLowerCase() === de);
           if (daquele === undefined) {
             console.log("[tela] trilha antes da sessão anunciada de", peerHex.slice(0, 8));
+            useVoiceStore.getState().telaDoParChegou(peerHex);
             return;
           }
           console.log("[tela] vídeo recebido de", peerHex.slice(0, 8));
@@ -1046,6 +1048,7 @@ function configurarVoz(): void {
               s.sessionId === daquele.sessionId ? { ...s, phase: "live" as const } : s,
             ),
           }));
+          useVoiceStore.getState().telaDoParChegou(peerHex);
           return;
         }
         console.log("[camera] vídeo recebido de", peerHex.slice(0, 8));
@@ -1066,6 +1069,7 @@ function configurarVoz(): void {
       aoSumirVideo: (peerHex, origem) => {
         if (origem === "tela") {
           esquecerTelaRecebida(peerHex);
+          useVoiceStore.getState().telaDoParChegou(peerHex);
           return;
         }
         // O `cameraOn` de §17.6 continua sendo do roster do host: este evento solta o
@@ -1080,6 +1084,7 @@ function configurarVoz(): void {
       aoMicrofoneAusente: (motivo) => useVoiceStore.getState().microfoneCaiu(motivo),
     },
   );
+  configurarPortaDeStream(malha);
 
   /**
    * §17.5 item 7 — o Modo Música onde a plataforma **não** tem loopback: o monitor de
@@ -1828,6 +1833,7 @@ function configurarTela(malha: MalhaDeVoz): void {
           s.sessionId === dado.sessionId ? { ...s, phase: "live" as const } : s,
         ),
       }));
+      useVoiceStore.getState().telaDoParChegou(dado.presenterKey);
     }
     // Espectador: pedir entrada ao host. É ele que emite o ticket da sessão de tela e que
     // confere que quem pede está na chamada (§17.5, F-18).

@@ -14,6 +14,14 @@ let daMinhaCaptura: MediaStream | null = null;
 /** Telas recebidas, por chave de quem apresenta. */
 const recebidas = new Map<string, MediaStream>();
 
+let portaDaMalha: { streamDe?(parHex: string, slot: "camera" | "tela" | "voz"): MediaStream | null } | null = null;
+
+export function configurarPortaDeStream(
+  porta: { streamDe?(parHex: string, slot: "camera" | "tela" | "voz"): MediaStream | null } | null,
+): void {
+  portaDaMalha = porta;
+}
+
 export function guardarTelaDoApresentador(stream: MediaStream | null): void {
   daMinhaCaptura = stream;
 }
@@ -27,7 +35,15 @@ export function guardarTelaRecebida(presenterHex: string, stream: MediaStream): 
 }
 
 export function telaRecebida(presenterHex: string): MediaStream | null {
-  return recebidas.get(presenterHex.toLowerCase()) ?? null;
+  const norm = presenterHex.toLowerCase();
+  const cached = recebidas.get(norm);
+  if (cached) return cached;
+  const daMalha = portaDaMalha?.streamDe?.(norm, "tela");
+  if (daMalha) {
+    recebidas.set(norm, daMalha);
+    return daMalha;
+  }
+  return null;
 }
 
 /**
@@ -51,5 +67,5 @@ export function esquecerTelaRecebida(presenterHex: string): void {
 export function esquecerTodasAsTelas(): void {
   daMinhaCaptura = null;
   recebidas.clear();
-
+  portaDaMalha = null;
 }

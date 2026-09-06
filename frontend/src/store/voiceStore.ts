@@ -341,6 +341,12 @@ interface VoiceState {
    * outro motivo.
    */
   cameraSeq: number;
+  /**
+   * O aviso de que há `MediaStream` de tela novo ou atualizado fora do React.
+   * Mesma função do `cameraSeq`: o componente de tela observa este contador para
+   * ligar o `<video>` sem depender de mudanças em `shares.phase`.
+   */
+  telaSeq: number;
 
   /**
    * §17.2 — a malha real, injetada por `live/sincronizacao.ts`. O store continua dono do
@@ -420,6 +426,10 @@ interface VoiceState {
    * lá o tile mostra o que está de fato entrando em vez de esperar o eco.
    */
   cameraDoParChegou: (peerHex: string) => void;
+  /**
+   * A tela de um par chegou ou foi atualizada fora do React.
+   */
+  telaDoParChegou: (peerHex: string) => void;
   setExpanded: (expanded: boolean) => void;
   setVolume: (identityId: string, volume: number) => void;
   /** Silenciar outro participante — exige `voice_mute_others` (§10, 3.2). */
@@ -578,6 +588,7 @@ const IDLE = {
   erroDeMicrofone: null as string | null,
   erroDeDispositivo: null as string | null,
   cameraSeq: 0,
+  telaSeq: 0,
   consentRequest: null,
   // §17.5 (emenda de 2026-08-28) — Modo Música. Estado da chamada: morre com ela.
   musicaAtiva: false,
@@ -718,6 +729,7 @@ export const useVoiceStore = create<VoiceState>()(
           erroDeMicrofone: null,
           erroDeDispositivo: null,
           cameraSeq: 0,
+          telaSeq: 0,
           consentRequest: null,
         });
 
@@ -769,6 +781,7 @@ export const useVoiceStore = create<VoiceState>()(
           shareSessionId: null,
           capturaDaTela: CAPTURA_LIVRE,
           cameraSeq: state.cameraSeq + 1,
+          telaSeq: state.telaSeq + 1,
           // **O roster ANTIGO não sobrevive à sessão antiga.** O `map` que estava aqui só
           // corrigia as flags do participante local e mantinha todos os outros — pessoas de
           // uma sessão que o host já esqueceu, desenhadas como se estivessem na chamada. O
@@ -1170,6 +1183,11 @@ export const useVoiceStore = create<VoiceState>()(
           ),
         })),
 
+      telaDoParChegou: (_peerHex) =>
+        set((state) => ({
+          telaSeq: state.telaSeq + 1,
+        })),
+
       setExpanded: (expanded) => set({ expanded }),
 
       setVolume: (identityId, volume) => {
@@ -1256,6 +1274,7 @@ export const useVoiceStore = create<VoiceState>()(
               const minha = minhaTela(s.shares, s.localId);
               if (minha === undefined) return {};
               return {
+                telaSeq: s.telaSeq + 1,
                 shareSessionId: sessionId,
                 shares: comTela(s.shares, minha.sessionId, (t) => ({
                   ...t,
@@ -1291,6 +1310,7 @@ export const useVoiceStore = create<VoiceState>()(
       stopShare: () => {
         void portaDeTela?.parar().catch(() => undefined);
         set((state) => ({
+          telaSeq: state.telaSeq + 1,
           // Só a minha sai; a tela de quem mais estiver apresentando continua.
           shares: state.shares.filter((s) => minhaTela([s], state.localId) === undefined),
           shareSessionId: null,
@@ -1403,6 +1423,7 @@ export const useVoiceStore = create<VoiceState>()(
           // falta é o id, que só o host sabe.
           if (eu !== undefined && apresentador === eu) {
             return {
+              telaSeq: state.telaSeq + 1,
               shareSessionId: sessionId,
               shares: state.shares.map((s) =>
                 s.presenterId.toLowerCase() === eu ? { ...s, sessionId } : s,
@@ -1414,6 +1435,7 @@ export const useVoiceStore = create<VoiceState>()(
           if (state.shares.some((s) => s.sessionId === sessionId)) return {};
           agendarTimeoutDeInicio(sessionId);
           return {
+            telaSeq: state.telaSeq + 1,
             shares: [
               ...state.shares,
               {
@@ -1452,6 +1474,7 @@ export const useVoiceStore = create<VoiceState>()(
         const restantes = state.shares.filter((s) => s.sessionId !== sessionId);
         const apresentador = encerrada.presenterId.toLowerCase();
         set({
+          telaSeq: state.telaSeq + 1,
           shares: restantes,
           // Só o que era meu é limpo; a tela de outra pessoa segue viva com o estado dela.
           ...(eraMinha ? { shareSessionId: null, capturaDaTela: CAPTURA_LIVRE } : {}),
