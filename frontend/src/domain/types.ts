@@ -156,8 +156,18 @@ export interface Channel {
   /**
    * Onde entra o divisor "Novas mensagens" ao reabrir o canal (§6). Fica no
    * canal, não na mensagem, porque "lido até aqui" é estado de quem lê.
+   *
+   * É o `seq` do log (§15.6 `firstUnreadSeq`), não um id: o id não existe antes de a
+   * página que contém a mensagem ser carregada, e ancorar o divisor num id que a store
+   * nunca escrevia deixava `<UnreadDivider>` sem dado para sempre.
    */
-  firstUnreadMessageId?: string;
+  firstUnreadSeq?: number;
+  /**
+   * `#avisos` visto por MIM: o núcleo resolve a regra de §6.7 para quem pergunta
+   * (§15.6 `ChannelDto.readOnly`). Ausente em canal montado localmente, e aí quem responde
+   * é a lista de cargos abaixo.
+   */
+  readOnly?: boolean;
   /** `#avisos`: só quem tem `send_messages` aqui posta (§9, 2.1). */
   readOnlyForRoleIds?: string[];
   /** Só quando `type === "voice"`: ids de quem está conectado agora. */
@@ -234,6 +244,12 @@ export type MessageDeliveryState =
 
 export interface Message {
   id: string;
+  /**
+   * §15.6.1 `MessageDto.seq` — a posição no log. Ausente nas bolhas otimistas: antes de a
+   * op ser observada na réplica não existe posição nenhuma. É o que ancora o divisor de
+   * não-lidas (`Channel.firstUnreadSeq`).
+   */
+  seq?: number;
   channelId: string;
   authorId: string;
   /** Markdown básico, renderizado só depois de enviado (§11, C9). */

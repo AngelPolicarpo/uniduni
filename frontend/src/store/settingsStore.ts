@@ -53,6 +53,43 @@ export interface PortaDeEscritaPreferencias {
 
 let portaDeEscrita: PortaDeEscritaPreferencias | null = null;
 
+/**
+ * §15.4 "Preferências locais" — o espelho no núcleo não tem fila (é escrita direta, sem
+ * host e sem outbox), e o `.catch(() => {})` que estava em cada ação engolia a falha com o
+ * LS já gravado. O resultado era divergência silenciosa: a tela dizia microfone B, o núcleo
+ * guardava A, e no boot seguinte `aplicarRemoto` devolvia A sem avisar ninguém.
+ *
+ * Fila não é a resposta (§15.4 é explícita: sem fila). A resposta é **repor**: a escrita que
+ * não confirmou fica aqui por chave e é reenviada no próximo resync, ANTES da leitura. A
+ * chave é o que a escrita significa, não a tentativa — trocar de microfone três vezes com o
+ * núcleo fora repõe só a última.
+ */
+const espelhoPendente = new Map<string, () => Promise<unknown>>();
+
+function espelhar(chave: string, envio: () => Promise<unknown>): void {
+  espelhoPendente.delete(chave);
+  void envio().catch(() => {
+    espelhoPendente.set(chave, envio);
+  });
+}
+
+/**
+ * Reenvia o que não confirmou. Chamado pelo resync (§15.2 4d) antes de `query.preferences`:
+ * primeiro o núcleo recebe a escolha da pessoa, e só então a leitura confirma — na ordem
+ * inversa, a leitura traria o valor velho e o apagaria do LS.
+ */
+export async function reenviarPreferencias(): Promise<void> {
+  if (espelhoPendente.size === 0 || portaDeEscrita === null) return;
+  for (const [chave, envio] of [...espelhoPendente]) {
+    try {
+      await envio();
+      espelhoPendente.delete(chave);
+    } catch {
+      // Continua pendente: o próximo resync tenta de novo.
+    }
+  }
+}
+
 interface SettingsState {
   microphoneId: string;
   cameraId: string;
@@ -162,12 +199,12 @@ export const useSettingsStore = create<SettingsState>()(
               ? { cameraId: id }
               : { outputId: id },
         );
-        void portaDeEscrita?.setDevice(kind, id).catch(() => {});
+        espelhar(`device:${kind}`, () => portaDeEscrita?.setDevice(kind, id) ?? Promise.reject(new Error("sem núcleo")));
       },
 
       setVolume: (kind, value) => {
         set(kind === "input" ? { inputVolume: value } : { outputVolume: value });
-        void portaDeEscrita?.setVolume(kind, value).catch(() => {});
+        espelhar(`volume:${kind}`, () => portaDeEscrita?.setVolume(kind, value) ?? Promise.reject(new Error("sem núcleo")));
       },
 
       setProcessamentoVoz: (v) => set({ processamentoVoz: v }),
@@ -177,7 +214,9 @@ export const useSettingsStore = create<SettingsState>()(
 
       setNotificationsEnabled: (notificationsEnabled) => {
         set({ notificationsEnabled });
-        void portaDeEscrita?.setNotifications({ enabled: notificationsEnabled }).catch(() => {});
+        espelhar("notif:global", () =>
+          portaDeEscrita?.setNotifications({ enabled: notificationsEnabled }) ?? Promise.reject(new Error("sem núcleo")),
+        );
       },
 
       setCommunityNotification: (communityId, level) => {
@@ -187,9 +226,9 @@ export const useSettingsStore = create<SettingsState>()(
             [communityId]: level,
           },
         }));
-        void portaDeEscrita
-          ?.setNotifications({ communityId, level })
-          .catch(() => {});
+        espelhar(`notif:${communityId}`, () =>
+          portaDeEscrita?.setNotifications({ communityId, level }) ?? Promise.reject(new Error("sem núcleo")),
+        );
       },
 
       setDmMuted: (conversationId, muted) => {

@@ -14,12 +14,21 @@
  */
 
 import { api, cliente } from "../ipc/api";
-import { registrarResync, useSessao, type MotivoResync } from "./sessao";
+import { assinarCicloDoNucleo, registrarResync, useSessao, type MotivoResync } from "./sessao";
 import { canal as adaptarCanal, categoria, comunidade, identidade, cargo, membroDeEntrada, bolhaDaFila, reacoes, anexo, entradaDeAuditoria, banido, timeout as adaptarTimeout } from "./adaptadores";
 import { codigoDoErro } from "../ipc/frames";
+import { numeroDaCor } from "../ipc/cores";
 import { estaFalando } from "./vad";
 import { descartarGravacao } from "./gravacao";
-import type { EvMessageAccepted, AuditItem, BanItem, Pagina, TimeoutItem } from "../ipc/dto";
+import type {
+  EvMessageAccepted,
+  EvMessageFailed,
+  EvPresenceChanged,
+  AuditItem,
+  BanItem,
+  Pagina,
+  TimeoutItem,
+} from "../ipc/dto";
 import { useCommunityStore } from "../store/communityStore";
 import { useIdentityStore } from "../store/identityStore";
 import { useVoiceStore } from "../store/voiceStore";
@@ -42,7 +51,7 @@ import {
 import { useMessageStore } from "../store/messageStore";
 import { useDownloadStore } from "../store/downloadStore";
 import { useModerationStore } from "../store/moderationStore";
-import { useSettingsStore } from "../store/settingsStore";
+import { reenviarPreferencias, useSettingsStore } from "../store/settingsStore";
 import { assinarDm, sincronizarConversas, sincronizarPrefsDm } from "./dm";
 import { assinarDmVoz } from "./dmVoz";
 import { mensagem as adaptarMensagem, threadsDaPagina } from "./adaptadores";
@@ -50,14 +59,32 @@ import type { Category, Channel, Community, Member, Message, Role, Thread } from
 
 /** Evita consultas concorrentes para a mesma comunidade quando vários eventos chegam juntos. */
 const emVoo = new Set<string>();
+/** Chegou evento enquanto a consulta ia e voltava: há uma volta a fazer no fim. */
+const sujas = new Set<string>();
 
+/**
+ * Uma consulta por chave de cada vez, com **borda de saída**.
+ *
+ * O descarte puro que estava aqui era benigno no caminho feliz — o núcleo comete antes de
+ * emitir, então a consulta em voo quase sempre já traz o dado do evento que chegou depois.
+ * Ele deixava de ser benigno exatamente onde mais dói: se a consulta em voo FALHA (timeout
+ * durante o respawn, com eventos pipocando), o evento descartado não deixou rastro nenhum —
+ * sem retentativa e sem marca — e a tela ficava defasada até um evento futuro qualquer.
+ *
+ * A marca de "suja" corrige isso sem virar fila: no máximo uma volta extra por chave,
+ * disparada quando a anterior termina.
+ */
 async function comExclusao<T>(chave: string, fn: () => Promise<T>): Promise<T | undefined> {
-  if (emVoo.has(chave)) return undefined;
+  if (emVoo.has(chave)) {
+    sujas.add(chave);
+    return undefined;
+  }
   emVoo.add(chave);
   try {
     return await fn();
   } finally {
     emVoo.delete(chave);
+    if (sujas.delete(chave)) void comExclusao(chave, fn);
   }
 }
 
@@ -66,8 +93,33 @@ export async function sincronizarIdentidade(): Promise<void> {
   const d = await api.identity().catch(() => null);
   if (d === null) return;
   const eu = identidade(d);
-  useIdentityStore.setState({ identity: eu });
+  useIdentityStore.getState().aplicarRemoto(eu);
   useCommunityStore.getState().aplicarRemoto({ euId: eu.id });
+}
+
+/**
+ * §15.4 "Identidade e app" — a edição da tela vira `identity.update`/`identity.setPresence`.
+ * Sem esta ponte a store guardava a mudança só na memória do renderer, e o
+ * `sincronizarIdentidade` acima a apagava no primeiro resync.
+ */
+function configurarEscritaDeIdentidade(): void {
+  useIdentityStore.getState().configurarEscrita({
+    atualizar: (patch) => {
+      const avatarColor = patch.avatarColor === undefined ? null : numeroDaCor(patch.avatarColor);
+      return api.identityUpdate({
+        ...(patch.displayName !== undefined ? { displayName: patch.displayName } : {}),
+        ...(avatarColor !== null ? { avatarColor } : {}),
+      });
+    },
+    // §5.4 tem cinco estados na tela e §15.4 aceita quatro no fio: `offline` é o que a
+    // AUSÊNCIA de publicação produz (TTL de §17.6), não uma escolha publicável — recusá-lo
+    // aqui é dizer isso, em vez de mandar um valor que o núcleo devolveria como
+    // `E_VALIDATION`.
+    definirPresenca: async (presence) => {
+      if (presence === "offline") throw new Error("`offline` não é um status publicável (§17.6)");
+      await useSessao.getState().definirPresenca(presence);
+    },
+  });
 }
 
 /**
@@ -90,7 +142,41 @@ export async function sincronizarComunidades(): Promise<void> {
         : {}),
     };
   }
-  store.aplicarRemoto({ communities, order: lista.map((c) => c.id) });
+  // **A lista é a lista inteira, e o que saiu dela sai do espelho.** O merge acima só
+  // adicionava: uma comunidade esquecida (`community.forget`, U-17/B8) sumia do rail mas
+  // deixava categorias, canais, cargos, roster e convites vivos em `remote`. Canal órfão
+  // continuava resolvível — `comunidadeDoCanal` não lançava para ele —, então uma ação
+  // sobre uma comunidade esquecida montava request em vez de falhar aqui, e a busca de
+  // recentes ainda oferecia `#geral` de uma comunidade que o manifest já apagou.
+  const vivas = new Set(lista.map((c) => c.id));
+  const channels: Record<string, Channel> = {};
+  for (const [id, ch] of Object.entries(store.remote.channels)) {
+    if (vivas.has(ch.communityId)) channels[id] = ch;
+  }
+  const categories: Record<string, Category> = {};
+  for (const [id, cat] of Object.entries(store.remote.categories)) {
+    if (vivas.has(cat.communityId)) categories[id] = cat;
+  }
+  const membersByCommunity: Record<string, Member[]> = {};
+  for (const [cid, membros] of Object.entries(store.remote.membersByCommunity)) {
+    if (vivas.has(cid)) membersByCommunity[cid] = membros;
+  }
+  const vivasCommunities: Record<string, Community> = {};
+  for (const [id, c] of Object.entries(communities)) {
+    if (vivas.has(id)) vivasCommunities[id] = c;
+  }
+  store.aplicarRemoto({
+    communities: vivasCommunities,
+    categories,
+    channels,
+    // `roles` não é podado aqui: `Role` não carrega a comunidade, e a única pista seria
+    // `roleIds` da comunidade — que nesta consulta pode estar vazio (o boot responde isto
+    // ANTES de `query.roles`). Cargo órfão não é alcançável: só se chega a ele pelo
+    // `roleIds` de uma comunidade viva, e `sincronizarComunidade` o reescreve inteiro.
+    membersByCommunity,
+    invites: store.remote.invites.filter((i) => vivas.has(i.communityId)),
+    order: lista.map((c) => c.id),
+  });
   // O rail mostra as comunidades das quais se participa; com dado real, participar É estar
   // na resposta de `query.communities`. A ativa segue a mesma régua: excluída do rail
   // (`community.forget`, U-17/B8), ela não pode continuar ativa — o registro velho no
@@ -100,7 +186,22 @@ export async function sincronizarComunidades(): Promise<void> {
     activeCommunityId: lista.some((c) => c.id === s.activeCommunityId)
       ? s.activeCommunityId
       : lista[0]?.id ?? null,
+    // Os mapas locais são por comunidade e guardam id de canal: sem esta poda, "recentes"
+    // continuava oferecendo `#geral` de uma comunidade esquecida, e clicar nele montava
+    // request em vez de falhar aqui.
+    //
+    // A poda é POR COMUNIDADE, não por canal vivo: no boot esta consulta responde antes de
+    // `query.structure`, e `remote.channels` ainda está vazio — filtrar por canal
+    // conhecido apagaria o canal ativo que o `persist` acabou de restaurar.
+    recentChannelIds: somenteDe(s.recentChannelIds, vivas),
+    activeChannelByCommunity: somenteDe(s.activeChannelByCommunity, vivas),
+    collapsedCategoryIds: somenteDe(s.collapsedCategoryIds, vivas),
   }));
+}
+
+/** As entradas cuja chave é uma comunidade que ainda existe. */
+function somenteDe<T>(mapa: Record<string, T>, comunidades: ReadonlySet<string>): Record<string, T> {
+  return Object.fromEntries(Object.entries(mapa).filter(([cid]) => comunidades.has(cid)));
 }
 
 /** `query.structure` + `query.community` + `query.roles` → categorias, canais e cargos. */
@@ -111,12 +212,16 @@ export async function sincronizarComunidade(communityId: string): Promise<void> 
       api.community(communityId).catch(() => null),
       api.roles(communityId).catch(() => null),
     ]);
-    if (estrutura === null) return;
+    // **Cada consulta responde por si.** O `return` que havia aqui quando `estrutura` falhava
+    // jogava fora `detalhe` e `cargos` que tinham respondido — e é no pós-crash, com o
+    // núcleo ocupado e timeout provável, que cargos e permissões demoram mais a convergir.
+    // Cargo atrasado é gate de UI errado na tela. Mesmo desenho de `sincronizarModeracao`.
+    if (estrutura === null && detalhe === null && cargos === null) return;
     const store = useCommunityStore.getState();
 
     const categories: Record<string, Category> = { ...store.remote.categories };
     const channels: Record<string, Channel> = { ...store.remote.channels };
-    for (const cat of estrutura.categories) {
+    for (const cat of estrutura?.categories ?? []) {
       categories[cat.id] = categoria(communityId, cat);
       for (const ch of cat.channels) channels[ch.id] = adaptarCanal(communityId, cat.id, ch);
     }
@@ -134,8 +239,8 @@ export async function sincronizarComunidade(communityId: string): Promise<void> 
     if (anterior !== undefined) {
       communities[communityId] = {
         ...anterior,
-        categoryIds: estrutura.categories.map((c) => c.id),
-        roleIds: lista.map((r) => r.id),
+        ...(estrutura !== null ? { categoryIds: estrutura.categories.map((c) => c.id) } : {}),
+        ...(cargos !== null ? { roleIds: lista.map((r) => r.id) } : {}),
         ...(detalhe !== null ? { hostPeerId: detalhe.hostRef.key, memberCount: detalhe.memberCount } : {}),
       };
     }
@@ -380,11 +485,29 @@ export async function sincronizarFila(communityId: string): Promise<void> {
   await comExclusao(`fila:${communityId}`, async () => {
     const dto = await api.outbox(communityId).catch(() => null);
     if (dto === null) return;
-    useMessageStore.getState().aplicarFila(
+    const store = useMessageStore.getState();
+    store.aplicarFila(
       dto.items
         .map(bolhaDaFila)
         .filter((b) => b !== null),
     );
+    // §11.6 (emenda de 2026-09-06) — a fila também é o desfecho de quem perdeu o evento.
+    // Ver `reconciliarPelaFila`: presença na resposta é "ainda pendente", `dropped` é o
+    // descarte com motivo, e AUSÊNCIA é aceite, porque §11.6 só tira item da fila por
+    // observação na réplica.
+    const vivas = new Set<string>();
+    const desfeitas: Array<{ ref: string; motivo: string }> = [];
+    for (const item of dto.items) {
+      if (item.clientRef === undefined) continue;
+      if (item.state === "dropped") desfeitas.push({ ref: item.clientRef, motivo: `descartada (${item.droppedReason ?? "sem motivo"})` });
+      else vivas.add(item.clientRef);
+    }
+    const canais = new Set(
+      Object.values(useCommunityStore.getState().remote.channels)
+        .filter((c) => c.communityId === communityId)
+        .map((c) => c.id),
+    );
+    store.reconciliarPelaFila({ vivas, desfeitas, canais });
   });
 }
 
@@ -560,6 +683,10 @@ export function reentrarVozSePreciso(motivo: MotivoResync): void {
   if (motivo.tipo !== "epoch") return;
   const voz = useVoiceStore.getState();
   if (voz.channelId === null || voz.communityId === null || voz.localId === null) return;
+  // Chamada encerrada PELO HOST não volta sozinha. Os três ids continuam preenchidos ali de
+  // propósito — é deles que o banner de §9, 2.3 tira o "por quê" —, e olhar só para eles
+  // fazia um `epoch` posterior apagar o banner e tentar `voice.join` num canal morto.
+  if (voz.terminadaPeloHost) return;
   voz.retryJoin();
 }
 
@@ -588,6 +715,8 @@ export function assinarSincronizacao(): void {
     void sincronizarComunidades();
     recarregarAtiva();
   });
+  // UMA assinatura. A segunda, idêntica, que existia aqui dobrava `query.communities` e
+  // `abrirComunidade` a cada evento de replicação — a hora em que o núcleo está mais ocupado.
   cliente.subscribe("community.replication", (d) => {
     const ev = d as { communityId?: string; state?: string };
     void sincronizarComunidades();
@@ -598,7 +727,6 @@ export function assinarSincronizacao(): void {
       void abrirComunidade(ev.communityId);
     }
   });
-  cliente.subscribe("community.replication", () => void sincronizarComunidades());
   cliente.subscribe("host.statusChanged", () => void sincronizarComunidades());
   cliente.subscribe("unread.changed", () => {
     void sincronizarComunidades();
@@ -641,9 +769,14 @@ export function assinarSincronizacao(): void {
     useMessageStore.getState().assentarAceita(refDo(ev), ev.messageId);
   });
   cliente.subscribe("message.failed", (d) => {
-    const ev = d as { opId: string; clientRef?: string; code: string };
-    // `retryInMs` com erro transitório NÃO é falha para a UI: a outbox volta a
-    // retentar sozinha (§11.3), e a bolha segue no estado que `query.outbox` disser.
+    const ev = d as EvMessageFailed;
+    // **`terminal` decide, e antes ele era ignorado.** Erro transitório (`terminal:false`,
+    // com `retryInMs`) NÃO é falha para a UI: a outbox retenta sozinha (§11.3) e a bolha
+    // segue no estado que `query.outbox` disser. Chamar `marcarFalha` ali desfazia o
+    // otimismo de uma edição que ia aplicar segundos depois — texto voltando ao antigo,
+    // aviso de erro, e a edição reaparecendo sozinha. O `outbox.changed` que acompanha a
+    // retentativa é quem redesenha a linha.
+    if (ev.terminal !== true) return;
     useMessageStore.getState().marcarFalha(refDo(ev), ev.code);
   });
   cliente.subscribe("message.dropped", (d) => {
@@ -682,6 +815,26 @@ export function assinarSincronizacao(): void {
     if (typeof ev.blobIdHex === "string") downloads.aplicarCorrompido(ev.blobIdHex, ev.cause ?? "hash");
   });
 
+  // ── §17.6 — presença e "digitando…", os dois efêmeros de comunidade ────────
+  //
+  // Estes NÃO são "sinal para reconsultar" (§15.1 r. 5): não há log por trás deles, e o
+  // que os produz é um tick de 2 s. Reconsultar o roster inteiro a cada tick seria pior
+  // que aplicar o delta, e para typing não existe query nenhuma — a mesma exceção já
+  // declarada para `voice.signal` e `dm.typing`. Sem estas duas assinaturas o roster
+  // congelava todo mundo em "online" e o indicador de digitação nunca acendia.
+  cliente.subscribe("presence.changed", (d) => {
+    const ev = d as { communityId?: string; entries?: EvPresenceChanged["entries"]; removed?: string[] };
+    // Sem `communityId` não há a quem aplicar: adivinhar a ativa poria a presença de uma
+    // comunidade no roster de outra.
+    if (typeof ev.communityId !== "string") return;
+    useCommunityStore.getState().aplicarPresenca(ev.communityId, ev.entries ?? [], ev.removed ?? []);
+  });
+  cliente.subscribe("typing.changed", (d) => {
+    const ev = d as { channelId?: string; identityKeys?: string[] };
+    if (typeof ev.channelId !== "string") return;
+    useMessageStore.getState().setTyping(ev.channelId, ev.identityKeys ?? []);
+  });
+
   cliente.subscribe("core.ready", () => {
     void sincronizarIdentidade().then(() => sincronizarComunidades());
   });
@@ -690,12 +843,25 @@ export function assinarSincronizacao(): void {
   registrarResync((motivo) => {
     void sincronizarIdentidade();
     void sincronizarComunidades();
+    // `abrirComunidade` já inclui fila e moderação: pedi-las de novo aqui era dobrar a
+    // consulta no pior momento (o núcleo acabou de subir).
     recarregarAtiva();
     const cid = ativa();
     const chid = cid !== null ? useCommunityStore.getState().activeChannelByCommunity[cid] : undefined;
     if (cid !== null && chid !== undefined) void sincronizarMensagens(cid, chid);
-    if (cid !== null) void sincronizarFila(cid);
-    if (cid !== null) void sincronizarModeracao(cid);
+    // As preferências de §15.4 são escrita direta no LS com espelho no núcleo, sem fila:
+    // uma escrita perdida no crash só aparecia no boot seguinte, quando o núcleo
+    // sobrescrevia a escolha da pessoa. `reenviarPreferencias` repõe o que não confirmou e
+    // a leitura vem depois — é o resync que faltava.
+    void sincronizarPreferencias();
+    if (motivo.tipo === "epoch") {
+      // §15.2 4d — o núcleo novo não conhece transferência nenhuma do processo morto.
+      useDownloadStore.getState().interromperEmVoo();
+      // Efêmeros de §17.6: sem sessão de presença do outro lado, quem estava marcado como
+      // "digitando" continuaria digitando para sempre.
+      useMessageStore.setState({ typingByChannel: {} });
+      reassinarTypingDoCanalAberto();
+    }
     reentrarVozSePreciso(motivo);
   });
 }
@@ -724,8 +890,68 @@ function configurarEscritaDePreferencias(): void {
   });
 }
 
+/* ─── §17.6 "digitando…" — o interesse é por canal aberto ────────────────────── */
+
+/** O canal cujo typing esta janela assinou; `null` é "nenhum". */
+let typingAssinado: { communityId: string; channelId: string } | null = null;
+
+/**
+ * §15.4 `channel.subscribeTyping` — quem abre um canal de texto declara interesse em
+ * receber o "digitando…" dele, e quem o fecha desfaz. A assinatura é EFÊMERA e vive no
+ * host: nem o comando nem esta marca sobrevivem a um reinício, e é por isso que o resync de
+ * epoch a refaz.
+ */
+export function assinarTypingDoCanal(communityId: string, channelId: string | null): void {
+  // Canal de voz não tem compositor: declarar interesse ali seria pedir ao host um evento
+  // que ninguém publica.
+  const alvo =
+    channelId !== null && useCommunityStore.getState().remote.channels[channelId]?.type === "voice"
+      ? null
+      : channelId;
+  const anterior = typingAssinado;
+  if (anterior !== null && anterior.channelId === alvo && anterior.communityId === communityId) return;
+  if (anterior === null && alvo === null) return;
+  if (anterior !== null) {
+    void api.channelSubscribeTyping({ ...anterior, on: false }).catch(() => undefined);
+    // O que o canal anterior deixou aceso não vale para o próximo.
+    useMessageStore.getState().setTyping(anterior.channelId, []);
+  }
+  typingAssinado = alvo === null ? null : { communityId, channelId: alvo };
+  if (typingAssinado !== null) {
+    void api.channelSubscribeTyping({ ...typingAssinado, on: true }).catch(() => undefined);
+  }
+}
+
+/** §15.2 4c — o núcleo novo não herdou interesse nenhum; o canal aberto o declara de novo. */
+function reassinarTypingDoCanalAberto(): void {
+  const alvo = typingAssinado;
+  if (alvo === null) return;
+  void api.channelSubscribeTyping({ ...alvo, on: true }).catch(() => undefined);
+}
+
+/**
+ * §17.6 — publica o próprio "digitando…", com o teto de 1 / 2 s do fio respeitado AQUI
+ * também: o núcleo recusa o excesso com `E_RATE_LIMITED`, e mandar uma request por tecla
+ * para colher recusa seria gastar o canal à toa.
+ */
+const INTERVALO_DE_TYPING_MS = 2_500;
+const ultimoTyping = new Map<string, number>();
+
+export function avisarQueEstouDigitando(communityId: string, channelId: string): void {
+  const agora = Date.now();
+  const ultimo = ultimoTyping.get(channelId) ?? 0;
+  if (agora - ultimo < INTERVALO_DE_TYPING_MS) return;
+  ultimoTyping.set(channelId, agora);
+  // `E_RATE_LIMITED` e ausência de host são desfechos normais de um efêmero: nada a dizer.
+  void api.channelTyping({ communityId, channelId }).catch(() => undefined);
+}
+
 /** `query.preferences` → dispositivos/volumes/notificações. Uma leitura no boot; mute/recolher já vêm na `query.structure`. */
 export async function sincronizarPreferencias(): Promise<void> {
+  // A ordem importa: primeiro repor o que a tela decidiu e o núcleo não confirmou, depois
+  // ler. Invertida, a leitura traria o valor antigo e apagaria a escolha da pessoa do LS —
+  // que é exatamente como a preferência "voltava sozinha" depois de um crash.
+  await reenviarPreferencias();
   const p = await api.preferences().catch(() => null);
   if (p === null) return;
   useSettingsStore.getState().aplicarRemoto(p);
@@ -1711,12 +1937,34 @@ export async function iniciarSincronizacao(): Promise<void> {
   if (sincronizacaoLigada) return;
   sincronizacaoLigada = true;
   await useSessao.getState().iniciar();
+  await ligarProduto();
+}
+
+/**
+ * "Tentar novamente" da tela de falha (§15.2). O boot que estourou o prazo deixou o produto
+ * sem assinatura nenhuma — quem reconecta precisa passar pelo MESMO caminho, senão a tela
+ * volta a desenhar sobre um renderer surdo.
+ */
+export async function reconectarSincronizacao(): Promise<void> {
+  await useSessao.getState().reconectar();
+  await ligarProduto();
+}
+
+/** As assinaturas e o primeiro lote. Idempotente: só liga o que ainda não está ligado. */
+async function ligarProduto(): Promise<void> {
   const estado = useSessao.getState().estado;
   if (estado === "sem-shell" || estado === "falhou") return;
+  if (produtoLigado) return;
+  produtoLigado = true;
   configurarEscritaDeMensagem();
   configurarEscritaDePreferencias();
   configurarVoz();
+  configurarEscritaDeIdentidade();
   assinarSincronizacao();
+  // §15.2 — a terceira perna da recuperação: o núcleo emite `core.restarted` (`boot.ts`) e
+  // até aqui ninguém a ouvia. Ela é redundante com o `core-epoch` do main no caminho feliz,
+  // e é a única que sobrevive a um shell que não avise.
+  assinarCicloDoNucleo();
   // §31.16.2 — os doze eventos da conversa direta entram na mesma sessão IPC-R, e as
   // assinaturas precisam existir antes da primeira consulta: um `dm.requested` que chegue
   // na janela entre a query e a assinatura ficaria invisível até o próximo evento.
@@ -1735,3 +1983,4 @@ export async function iniciarSincronizacao(): Promise<void> {
 }
 
 let sincronizacaoLigada = false;
+let produtoLigado = false;

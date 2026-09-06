@@ -36,6 +36,8 @@ interface Sessao {
 
   iniciar(): Promise<void>;
   recarregar(origem?: MotivoResync): Promise<void>;
+  /** "Tentar novamente" da tela de falha — o mesmo caminho do resync, a pedido de quem olha. */
+  reconectar(): Promise<void>;
   criarIdentidade(arg: { displayName: string; avatarColor: number }): Promise<void>;
   aceitarCofreInseguro(): Promise<void>;
   importarIdentidade(passphrase: string): Promise<void>;
@@ -75,6 +77,32 @@ function dispararResync(motivo: MotivoResync): void {
 
 let ligado = false;
 
+/**
+ * §15.2 — o prazo que separa "reconectando" de "falhou". O respawn de §3.3 tem backoff de
+ * 1 s/4 s/10 s e até três tentativas em 60 s; passado o teto, o núcleo não volta mais e a
+ * tela precisa dizer isso com um botão, em vez de girar para sempre.
+ */
+const PRAZO_DE_RECONEXAO_MS = 60_000;
+let prazoDeReconexao: ReturnType<typeof setTimeout> | null = null;
+
+function armarPrazoDeReconexao(): void {
+  desarmarPrazoDeReconexao();
+  prazoDeReconexao = setTimeout(() => {
+    prazoDeReconexao = null;
+    if (useSessao.getState().estado !== "reconectando") return;
+    useSessao.setState({
+      estado: "falhou",
+      motivo: "O núcleo reiniciou e não voltou a responder.",
+    });
+  }, PRAZO_DE_RECONEXAO_MS);
+}
+
+function desarmarPrazoDeReconexao(): void {
+  if (prazoDeReconexao === null) return;
+  clearTimeout(prazoDeReconexao);
+  prazoDeReconexao = null;
+}
+
 export const useSessao = create<Sessao>((set, get) => ({
   estado: "inicial",
   motivo: null,
@@ -94,13 +122,21 @@ export const useSessao = create<Sessao>((set, get) => ({
       return;
     }
     set({ estado: "conectando", motivo: null });
+    // §15.2 4e — o `conn-reconnecting` começa no instante em que o núcleo cai, não quando o
+    // substituto responde: entre o `exit` e o `hello` do respawn passam até 10 s de backoff,
+    // e é a porta velha que o cliente larga aqui. Consultar nesse intervalo dava `E_NO_PORT`
+    // e prendia a sessão em "falhou" para sempre — o resync de epoch (4d) sai só no
+    // `onResync`, quando existe núcleo novo do outro lado.
+    cliente.onDesconectado((epoch) => {
+      set({ estado: "reconectando", epoch, motivo: null });
+      armarPrazoDeReconexao();
+    });
     cliente.onResync((motivo) => {
-      // O bump de epoch é o `conn-reconnecting` de §15.2 4e: as queries são refeitas e o
-      // estado volta a `pronto` quando o `core.status` responder. O resync (queries E a
-      // reentrada de voz de B43) sai pelo `recarregar` abaixo, DEPOIS do núcleo responder —
-      // refazer `voice.join` contra um núcleo que ainda está subindo falharia à toa e
-      // piscaria `failed` no meio da reconexão.
+      // O resync (queries E a reentrada de voz de B43) sai pelo `recarregar` abaixo, DEPOIS
+      // do núcleo responder — refazer `voice.join` contra um núcleo que ainda está subindo
+      // falharia à toa e piscaria `failed` no meio da reconexão.
       if (motivo.tipo === "epoch") {
+        desarmarPrazoDeReconexao();
         set({ estado: "reconectando", epoch: motivo.epoch });
         void get().recarregar(motivo);
         return;
@@ -138,8 +174,30 @@ export const useSessao = create<Sessao>((set, get) => ({
       });
       dispararResync(origem);
     } catch (e) {
+      // Sem porta o núcleo novo ainda não chegou (§15.2 passo 2): isso é a reconexão em
+      // curso, não fim de linha. Quem decide que a reconexão fracassou é o prazo armado no
+      // `onDesconectado` — declarar falha aqui apagava a tela por causa do backoff.
+      if (codigoDoErro(e) === "E_NO_PORT" && get().estado === "reconectando") return;
       set({ estado: "falhou", motivo: e instanceof Error ? e.message : "falha ao ler o núcleo" });
     }
+  },
+
+  /**
+   * "Tentar novamente" da tela de falha. Refaz o aperto de mão quando não há porta — é o
+   * caso do boot que estourou o prazo — e daí em diante é o mesmo `recarregar` do resync.
+   */
+  async reconectar() {
+    set({ estado: "reconectando", motivo: null });
+    if (!cliente.conectado) {
+      try {
+        const conexao = await conectar(cliente);
+        set({ epoch: conexao.epoch });
+      } catch (e) {
+        set({ estado: "falhou", motivo: e instanceof Error ? e.message : "falha ao conectar" });
+        return;
+      }
+    }
+    await get().recarregar();
   },
 
   async criarIdentidade(arg) {
@@ -196,9 +254,8 @@ export const useSessao = create<Sessao>((set, get) => ({
  * porta existir — assinar antes enfileiraria `sub` num cliente sem porta.
  */
 export function assinarCicloDoNucleo(): void {
-  cliente.subscribe("core.ready", () => {
-    void useSessao.getState().recarregar();
-  });
+  // `core.ready` é assinado pelo sincronizador (§15.5) — assiná-lo aqui também faria toda
+  // partida de núcleo recarregar a sessão duas vezes.
   cliente.subscribe("core.restarted", (data) => {
     const epoch = (data as { epoch?: number })?.epoch;
     if (typeof epoch === "number") cliente.handleCoreEpoch(epoch);

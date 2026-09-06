@@ -121,7 +121,14 @@ export interface ChannelDto {
   type: number;
   topic?: string;
   rank: Rank;
+  /** §6.7 — JÁ RESOLVIDO para quem perguntou: é a regra do núcleo, não um palpite da tela. */
   readOnly: boolean;
+  /**
+   * §15.6 (emenda de 2026-09-06) — os cargos silenciados, crus. Existe para a tela de
+   * edição do canal reabrir a escolha de quem pode postar; NÃO é a fonte do gate de UI,
+   * que é `readOnly`.
+   */
+  readOnlyForRoleIds: string[];
   muted: boolean;
   unread: UnreadDto;
   firstUnreadSeq?: number;
@@ -325,7 +332,9 @@ export type InvitePreview =
 export type ResolvedMessageLink =
   | { status: "ok"; communityId: string; channelId: string; messageId: string; seq: number }
   | { status: "not-member"; communityId: string }
-  | { status: "not-synced"; communityId: string; channelId: string }
+  // §15.6 (emenda de 2026-08-22): sem projeção da op ninguém sabe o canal, e o campo fica
+  // AUSENTE. Declará-lo obrigatório fazia a tela indexar mapas com `undefined`.
+  | { status: "not-synced"; communityId: string }
   | { status: "deleted" }
   | { status: "malformed" };
 

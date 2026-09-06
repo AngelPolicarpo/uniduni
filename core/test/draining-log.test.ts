@@ -270,6 +270,53 @@ describe('§56.7 channel.subscribeTyping — o gatilho local da assinatura de §
   });
 });
 
+describe('§15.4 (2026-09-06) channel.typing — a outra metade do "digitando…"', () => {
+  it('no host publica no agregador local e emite typing.changed a quem assinou', async () => {
+    const h = await rigHost('typing-publica');
+    try {
+      const criada = await h.io.request('community.create', { name: 'Typing', iconColor: 3 });
+      assert.ok(criada.ok, JSON.stringify(criada));
+      const cid = (criada.data as Record<string, unknown>)['communityId'] as string;
+      const canal = (criada.data as Record<string, unknown>)['defaultChannelId'] as string;
+      const euHex = h.manager.publicKeyHex!;
+
+      // Sem este comando, `typingChannelId` de §16.2 não tinha produtor em lugar nenhum do
+      // produto: `publishTyping` era código sem chamador e o indicador estava morto.
+      const assinou = await h.io.request('channel.subscribeTyping', { communityId: cid, channelId: canal, on: true });
+      assert.ok(assinou.ok, JSON.stringify(assinou));
+      const r = await h.io.request('channel.typing', { communityId: cid, channelId: canal });
+      assert.ok(r.ok, JSON.stringify(r));
+      assert.deepEqual(h.runtime.get(cid)!.presence.getTypingForChannel(cid, canal), [euHex]);
+
+      // §17.6 — teto de 1 / 2 s por autor e canal; a segunda dentro da janela é recusada.
+      const repetida = await h.io.request('channel.typing', { communityId: cid, channelId: canal });
+      assert.equal(repetida.ok, false);
+      assert.equal(repetida.code, 'E_RATE_LIMITED');
+    } finally {
+      await h.fechar();
+    }
+  });
+
+  it('`invisible` não publica typing — §6.16 vale para o comando novo também', async () => {
+    const h = await rigHost('typing-invisivel');
+    try {
+      const criada = await h.io.request('community.create', { name: 'Typing', iconColor: 3 });
+      assert.ok(criada.ok, JSON.stringify(criada));
+      const cid = (criada.data as Record<string, unknown>)['communityId'] as string;
+      const canal = (criada.data as Record<string, unknown>)['defaultChannelId'] as string;
+
+      const p = await h.io.request('identity.setPresence', { presence: 'invisible' });
+      assert.ok(p.ok, JSON.stringify(p));
+      const r = await h.io.request('channel.typing', { communityId: cid, channelId: canal });
+      // Aceito e sem efeito: quem escolheu ficar invisível não precisa de aviso a cada tecla.
+      assert.ok(r.ok, JSON.stringify(r));
+      assert.deepEqual(h.runtime.get(cid)!.presence.getTypingForChannel(cid, canal), []);
+    } finally {
+      await h.fechar();
+    }
+  });
+});
+
 describe('§56.8 produtores NDJSON e metrics.flush (§24.1, §24.2, §22.1)', () => {
   it('o log diário nasce com allowlist estrutural e sem conteúdo de usuário; diag serve os gauges', async () => {
     const r = await rigHost('ndjson');

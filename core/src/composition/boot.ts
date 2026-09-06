@@ -2916,6 +2916,38 @@ export async function bootCore(deps: BootDeps): Promise<CoreRuntime> {
           .catch(() => {});
         return { ok: true as const };
       },
+      /**
+       * §17.6 (emenda de 2026-09-06) — publicar o próprio "digitando…". O caminho é o mesmo
+       * da presença: no host o agregador local; no membro, `presencePublish` de §16.2 com
+       * `typingChannelId`, que é o campo que a spec sempre teve e que ninguém preenchia.
+       *
+       * `invisible` não publica typing — §17.6 (emenda de 2026-09-05): o "digitando…"
+       * carrega identidade, canal e o fato de estar conectado agora, exatamente o que o modo
+       * invisível esconde. A recusa é silenciosa: quem escolheu ficar invisível não precisa
+       * de aviso a cada tecla.
+       */
+      publish: ({ communityId, channelId }) => {
+        const eu = selfKeyHex();
+        if (eu === null) return { ok: false as const, code: 'E_NO_IDENTITY' };
+        const c = runtime.get(communityId);
+        if (c === undefined) return { ok: false as const, code: 'E_NOT_FOUND' };
+        const status = runtime.localPresence.get(communityId) ?? 'online';
+        if (status === 'invisible') return { ok: true as const };
+        if (c.isHost) {
+          const r = c.presence.publishTyping({ communityId, identityKey: eu, channelId });
+          return r.ok ? { ok: true as const } : { ok: false as const, code: r.code };
+        }
+        const estado = runtime.hostStatus?.statusOf(communityId) ?? 'unknown';
+        // Sem canal vivo não há para quem publicar, e efêmero não enfileira (§11.8).
+        if (estado !== 'online' && estado !== 'connecting') return { ok: true as const };
+        void c.rpc
+          ?.call(
+            'presencePublish',
+            new Uint8Array(Buffer.from(JSON.stringify({ status, typingChannelId: channelId }), 'utf8')),
+          )
+          .catch(() => {});
+        return { ok: true as const };
+      },
     },
     preferences: {
       channelSetMuted: (a) => channelSetMuted(depsPreferencias, a),

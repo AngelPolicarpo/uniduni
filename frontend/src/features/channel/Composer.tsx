@@ -16,6 +16,7 @@ import { ComposerFormatting } from "./ComposerFormatting";
 import { TypingIndicator } from "./TypingIndicator";
 import { useFindMember } from "../../store/communityStore";
 import { useMessageStore } from "../../store/messageStore";
+import { avisarQueEstouDigitando } from "../../live/sincronizacao";
 import { ROLE_TEXT_CLASS } from "../../lib/role";
 import { selectHighestRole, useCommunityStore } from "../../store/communityStore";
 import type { Channel, Message } from "../../domain/types";
@@ -289,6 +290,12 @@ export function Composer({
               onChange={(event) => {
                 setValue(event.target.value);
                 mention.syncQuery(event.target.value, event.target.selectionStart);
+                // §17.6 — "digitando…" é publicado por quem digita. O teto de 1 / 2 s é
+                // aplicado do lado de lá; aqui só o gesto. Campo esvaziado não publica:
+                // apagar o rascunho não é digitar.
+                if (event.target.value.length > 0) {
+                  avisarQueEstouDigitando(channel.communityId, channel.id);
+                }
               }}
               onKeyUp={(event) =>
                 mention.syncQuery(event.currentTarget.value, event.currentTarget.selectionStart)

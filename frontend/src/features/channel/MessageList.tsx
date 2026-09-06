@@ -176,7 +176,11 @@ export function MessageList({ channel, readOnly, onReply }: MessageListProps) {
     const date = new Date(message.timestamp);
     const newDay =
       previous === undefined || !isSameDay(date, new Date(previous.timestamp));
-    const unreadHere = channel.firstUnreadMessageId === message.id;
+    // §15.6 `firstUnreadSeq` — o divisor ancora na POSIÇÃO do log, não num id: o id da
+    // primeira não lida não existe antes de a página chegar, e o campo de id que estava aqui
+    // não tinha escritor nenhum — o divisor nunca aparecia.
+    const unreadHere =
+      channel.firstUnreadSeq !== undefined && message.seq === channel.firstUnreadSeq;
 
     if (newDay) {
       rows.push(

@@ -164,6 +164,8 @@ export interface Conexao {
  * sempre — inclusive depois desta promessa resolver, que é justamente quando o núcleo pode
  * cair (§15.2).
  */
+let escutasDoCicloLigadas = false;
+
 export async function conectar(cliente: IpcClient, timeoutMs = 30_000): Promise<Conexao> {
   if (!pontePresente()) {
     throw new IpcCommandError({
@@ -171,16 +173,27 @@ export async function conectar(cliente: IpcClient, timeoutMs = 30_000): Promise<
       message: "Esta janela não está rodando dentro do shell Electron do produto",
     });
   }
-  window.addEventListener("core-epoch", (ev) => {
-    const detalhe = (ev as CustomEvent<{ epoch: number }>).detail;
-    if (typeof detalhe?.epoch === "number") cliente.handleCoreEpoch(detalhe.epoch);
-  });
-  // Cada núcleo novo traz uma porta nova (§15.2 passo 2): o cliente troca de porta e o
-  // `hello` que vier por ela fixa o epoch. Ficar preso à primeira porta faria o produto
-  // sobreviver ao crash mudo. A escuta é a do módulo, que guarda a porta e avisa daqui.
-  esperandoPorta.add((porta) => {
-    if (cliente.conectado) cliente.attach(porta);
-  });
+  // As duas escutas de ciclo valem para a vida da janela, não para esta chamada: uma
+  // reconexão pedida pela tela de falha entra aqui de novo, e registrá-las outra vez faria
+  // cada `core-epoch` e cada porta chegarem em duplicata.
+  if (!escutasDoCicloLigadas) {
+    escutasDoCicloLigadas = true;
+    window.addEventListener("core-epoch", (ev) => {
+      const detalhe = (ev as CustomEvent<{ epoch: number }>).detail;
+      if (typeof detalhe?.epoch === "number") cliente.handleCoreEpoch(detalhe.epoch);
+    });
+    // Cada núcleo novo traz uma porta nova (§15.2 passo 2): o cliente troca de porta e o
+    // `hello` que vier por ela fixa o epoch. Ficar preso à primeira porta faria o produto
+    // sobreviver ao crash mudo. A escuta é a do módulo, que guarda a porta e avisa daqui.
+    //
+    // **Sem condição.** A guarda `if (cliente.conectado)` que estava aqui existia para não
+    // anexar duas vezes na partida fria, e passou a ser fatal quando o bump de epoch
+    // começou a largar a porta morta (§15.2): `conectado` fica falso exatamente no instante
+    // em que a porta do núcleo novo chega, e ela era descartada — o produto sobrevivia ao
+    // crash mudo, que é o defeito que esta escuta existe para não ter. Quem cuida do anexo
+    // repetido é o `attach`, que é idempotente por porta.
+    esperandoPorta.add((porta) => cliente.attach(porta));
+  }
   const porta = await esperarPorta(timeoutMs);
   cliente.attach(porta);
   console.log("[ponte] attach feito — esperando o hello do núcleo");

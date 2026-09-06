@@ -248,6 +248,26 @@ interface MessageState {
     bolhas: Array<{ ref: string; opId: string; channelId: string; content: string; timestamp: string; deliveryState: Message["deliveryState"] }>,
   ) => void;
   /**
+   * O desfecho que o evento não entregou, lido da fila (§11.6, emenda de 2026-09-06).
+   *
+   * `message.accepted`/`failed`/`dropped` são a via rápida, e ela tem buraco: um `evStale`
+   * (§15.1 r. 4) ou um reinício do núcleo no instante errado descartam o quadro, e nada
+   * mais casava a bolha com a linha real — ela ficava viva ao lado da mensagem já
+   * projetada, duplicada na tela para sempre, ou presa em "enviando" contra uma op morta.
+   *
+   * `query.outbox` fecha isso sem heurística: a op **saiu** da fila sem descarte ⇒ foi
+   * observada na réplica (é o único caminho de remoção de §11.6) ⇒ aceite. A op está lá
+   * como `dropped` ⇒ descarte, com o motivo nomeado de §11.7.
+   */
+  reconciliarPelaFila: (a: {
+    /** Refs presentes na resposta, em qualquer estado que não `dropped`. */
+    vivas: ReadonlySet<string>;
+    /** `dropped`/`failed` terminal, com o motivo a mostrar. */
+    desfeitas: ReadonlyArray<{ ref: string; motivo: string }>;
+    /** Canais da comunidade consultada — o recorte do que esta resposta pode julgar. */
+    canais: ReadonlySet<string>;
+  }) => void;
+  /**
    * Bolhas de canais que deixaram de existir na réplica local (§18) — devolve
    * quantas caíram, para quem chamou poder avisar em vez de sumir calado.
    */
@@ -815,6 +835,85 @@ export const useMessageStore = create<MessageState>()((set, get) => {
         ];
       }
       return { filaPorCanal, opIdPorRef };
+    });
+  },
+
+  reconciliarPelaFila({ vivas, desfeitas, canais }) {
+    /** A bolha ou o override que este `ref` ainda segura na tela. */
+    const temOtimismo = (ref: string): boolean => {
+      const s = get();
+      if (s.alvoPorRef[ref] !== undefined) return true;
+      for (const channelId of canais) {
+        if ((s.sentByChannel[channelId] ?? []).some((m) => m.id === ref)) return true;
+      }
+      return false;
+    };
+
+    for (const { ref, motivo } of desfeitas) {
+      const s = get();
+      if (s.aceitasRefs[ref] !== undefined) continue;
+      if (s.errosPorRef[ref] !== undefined) continue;
+      // Só o que ESTA instalação despachou: sem `opId` a op nunca chegou à fila, e o
+      // desfecho é de outra bolha.
+      if (s.opIdPorRef[ref] === undefined) continue;
+      // A linha `dropped` fica em `local_outbox` para sempre (§11.2), e esta reconciliação
+      // roda a cada resync: sem esta guarda, um descarte já tratado voltaria a marcar falha
+      // sobre um `ref` que não tem mais nada na tela.
+      if (!temOtimismo(ref)) continue;
+      get().marcarFalha(ref, motivo);
+    }
+
+    const s = get();
+    const desfeitasRefs = new Set(desfeitas.map((d) => d.ref));
+    /** Saiu da fila sem descarte: §11.6 só remove por observação na réplica. */
+    const sumiu = (ref: string): boolean =>
+      s.opIdPorRef[ref] !== undefined &&
+      s.aceitasRefs[ref] === undefined &&
+      !vivas.has(ref) &&
+      !desfeitasRefs.has(ref);
+
+    // (a) escritas sobre mensagem real (editar/fixar/reagir/apagar/thread): o aceite
+    // aposenta o override e o rollback, exatamente como faria `message.accepted`.
+    for (const [ref, alvo] of Object.entries(s.alvoPorRef)) {
+      if (!canais.has(alvo.channelId) || !sumiu(ref)) continue;
+      get().assentarAceita(ref, alvo.messageId);
+    }
+
+    // (b) bolhas próprias: a linha real já está (ou estará, pelo `query.messages` do mesmo
+    // resync) na base do canal. A bolha some — mantê-la era a duplicata.
+    const orfas = new Set<string>();
+    for (const channelId of canais) {
+      for (const bolha of get().sentByChannel[channelId] ?? []) {
+        if (sumiu(bolha.id)) orfas.add(bolha.id);
+      }
+    }
+    if (orfas.size === 0) return;
+    set((state) => {
+      const sentByChannel: Record<string, Message[]> = { ...state.sentByChannel };
+      for (const channelId of canais) {
+        const lista = sentByChannel[channelId];
+        if (lista === undefined) continue;
+        const restante = lista.filter((m) => !orfas.has(m.id));
+        if (restante.length === lista.length) continue;
+        sentByChannel[channelId] = restante;
+      }
+      const overrides = { ...state.overrides };
+      const envioPorRef = { ...state.envioPorRef };
+      const opIdPorRef = { ...state.opIdPorRef };
+      for (const ref of orfas) {
+        delete overrides[ref];
+        delete envioPorRef[ref];
+        delete opIdPorRef[ref];
+      }
+      return {
+        sentByChannel,
+        overrides,
+        envioPorRef,
+        opIdPorRef,
+        errosPorRef: Object.fromEntries(
+          Object.entries(state.errosPorRef).filter(([id]) => !orfas.has(id)),
+        ),
+      };
     });
   },
 

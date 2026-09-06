@@ -237,6 +237,13 @@ export const api = {
   channelSubscribeTyping: (arg: { communityId: string; channelId: string; on: boolean }) =>
     req<Record<string, never>>("channel.subscribeTyping", arg),
 
+  /**
+   * §17.6 (emenda de 2026-09-06 em §15.4) — publica o próprio "digitando…". Efêmero: sem
+   * log e sem fila. `E_RATE_LIMITED` (teto de 1 / 2 s por canal) é desfecho normal.
+   */
+  channelTyping: (arg: { communityId: string; channelId: string }) =>
+    req<Record<string, never>>("channel.typing", arg),
+
   navSetActive: (arg: { communityId?: string; channelId?: string }) =>
     req<Record<string, never>>("nav.setActive", arg),
 

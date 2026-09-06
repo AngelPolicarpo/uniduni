@@ -5,10 +5,7 @@ import { api } from "../../ipc/api";
 import type { ResolvedMessageLink } from "../../ipc/dto";
 import { useDeeplinks } from "../../live/deeplink";
 import { useSessao } from "../../live/sessao";
-import {
-  selectChannel,
-  useCommunityStore,
-} from "../../store/communityStore";
+import { useCommunityStore } from "../../store/communityStore";
 import { useToastStore } from "../../store/toastStore";
 import { useUiStore } from "../../store/uiStore";
 
@@ -76,25 +73,16 @@ export function DeepLinkMensagem() {
     fechar,
   ]);
 
-  // `not-synced` é o único desfecho em que há canal para mostrar: a mensagem existe
-  // do outro lado e ainda não chegou aqui (§15.6). Vai por toast, sem prender a tela.
+  // `not-synced`: a mensagem existe do outro lado e ainda não chegou aqui (§15.6). O canal
+  // NÃO vem nesse desfecho — sem a projeção da op, ninguém sabe em qual ela cairia (emenda
+  // de 2026-08-22) — então o que dá para fazer é abrir a comunidade e dizer o que houve.
   useEffect(() => {
     if (resultado === null || resultado.status !== "not-synced") return;
     abrirComunidades();
     setActiveCommunity(resultado.communityId);
-    if (selectChannel(useCommunityStore.getState(), resultado.channelId)) {
-      setActiveChannel(resultado.communityId, resultado.channelId);
-    }
     showToast("Esta mensagem ainda não chegou neste dispositivo");
     fechar();
-  }, [
-    resultado,
-    abrirComunidades,
-    setActiveCommunity,
-    setActiveChannel,
-    showToast,
-    fechar,
-  ]);
+  }, [resultado, abrirComunidades, setActiveCommunity, showToast, fechar]);
 
   if (mensagem === null) return null;
 

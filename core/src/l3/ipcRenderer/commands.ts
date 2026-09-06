@@ -375,6 +375,14 @@ export type CoreCommandDeps = {
    */
   typing?: {
     subscribe(a: { readonly communityId: string; readonly channelId: string; readonly on: boolean }): { ok: true } | { ok: false; code: string };
+    /**
+     * §15.4 (emenda de 2026-09-06) — o outro lado do "digitando…". `subscribeTyping` só
+     * declarava interesse em RECEBER; nada nesta fronteira publicava, e o
+     * `typingChannelId` de §16.2 não tinha chamador em lugar nenhum do produto: o
+     * indicador estava morto nas duas pontas. O teto de 1 / 2 s por autor e canal é do
+     * `PresenceManager`; passar dele é `E_RATE_LIMITED`, que a UI ignora em silêncio.
+     */
+    publish(a: { readonly communityId: string; readonly channelId: string }): { ok: true } | { ok: false; code: string };
   };
   /**
    * Superfície de sucessão (§15.4 "Comunidade", §18.8). As decisões — R-17, camada b de
@@ -534,6 +542,17 @@ export function registerCoreCommands(server: IpcServer, deps: CoreCommandDeps): 
     const arg = (rawArg ?? {}) as Arg;
     if (typeof arg['on'] !== 'boolean') refuse('E_VALIDATION');
     const r = typing.subscribe({ communityId: str(arg, 'communityId'), channelId: str(arg, 'channelId'), on: arg['on'] as boolean });
+    if (!r.ok) refuse(r.code);
+    return {};
+  });
+
+  // §17.6/§16.2 (emenda de 2026-09-06 em §15.4) — quem digita publica. Efêmero: sem log,
+  // sem fila, sem retentativa. `E_RATE_LIMITED` é desfecho normal (o teto é 1 / 2 s).
+  server.register('channel.typing', 'standard', (rawArg) => {
+    const typing = deps.typing;
+    if (typing === undefined) refuse('E_UNKNOWN_COMMAND');
+    const arg = (rawArg ?? {}) as Arg;
+    const r = typing.publish({ communityId: str(arg, 'communityId'), channelId: str(arg, 'channelId') });
     if (!r.ok) refuse(r.code);
     return {};
   });

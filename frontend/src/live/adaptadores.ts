@@ -209,11 +209,19 @@ export function canal(communityId: string, categoryId: string, ch: ChannelDto): 
     unreadCount: ch.unread.count,
     pendingMentions: ch.unread.mentions,
     muted: ch.muted,
-    // §15.6 dá `readOnly` JÁ RESOLVIDO para quem pergunta; o mock guardava a lista de cargos
-    // e resolvia na tela. Manter a lista exigiria recalcular a permissão fora do núcleo —
-    // a lista vazia com o booleano aplicado é o que preserva o comportamento sem duplicar
-    // a regra. `selectIsChannelReadOnly` é ajustado para ler o campo resolvido.
-    ...(ch.readOnly ? { readOnlyForRoleIds: [] } : {}),
+    ...(ch.firstUnreadSeq !== undefined ? { firstUnreadSeq: ch.firstUnreadSeq } : {}),
+    // §15.6 dá as DUAS coisas, e cada uma tem um consumidor. `readOnly` é a regra de §6.7 já
+    // resolvida para quem perguntou, e é ela que o gate da tela lê; `readOnlyForRoleIds` é a
+    // lista crua, que a tela de edição do canal reabre.
+    //
+    // Aqui morava um defeito de tradução: `readOnly: true` virava `readOnlyForRoleIds: []`,
+    // e o seletor — que devolve `false` para lista vazia — dizia que TODO canal restrito era
+    // gravável. `#avisos` abria com o compositor liberado para qualquer pessoa, e a recusa
+    // só aparecia depois de escrever a mensagem.
+    readOnly: ch.readOnly,
+    ...(ch.readOnlyForRoleIds !== undefined && ch.readOnlyForRoleIds.length > 0
+      ? { readOnlyForRoleIds: [...ch.readOnlyForRoleIds] }
+      : {}),
     ...(ch.voice !== undefined ? { voiceParticipantIds: ch.voice.first.map((u) => u.key) } : {}),
     // §6.6 (emenda de 2026-08-28) — o núcleo já devolve com os defaults aplicados; a
     // conversão do número para o rótulo é a única tradução que cabe aqui.
@@ -230,6 +238,7 @@ function modoDeFala(n: number): Channel["speechMode"] {
 export function mensagem(m: MessageDto, euId: string | null): Message {
   return {
     id: m.id,
+    seq: m.seq,
     channelId: m.channelId,
     authorId: m.author.key,
     // §15.6.1 — `null` é tombstone. O mock não tem estado de mensagem removida; o texto

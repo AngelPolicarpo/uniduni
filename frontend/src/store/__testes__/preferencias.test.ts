@@ -11,8 +11,12 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useSettingsStore } from "../settingsStore";
+import { reenviarPreferencias, useSettingsStore } from "../settingsStore";
 import { selectChannel, useCommunityStore } from "../communityStore";
+
+function useCommunityNotificationDe(s: ReturnType<typeof useSettingsStore.getState>, communityId: string): string {
+  return s.notificationByCommunity[communityId] ?? "all";
+}
 
 function portaDePreferencias() {
   return {
@@ -153,6 +157,56 @@ describe("communityStore — mute e recolher replicam §15.4", () => {
   });
 });
 
-function useCommunityNotificationDe(s: ReturnType<typeof useSettingsStore.getState>, communityId: string): string {
-  return s.notificationByCommunity[communityId] ?? "all";
-}
+/**
+ * §15.4 (emenda de 2026-09-06) — sem fila, mas com reposição.
+ *
+ * O que se afirma: a escrita que o núcleo não confirmou fica pendente e é reenviada no
+ * resync, ANTES da leitura. O defeito que isto fecha: o `.catch(() => {})` engolia a falha
+ * com o LS já gravado, e no boot seguinte `aplicarRemoto` devolvia o valor antigo — a
+ * escolha da pessoa evaporava sem aviso nenhum.
+ */
+describe("reenviarPreferencias — o espelho que não confirmou volta a ser tentado", () => {
+  it("a escrita recusada é reposta no resync", async () => {
+    const porta = portaDePreferencias();
+    porta.setDevice.mockRejectedValueOnce(new Error("E_CORE_RESTARTED"));
+    useSettingsStore.getState().configurarEscrita(porta);
+
+    useSettingsStore.getState().setDevice("microphone", "mic-b");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(useSettingsStore.getState().microphoneId).toBe("mic-b");
+
+    await reenviarPreferencias();
+
+    expect(porta.setDevice).toHaveBeenCalledTimes(2);
+    expect(porta.setDevice).toHaveBeenLastCalledWith("microphone", "mic-b");
+  });
+
+  it("a escrita confirmada não é repetida", async () => {
+    const porta = portaDePreferencias();
+    useSettingsStore.getState().configurarEscrita(porta);
+
+    useSettingsStore.getState().setVolume("input", 40);
+    await new Promise((r) => setTimeout(r, 0));
+    await reenviarPreferencias();
+
+    expect(porta.setVolume).toHaveBeenCalledTimes(1);
+  });
+
+  it("a chave é o que a escrita SIGNIFICA: três trocas com o núcleo fora repõem só a última", async () => {
+    const porta = portaDePreferencias();
+    porta.setDevice.mockRejectedValue(new Error("E_NO_PORT"));
+    useSettingsStore.getState().configurarEscrita(porta);
+
+    useSettingsStore.getState().setDevice("microphone", "mic-a");
+    useSettingsStore.getState().setDevice("microphone", "mic-b");
+    useSettingsStore.getState().setDevice("microphone", "mic-c");
+    await new Promise((r) => setTimeout(r, 0));
+
+    porta.setDevice.mockResolvedValue({});
+    porta.setDevice.mockClear();
+    await reenviarPreferencias();
+
+    expect(porta.setDevice).toHaveBeenCalledTimes(1);
+    expect(porta.setDevice).toHaveBeenCalledWith("microphone", "mic-c");
+  });
+});

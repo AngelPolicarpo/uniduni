@@ -98,7 +98,11 @@ async function rig(rotulo: string) {
     /** `query.structure` de §50 — a leitura que confere o efeito de cada comando. */
     async estrutura(communityId: string) {
       return (await ok('query.structure', { communityId })) as unknown as {
-        categories: Array<{ id: string; name: string; channels: Array<{ id: string; name: string; type: number; topic?: string; readOnly: boolean }> }>;
+        categories: Array<{
+          id: string;
+          name: string;
+          channels: Array<{ id: string; name: string; type: number; topic?: string; readOnly: boolean; readOnlyForRoleIds: string[] }>;
+        }>;
       };
     },
     async close() {
@@ -250,6 +254,46 @@ describe('§51 estrutura — comandos de canal, categoria e comunidade (§15.4)'
 
       const denovo = await r.request('channel.delete', { communityId, channelId: extra.channelId });
       assert.equal(denovo.code, 'E_CHANNEL_NOT_FOUND');
+    } finally {
+      await r.close();
+    }
+  });
+
+  it('§15.6 — `readOnly` é resolvido por R-22 (TODOS os cargos), e a lista de cargos vai junto', async () => {
+    const r = await rig('estrutura-readonly');
+    try {
+      const { communityId } = (await r.ok('community.create', { name: 'Raiz', iconColor: 1 })) as unknown as { communityId: string };
+      const geral = (await r.estrutura(communityId)).categories[0]!;
+      const cargos = ((await r.ok('query.roles', { communityId })) as unknown as {
+        roles: Array<{ id: string; isDefault: boolean; isFounder: boolean }>;
+      }).roles;
+      const base = cargos.find((c) => c.isDefault)!;
+      const fundador = cargos.find((c) => c.isFounder)!;
+
+      // Fundador NÃO está na lista: por R-22 quem tem o cargo base **e** o de fundador pode
+      // postar — basta um cargo de fora. O `some` que estava em `query.structure`
+      // silenciava a tela de quem o `fold` deixa escrever.
+      await r.ok('channel.create', {
+        communityId,
+        categoryId: geral.id,
+        type: CHANNEL_TYPE.text,
+        name: 'avisos',
+        readOnlyForRoleIds: [base.id],
+      });
+      const avisos = (await r.estrutura(communityId)).categories[0]!.channels.find((c) => c.name === 'avisos')!;
+      assert.equal(avisos.readOnly, false, 'R-22: um cargo de fora basta para escrever');
+      // A lista crua é o que a tela de edição do canal reabre; sem ela o formulário
+      // apresentava todo canal restrito como se fosse aberto.
+      assert.deepEqual(avisos.readOnlyForRoleIds, [base.id]);
+
+      // Com TODOS os cargos do autor na lista, aí sim é somente-leitura. O cargo extra
+      // existe porque R-21 exige ≥ 1 cargo de fora da lista.
+      const extra = (await r.ok('role.create', { communityId, name: 'Leitor', color: 2, permissions: [], mentionable: true })) as { roleId: string };
+      await r.ok('channel.update', { communityId, channelId: avisos.id, readOnlyForRoleIds: [base.id, fundador.id] });
+      assert.ok(extra.roleId);
+      const depois = (await r.estrutura(communityId)).categories[0]!.channels.find((c) => c.name === 'avisos')!;
+      assert.equal(depois.readOnly, true);
+      assert.deepEqual([...depois.readOnlyForRoleIds].sort(), [base.id, fundador.id].sort());
     } finally {
       await r.close();
     }

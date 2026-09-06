@@ -11,8 +11,12 @@ import type {
   Invite,
   Member,
   Permission,
+  PresenceStatus,
   Role,
 } from "../domain/types";
+
+/** Os quatro estados que §15.4/§17.6 publicam; `offline` é ausência, não publicação. */
+const PRESENCAS_DO_FIO = new Set(["online", "idle", "dnd", "invisible"]);
 // As tabelas de permissão são constantes de produto (§10), não fixture de dado: seguem
 // vindo daqui. Tudo que era DADO — comunidades, categorias, canais, cargos, convites,
 // membros — passou para o espelho de `remote`, preenchido pela IPC-R.
@@ -92,6 +96,20 @@ interface CommunityState {
   remote: EspelhoRemoto;
   /** Aplica um lote vindo do núcleo. Substitui, nunca mescla por baixo. */
   aplicarRemoto: (patch: Partial<EspelhoRemoto>) => void;
+  /**
+   * §17.6 `presence.changed` — o delta de presença aplicado sobre o roster.
+   *
+   * É a exceção declarada à regra "evento é sinal para reconsultar" (§15.1 r. 5), junto de
+   * `voice.signal` e `dm.typing`: presença é efêmera, não tem log por trás, e o tick que a
+   * produz é de 2 s — reconsultar `query.members` inteiro a cada tick custaria o roster
+   * completo por dois segundos de vida útil. `removed` é quem saiu (TTL de 45 s), e volta
+   * a `offline`, que é o que a ausência significa.
+   */
+  aplicarPresenca: (
+    communityId: string,
+    entries: ReadonlyArray<{ identityKey: string; status: string }>,
+    removed: readonly string[],
+  ) => void;
   /** Ordem do rail = ordem de entrada/criação, nunca alfabética (§14). */
   joinedCommunityIds: string[];
   /** Comunidades das quais esta identidade foi banida (preview de 0.3). */
@@ -218,6 +236,32 @@ export const useCommunityStore = create<CommunityState>()(
         set((state) => ({ remote: { ...state.remote, ...patch } }));
       },
 
+      aplicarPresenca: (communityId, entries, removed) =>
+        set((state) => {
+          const membros = state.remote.membersByCommunity[communityId];
+          if (membros === undefined || (entries.length === 0 && removed.length === 0)) return {};
+          const novo = new Map<string, PresenceStatus>();
+          for (const e of entries) {
+            const status = PRESENCAS_DO_FIO.has(e.status) ? (e.status as PresenceStatus) : null;
+            if (status !== null) novo.set(e.identityKey.toLowerCase(), status);
+          }
+          for (const k of removed) novo.set(k.toLowerCase(), "offline");
+          let mudou = false;
+          const atualizados = membros.map((m) => {
+            const presence = novo.get(m.identityId.toLowerCase());
+            if (presence === undefined || presence === m.presence) return m;
+            mudou = true;
+            return { ...m, presence };
+          });
+          if (!mudou) return {};
+          return {
+            remote: {
+              ...state.remote,
+              membersByCommunity: { ...state.remote.membersByCommunity, [communityId]: atualizados },
+            },
+          };
+        }),
+
       joinCommunity: (communityId) => {
         const state = get();
         if (state.joinedCommunityIds.includes(communityId)) {
@@ -329,7 +373,7 @@ export const useCommunityStore = create<CommunityState>()(
           channelPatch(state, channelId, {
             unreadCount: 0,
             pendingMentions: 0,
-            firstUnreadMessageId: undefined,
+            firstUnreadSeq: undefined,
           }),
         ),
 
@@ -871,11 +915,17 @@ export function selectHighestRole(
  * Canal somente-leitura para a identidade local (§9, 2.1 — `#avisos`).
  * Vale quando *todos* os cargos dela estão na lista de somente-leitura:
  * basta um cargo de fora (Moderador+) para liberar o composer.
+ *
+ * **Quem resolve é o núcleo.** `ChannelDto.readOnly` (§15.6) já vem decidido para quem
+ * perguntou, pela MESMA função que o `fold` usa em R-22; recalcular aqui seria uma segunda
+ * cópia da regra, e foi assim que a divergência anterior nasceu. A resolução local abaixo
+ * sobrevive só para o canal montado nesta sessão, que ainda não passou por `query.structure`.
  */
 export function selectIsChannelReadOnly(
   state: State,
   channel: Channel,
 ): boolean {
+  if (channel.readOnly !== undefined) return channel.readOnly;
   const readOnlyFor = channel.readOnlyForRoleIds;
   if (!readOnlyFor || readOnlyFor.length === 0) return false;
   const roleIds = selectLocalMemberRoleIds(state, channel.communityId);

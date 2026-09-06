@@ -305,6 +305,12 @@ interface VoiceState {
   /** §16.4 — por que a entrada na fila foi recusada, em português (§20.1). */
   motivoDaFila: string | null;
   /**
+   * §17.4 — a chamada foi encerrada PELO HOST e o banner explicativo está de pé. Distingue
+   * o "failed com motivo" do host do "failed" de uma entrada que não deu certo: só o
+   * segundo pode voltar sozinho num resync de epoch (B43).
+   */
+  terminadaPeloHost: boolean;
+  /**
    * §17.2 — a captura da câmera está em curso. Entre o gesto e a imagem há o diálogo de
    * permissão do sistema, que pode demorar o tempo que a pessoa levar para responder.
    *
@@ -546,6 +552,16 @@ const IDLE = {
     turn: { keyHex: string; endsAt: number } | null;
   } | null,
   motivoDaFila: null as string | null,
+  /**
+   * §17.4 — a chamada acabou porque o HOST a encerrou (canal apagado, comunidade
+   * encerrada). Fica ligada junto com o banner explicativo, que preserva `channelId`/
+   * `communityId`/`localId` de propósito para poder dizer de qual chamada fala.
+   *
+   * Existe porque a reentrada de B43 olhava só esses três ids: um `epoch` posterior — de
+   * outro reinício qualquer — apagava o banner e mandava `voice.join` contra um canal que
+   * o host tinha acabado de encerrar.
+   */
+  terminadaPeloHost: false,
 };
 
 /**
@@ -650,6 +666,8 @@ export const useVoiceStore = create<VoiceState>()(
           localId,
           stage: "connecting",
           motivoDaFalha: null,
+          // Entrar de novo desfaz o encerramento anterior: o banner do host sai com ele.
+          terminadaPeloHost: false,
           participants,
           // Entrar mostra a grade (§9, 2.3) — por cima do conteúdo, que
           // continua o canal de texto que estava aberto (§4).
@@ -703,6 +721,7 @@ export const useVoiceStore = create<VoiceState>()(
         set((state) => ({
           stage: "connecting" as VoiceStage,
           motivoDaFalha: null,
+          terminadaPeloHost: false,
           erroDeMicrofone: null,
           erroDeCamera: null,
           cameraPendente: false,
@@ -712,11 +731,14 @@ export const useVoiceStore = create<VoiceState>()(
           shareSessionId: null,
           capturaDaTela: CAPTURA_LIVRE,
           cameraSeq: state.cameraSeq + 1,
-          participants: state.participants.map((p) =>
-            p.identityId === state.localId
-              ? { ...p, cameraOn: false, sharingScreen: false }
-              : p,
-          ),
+          // **O roster ANTIGO não sobrevive à sessão antiga.** O `map` que estava aqui só
+          // corrigia as flags do participante local e mantinha todos os outros — pessoas de
+          // uma sessão que o host já esqueceu, desenhadas como se estivessem na chamada. O
+          // roster novo chega pelo `voice.join` (`aplicarRoster`), como em toda entrada;
+          // até lá, quem está na chamada é quem a está refazendo.
+          participants: state.participants
+            .filter((p) => p.identityId === state.localId)
+            .map((p) => ({ ...p, cameraOn: false, sharingScreen: false, connectionToMe: "ok" as MeshStatus })),
         }));
         void portaDeMalha
           ?.entrar({ communityId, channelId, localId })
@@ -857,6 +879,7 @@ export const useVoiceStore = create<VoiceState>()(
             expanded: state.expanded,
             stage: "failed" as VoiceStage,
             motivoDaFalha: razao,
+            terminadaPeloHost: true,
           };
         }),
 

@@ -1391,7 +1391,14 @@ Fluxos A2 e A3 percorridos de ponta a ponta em navegador headless, com input rea
 
 #### Observações
 
-- **Onde fica "lido até aqui".** O divisor "Novas mensagens" precisa de uma âncora, e a spec não dá uma: entrou `firstUnreadMessageId` no `Channel` (no canal, não na mensagem — quem leu é quem lê). Em `#geral` ele aponta para a menção de Bianca, a mesma que gera a menção pendente do item de lista. A resposta de Ana aparece *abaixo* do divisor de propósito: o divisor marca onde a leitura parou e só se move quando o canal é reaberto.
+- **Onde fica "lido até aqui".** O divisor "Novas mensagens" precisa de uma âncora, e a spec não dava uma quando este documento foi escrito: entrou `firstUnreadMessageId` no `Channel` (no canal, não na mensagem — quem leu é quem lê). A resposta de Ana aparece *abaixo* do divisor de propósito: o divisor marca onde a leitura parou e só se move quando o canal é reaberto.
+  **Correção de 2026-09-06 — a âncora é `firstUnreadSeq`, não um id.** A spec passou a dar
+  uma: `local_read_state.firstUnreadSeq` (§6.15), entregue em `ChannelDto.firstUnreadSeq`
+  (§15.6). O campo de id nunca teve escritor — nada no produto o preenchia, e o
+  `<UnreadDivider>` simplesmente não renderizava —, e não poderia ter: o id da primeira não
+  lida não existe antes de a página que a contém ser carregada, enquanto o `seq` existe desde
+  a leitura anterior. `Channel.firstUnreadSeq` casa com `Message.seq`, e as bolhas otimistas
+  (que não têm `seq`) nunca são a âncora, que é o comportamento certo.
 - **Não-lidas não zeram ao abrir o canal.** §19.1 pede que todo estado continue alcançável no mock; se abrir `#geral` limpasse o contador, o estado "ativo + não-lido + menção" e o próprio divisor sumiriam no primeiro clique e não voltariam. O contador só vai virar dinâmico quando houver envio de mensagem (Parte 4).
 - **O `unreadCount` de 12 em `#geral` nunca vira número na tela** — §6 manda dot para não-lido e badge numérico só para menção, então o 12 acende o dot e o badge mostra 1, a menção. Não é inconsistência com os 6 itens da transcrição de §2.
 - **Quem é a identidade local dentro de uma comunidade.** Nas comunidades de fixture ela ocupa o lugar de Ana Torres (`selectLocalMemberRoleIds`) — o mock não tem rede para materializar duas pessoas, e §19.2 pede que Ana seja a mesma entidade em toda tela; nas comunidades criadas no app, é a fundadora. É o que decide o somente-leitura de `#avisos`.

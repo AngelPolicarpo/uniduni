@@ -1514,6 +1514,13 @@ export class MalhaDeVoz {
    * encontrar desligado. Usada por `sair()` e pelo começo de `entrar()`.
    */
   #limparEstado(): void {
+    // **A chamada anterior acabou, e quem tem objeto vivo precisa saber.** `aoSair` era
+    // disparado só por `sair()`; `entrar()` — trocar de canal, "Tentar novamente", a
+    // reentrada de B43 — passava por aqui calado, e o que a malha não possui ficava de pé:
+    // os `<audio>` dos pares antigos, as telas e câmeras recebidas, a gravação local. O
+    // resultado era avatar fantasma e vídeo congelado de uma sessão que o host já esqueceu.
+    // É o mesmo aviso, e ele vem ANTES da limpeza: quem escuta ainda precisa dos objetos.
+    this.#eventos.aoSair();
     this.#desarmarPrazo();
     this.#desarmarRetentativa();
     this.#tiposDeCandidato.clear();
@@ -1542,9 +1549,10 @@ export class MalhaDeVoz {
   }
 
   async sair(): Promise<void> {
+    // `aoSair` sai de dentro de `#limparEstado` desde 2026-09-06 — repeti-lo aqui faria a
+    // câmera ser desligada duas vezes por saída.
     this.#limparEstado();
     await this.#porta.leave().catch(() => undefined);
-    this.#eventos.aoSair();
   }
 
   #abrir(parHex: string, iniciar: boolean): Par {

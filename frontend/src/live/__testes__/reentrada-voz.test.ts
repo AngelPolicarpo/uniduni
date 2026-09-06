@@ -33,6 +33,7 @@ function semChamada(): void {
     stage: "connecting",
     motivoDaFalha: null,
     participants: [],
+    terminadaPeloHost: false,
   });
 }
 
@@ -109,5 +110,35 @@ describe("B43 — a chamada volta sozinha depois do reinício do núcleo", () =>
     reentrarVozSePreciso({ tipo: "recarregar" });
 
     expect(entrar).not.toHaveBeenCalled();
+  });
+
+  it("chamada ENCERRADA PELO HOST não volta sozinha, e o banner sobrevive ao epoch", () => {
+    const { entrar } = comChamada();
+    // §17.4 — o encerramento com motivo preserva os três ids de propósito: é deles que o
+    // banner de §9, 2.3 tira de qual chamada está falando.
+    useVoiceStore.getState().encerradaPeloHost("O canal foi apagado");
+
+    reentrarVozSePreciso({ tipo: "epoch", epoch: 3 });
+
+    expect(entrar).not.toHaveBeenCalled();
+    expect(useVoiceStore.getState().stage).toBe("failed");
+    expect(useVoiceStore.getState().motivoDaFalha).toBe("O canal foi apagado");
+  });
+
+  it("a reentrada solta o roster da sessão morta — participante de antes não fica na tela", () => {
+    const { entrar } = comChamada();
+    useVoiceStore.setState({
+      participants: [
+        { identityId: "eu", speaking: false, muted: false, deafened: false, cameraOn: true, sharingScreen: true, connectionToMe: "ok" },
+        { identityId: "outro", speaking: true, muted: false, deafened: false, cameraOn: true, sharingScreen: false, connectionToMe: "ok" },
+      ],
+    });
+
+    reentrarVozSePreciso({ tipo: "epoch", epoch: 2 });
+
+    expect(entrar).toHaveBeenCalledTimes(1);
+    const depois = useVoiceStore.getState().participants;
+    expect(depois.map((p) => p.identityId)).toEqual(["eu"]);
+    expect(depois[0]).toMatchObject({ cameraOn: false, sharingScreen: false });
   });
 });

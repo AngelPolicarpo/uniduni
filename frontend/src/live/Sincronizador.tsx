@@ -10,19 +10,47 @@
  * `RootRoute` do mock ao Onboarding, e é o `query.identity` que decide isso agora.
  */
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useSessao } from "./sessao";
-import { abrirComunidade, iniciarSincronizacao, sincronizarMensagens } from "./sincronizacao";
+import {
+  abrirComunidade,
+  assinarTypingDoCanal,
+  iniciarSincronizacao,
+  reconectarSincronizacao,
+  sincronizarMensagens,
+} from "./sincronizacao";
 import { useCommunityStore } from "../store/communityStore";
+import { Button } from "../components/ui/Button";
 
-function Aviso({ titulo, texto }: { titulo: string; texto: string }) {
+function Aviso({ titulo, texto, acao }: { titulo: string; texto: string; acao?: ReactNode }) {
   return (
     <div className="flex h-full items-center justify-center bg-surface-app p-6">
       <div className="max-w-md text-center">
         <h1 className="text-h2 text-text-primary">{titulo}</h1>
         <p className="mt-2 text-meta text-text-secondary">{texto}</p>
+        {acao !== undefined && <div className="mt-5 flex justify-center">{acao}</div>}
       </div>
     </div>
+  );
+}
+
+/**
+ * §15.2 — o núcleo pode voltar depois de a tela desistir de esperar, e antes deste botão a
+ * única saída era recarregar a janela inteira (que, por §15.2, é o caminho MAIS caro:
+ * derruba as conexões P2P e paga a barreira de §18.7).
+ */
+function BotaoDeReconectar() {
+  const [tentando, setTentando] = useState(false);
+  return (
+    <Button
+      disabled={tentando}
+      onClick={() => {
+        setTentando(true);
+        void reconectarSincronizacao().finally(() => setTentando(false));
+      }}
+    >
+      {tentando ? "Tentando…" : "Tentar novamente"}
+    </Button>
   );
 }
 
@@ -50,6 +78,13 @@ export function Sincronizador({ children }: { children: ReactNode }) {
     if (pronto && communityId !== null && channelId !== null) void sincronizarMensagens(communityId, channelId);
   }, [pronto, communityId, channelId]);
 
+  // §17.6/§15.4 — o interesse em "digitando…" é declarado por quem abre o canal, e desfeito
+  // por quem o fecha. Sem isto o host não tinha a quem mandar `typing.changed`.
+  useEffect(() => {
+    if (!pronto || communityId === null) return;
+    assinarTypingDoCanal(communityId, channelId);
+  }, [pronto, communityId, channelId]);
+
   if (estado === "sem-shell") {
     return (
       <Aviso
@@ -59,7 +94,7 @@ export function Sincronizador({ children }: { children: ReactNode }) {
     );
   }
   if (estado === "falhou") {
-    return <Aviso titulo="O núcleo não respondeu" texto={motivo ?? ""} />;
+    return <Aviso titulo="O núcleo não respondeu" texto={motivo ?? ""} acao={<BotaoDeReconectar />} />;
   }
   if (estado === "inicial" || estado === "conectando") {
     return <Aviso titulo="Conectando ao núcleo" texto="Um instante." />;

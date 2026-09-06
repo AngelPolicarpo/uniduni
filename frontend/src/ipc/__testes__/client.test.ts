@@ -180,6 +180,49 @@ describe("assinaturas e fluxo (§15.1 r. 2, r. 3, r. 5)", () => {
     expect(porta.do("unsub")).toEqual([{ t: "unsub", epoch: 1, subId: 55 }]);
   });
 
+  it("`evSeq` repetido ou atrasado NÃO é despachado — e continua sendo confirmado", () => {
+    const { cliente, porta } = ligado();
+    const recebidos: unknown[] = [];
+    cliente.subscribe("blob.progress", (d) => recebidos.push(d));
+    porta.entregar({ t: "subOk", epoch: 1, id: porta.do("sub")[0]!.id, subId: 3 });
+
+    porta.entregar({ t: "ev", epoch: 1, subId: 3, evSeq: 5, topic: "blob.progress", data: { p: 100 } });
+    // O de 70 % chegou DEPOIS do de 100 %: aplicá-lo regrediria a barra de download.
+    porta.entregar({ t: "ev", epoch: 1, subId: 3, evSeq: 4, topic: "blob.progress", data: { p: 70 } });
+
+    expect(recebidos).toEqual([{ p: 100 }]);
+    // Não confirmar o descartado deixaria a janela de §15.1 r. 4 cheia para sempre.
+    expect(porta.do("evAck").map((f) => f.evSeq)).toEqual([5, 4]);
+  });
+
+  it("buraco na numeração é perda: pede resync sem esperar o `evStale`", () => {
+    const { cliente, porta } = ligado();
+    const motivos: unknown[] = [];
+    cliente.onResync((m) => motivos.push(m));
+    cliente.subscribe("members.changed", () => {});
+    porta.entregar({ t: "subOk", epoch: 1, id: porta.do("sub")[0]!.id, subId: 8 });
+
+    porta.entregar({ t: "ev", epoch: 1, subId: 8, evSeq: 1, topic: "members.changed", data: {} });
+    porta.entregar({ t: "ev", epoch: 1, subId: 8, evSeq: 4, topic: "members.changed", data: {} });
+
+    expect(motivos).toEqual([{ tipo: "stale", topic: "members.changed", dropped: 2 }]);
+  });
+
+  it("depois de um `evStale`, a retomada não é lida como buraco novo", () => {
+    const { cliente, porta } = ligado();
+    const motivos: unknown[] = [];
+    cliente.onResync((m) => motivos.push(m));
+    cliente.subscribe("members.changed", () => {});
+    porta.entregar({ t: "subOk", epoch: 1, id: porta.do("sub")[0]!.id, subId: 8 });
+    porta.entregar({ t: "ev", epoch: 1, subId: 8, evSeq: 1, topic: "members.changed", data: {} });
+
+    porta.entregar({ t: "evStale", epoch: 1, subId: 8, fromSeq: 2, toSeq: 40, dropped: 39 });
+    porta.entregar({ t: "ev", epoch: 1, subId: 8, evSeq: 41, topic: "members.changed", data: {} });
+
+    // Só o resync do `evStale`; a re-query dele já cobriu a faixa anunciada.
+    expect(motivos).toEqual([{ tipo: "stale", topic: "members.changed", dropped: 39 }]);
+  });
+
   it("evento de um `subId` desconhecido não derruba o cliente e ainda é confirmado", () => {
     const { cliente, porta } = ligado();
     cliente.subscribe("typing.changed", () => {});
@@ -206,33 +249,68 @@ describe("reinício do núcleo (§15.2 passo 4)", () => {
     expect(porta.do("req")).toHaveLength(reqsAntes);
   });
 
-  it("4b/4c — os `subId` antigos morrem e as assinaturas são refeitas no epoch novo", () => {
+  it("4b/4c — as assinaturas são refeitas na porta NOVA, não na do núcleo morto", () => {
     const { cliente, porta } = ligado(1);
     const recebidos: unknown[] = [];
     cliente.subscribe("messages.appended", (d) => recebidos.push(d));
     porta.entregar({ t: "subOk", epoch: 1, id: porta.do("sub")[0]!.id, subId: 10 });
 
+    // O main sabe do epoch novo no `exit`; a porta nova só existe depois do backoff.
     cliente.handleCoreEpoch(2);
 
-    const subs = porta.do("sub");
-    expect(subs).toHaveLength(2);
-    expect(subs[1]!.epoch).toBe(2);
+    // Nada sai pela porta morta — mandar `sub` por ela era gastar o bump e ficar sem
+    // assinatura nenhuma quando o núcleo novo chegasse.
+    expect(porta.do("sub")).toHaveLength(1);
+    expect(cliente.conectado).toBe(false);
+
+    const nova = new PortaFalsa();
+    cliente.attach(nova);
+    nova.entregar(hello(2));
+
+    const subs = nova.do("sub");
+    expect(subs).toHaveLength(1);
+    expect(subs[0]!.epoch).toBe(2);
 
     // O `subId` do núcleo morto não entrega mais nada, mesmo com o epoch novo.
-    porta.entregar({ t: "ev", epoch: 2, subId: 10, evSeq: 1, topic: "messages.appended", data: { velho: true } });
+    nova.entregar({ t: "ev", epoch: 2, subId: 10, evSeq: 1, topic: "messages.appended", data: { velho: true } });
     expect(recebidos).toEqual([]);
 
-    porta.entregar({ t: "subOk", epoch: 2, id: subs[1]!.id, subId: 77 });
-    porta.entregar({ t: "ev", epoch: 2, subId: 77, evSeq: 1, topic: "messages.appended", data: { novo: true } });
+    nova.entregar({ t: "subOk", epoch: 2, id: subs[0]!.id, subId: 77 });
+    nova.entregar({ t: "ev", epoch: 2, subId: 77, evSeq: 1, topic: "messages.appended", data: { novo: true } });
     expect(recebidos).toEqual([{ novo: true }]);
   });
 
-  it("4d — o consumidor é avisado para refazer as queries, com o epoch novo", () => {
+  it("4e — o aviso do main põe a UI em reconexão NA HORA, sem esperar o núcleo novo", () => {
+    const { cliente } = ligado(1);
+    const quedas: number[] = [];
+    const motivos: unknown[] = [];
+    cliente.onDesconectado((e) => quedas.push(e));
+    cliente.onResync((m) => motivos.push(m));
+
+    cliente.handleCoreEpoch(4);
+
+    expect(quedas).toEqual([4]);
+    // O resync (4d) ainda não: não há núcleo do outro lado para responder à query.
+    expect(motivos).toEqual([]);
+  });
+
+  it("4d — o resync sai quando a porta nova prova que existe núcleo", () => {
     const { cliente } = ligado(1);
     const motivos: unknown[] = [];
     cliente.onResync((m) => motivos.push(m));
     cliente.handleCoreEpoch(4);
+
+    const nova = new PortaFalsa();
+    cliente.attach(nova);
+    nova.entregar(hello(4));
+
     expect(motivos).toEqual([{ tipo: "epoch", epoch: 4 }]);
+  });
+
+  it("sem porta viva, a request falha NA HORA em vez de esperar o timeout", async () => {
+    const { cliente } = ligado(1);
+    cliente.handleCoreEpoch(2);
+    await expect(cliente.request("core.status")).rejects.toMatchObject({ code: "E_NO_PORT" });
   });
 
   it("o mesmo epoch avisado duas vezes não refaz duas vezes", () => {
@@ -241,7 +319,13 @@ describe("reinício do núcleo (§15.2 passo 4)", () => {
     cliente.onResync((m) => motivos.push(m));
     cliente.handleCoreEpoch(2);
     cliente.handleCoreEpoch(2);
-    // O main manda `core-epoch` e o núcleo novo manda `hello`: os dois chegam.
+
+    // O main manda `core-epoch` e o núcleo novo manda `hello`: os dois chegam, e quem
+    // religa é o segundo — uma vez só.
+    const nova = new PortaFalsa();
+    cliente.attach(nova);
+    nova.entregar(hello(2));
+    nova.entregar(hello(2));
     expect(motivos).toHaveLength(1);
   });
 
@@ -254,6 +338,19 @@ describe("reinício do núcleo (§15.2 passo 4)", () => {
     await expect(p).rejects.toMatchObject({ code: "E_CORE_RESTARTED" });
     expect(motivos).toEqual([{ tipo: "epoch", epoch: 2 }]);
     expect(cliente.epoch).toBe(2);
+  });
+
+  it("a mesma porta anexada duas vezes não duplica os quadros recebidos", () => {
+    const cliente = new IpcClient();
+    const porta = new PortaFalsa();
+    cliente.attach(porta);
+    cliente.attach(porta);
+    porta.entregar(hello(1));
+    const recebidos: unknown[] = [];
+    cliente.subscribe("messages.appended", (d) => recebidos.push(d));
+    porta.entregar({ t: "subOk", epoch: 1, id: porta.do("sub")[0]!.id, subId: 9 });
+    porta.entregar({ t: "ev", epoch: 1, subId: 9, evSeq: 1, topic: "messages.appended", data: { a: 1 } });
+    expect(recebidos).toEqual([{ a: 1 }]);
   });
 
   it("o primeiro `hello` do canal NÃO é reinício: não há resync nem pendente a falhar", () => {

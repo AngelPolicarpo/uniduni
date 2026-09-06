@@ -3,7 +3,25 @@
 O que está aberto, hoje. Uma linha por item: **nome e ponteiro**. A descrição mora na
 referência — repetir aqui seria a segunda cópia a envelhecer.
 
-Não normativo. Atualizado em 2026-09-06 (§133). **§133** respondeu a uma pergunta do
+Não normativo. Atualizado em 2026-09-06 (§134). **§134** foi a verificação de um relatório
+consolidado de bugs do renderer e da integração com o núcleo — 19 achados e 4 lacunas de
+especificação. **Todos procedem**, e a varredura achou dois que o relatório não tinha: o
+"digitando…" estava morto nas **duas** pontas (`typingChannelId` de §16.2 não tinha produtor
+em lugar nenhum do produto) e `query.structure` resolvia `readOnly` com "algum cargo na
+lista" enquanto R-22 diz "**todos**" — o núcleo silenciava na tela quem o `fold` deixa
+escrever. O crítico era a recuperação de crash de §15.2: o main avisa o epoch novo **antes**
+de existir porta nova (o backoff de §3.3 chega a 10 s), o cliente reassinava na porta do
+processo morto e o `hello` seguinte, com o epoch que ele já tinha, não disparava nada — todas
+as assinaturas ficavam perdidas pelo resto da vida da janela, com a tela desenhando estado
+congelado e nenhum erro em lugar nenhum. Seis emendas normativas: **§11.6 r. 4** (`query.outbox`
+é o desfecho de quem perdeu o evento; ausência na fila é aceite), **§15.1 r. 5** (a detecção
+de perda por `evSeq` é do renderer), **§15.2** (a ordem entre o aviso e a porta é normativa, e
+o passo 4 tem duas metades), **§15.4** (`channel.typing`, o comando que faltava), **§15.5**
+(presença e digitando são exceção declarada à regra 5) e **§15.6** (`ChannelDto` leva o
+booleano resolvido **e** a lista de cargos). A tela de falha de núcleo ganhou "Tentar
+novamente", que refaz o aperto de mão em vez da recarga — que por §15.2 é a operação mais
+cara do produto.
+Atualizado antes em 2026-09-06 (§133). **§133** respondeu a uma pergunta do
 operador — por que copiar o convite não funciona — e achou três defeitos empilhados no mesmo
 botão. **Todo botão de copiar do produto estava quebrado**: `navigator.clipboard.writeText`
 pede `clipboard-sanitized-write` ao Chromium e o handler de permissão do main concedia só

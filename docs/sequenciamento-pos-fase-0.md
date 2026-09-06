@@ -10371,3 +10371,153 @@ como a recusa de permissão que se quer observar.
 - `app`: `npm run build`, `npm run typecheck`, **`smoke:clipboard`** (as seis afirmações dos
   dois cenários), `smoke:fechamento` e `smoke:deeplink` como regressão.
 - `core`: não foi tocado.
+
+## 134. A recuperação de crash que não recuperava, e mais dezoito — 2026-09-06
+
+Verificação de um relatório consolidado de bugs do renderer e da integração com o núcleo:
+1 crítico, 4 altos, 8 médios, 6 baixos e 4 lacunas de especificação. **Todos os 19
+procedem.** Dois tiveram o alcance ampliado pela verificação, e a varredura achou dois
+defeitos que o relatório não tinha:
+
+- o "digitando…" está morto nas **duas** pontas, não só na de recepção: `typingChannelId`
+  (§16.2) não tinha produtor em lugar nenhum do produto, então nem escutar resolveria;
+- `query.structure` resolvia `readOnly` com "algum cargo na lista" enquanto R-22 diz
+  "**todos**" — o núcleo silenciava na tela quem o `fold` deixa escrever.
+
+### 134.1 O crítico: reassinar numa porta que já morreu
+
+O main sabe do epoch novo no `exit` do `utilityProcess` e avisa o renderer na hora
+(`core-epoch`). A porta do núcleo novo só existe depois do backoff de §3.3 — 1 s, 4 s, 10 s.
+O cliente de IPC-R tratava o aviso como se a porta já estivesse lá:
+
+1. `handleCoreEpoch` subia `#epoch`, largava os `subId` e chamava `#reassinar()` — pela porta
+   **do processo morto**. Os `sub` iam para o vazio.
+2. `onResync` disparava junto, e `sessao.recarregar()` consultava `core.status` pela mesma
+   porta morta: 10 s de espera, `E_TIMEOUT`, `estado: "falhou"` — permanente, sem botão.
+3. Quando a porta nova finalmente chegava, o `hello` vinha com `epoch: N+1` — que o cliente
+   **já tinha**. `frame.epoch > this.#epoch` era falso e nada acontecia. **Todas** as
+   assinaturas ficavam perdidas pelo resto da vida da janela.
+
+O produto sobrevivia ao crash mudo, com a tela desenhando estado congelado e nenhum erro em
+lugar nenhum. Só `F5` resolvia — que por §15.2 é a operação **mais** cara do produto.
+
+O conserto separa o passo 4 em duas metades, e a emenda de §15.2 as escreve: o aviso do main
+**desliga** (falha pendentes, solta os `subId`, larga a porta morta, põe a UI em
+reconexão) e o `hello` da porta nova **religa** (reassina e pede o resync). O `hello` de
+epoch **igual** ao corrente passa a ser significativo quando há reassinatura pendente — é
+ele a prova de que existe núcleo do outro lado. Largar a porta morta é o que faz uma request
+na janela de reconexão falhar na hora com `E_NO_PORT` em vez de esperar o timeout.
+
+Dois efeitos colaterais que o conserto obrigou:
+
+- `bridge.ts` anexava a porta nova só `if (cliente.conectado)`. Com a porta morta largada,
+  `conectado` fica falso **exatamente** no instante em que a porta nova chega, e ela era
+  descartada. A guarda saiu; quem cuida do anexo repetido é o `attach`, agora idempotente
+  por porta.
+- A reconexão ganhou prazo e a falha ganhou botão: passado o teto de reinícios de §3.3 sem
+  `hello`, a tela diz que o núcleo não voltou e oferece "Tentar novamente", que refaz o
+  aperto de mão — não a recarga do documento.
+
+### 134.2 As quatro lacunas de especificação
+
+1. **`clientRef` ausente em `query.messages`.** Resolvida **sem** mudar o `MessageDto`:
+   `client_ref` é metadado local de `local_outbox` e não viaja no log. Quem responde é
+   `query.outbox`, porque §11.6 só tira item da fila por observação na réplica — **ausência
+   é aceite**, `dropped` é descarte, presença é pendência. Emenda em §11.6 (regra 4), com o
+   corolário de que `message.failed{terminal:false}` não é falha para a UI.
+2. **Ordem entre `core-epoch` e a porta nova.** Fixada como normativa em §15.2 — ver 134.1.
+3. **Papel do `evSeq` na detecção de perda.** Emenda em §15.1 r. 5: a detecção é do
+   **renderer**, que guarda o último `evSeq` despachado por `subId`; quadro repetido ou
+   atrasado não é despachado (mas é confirmado), e buraco na numeração é perda, com re-query
+   sem esperar o `evStale` — que chega 3 s depois e que **nem sempre chega**.
+4. **`readOnly` resolvido × lista de cargos.** Emenda em §15.6: o `ChannelDto` leva os dois.
+   O booleano é o gate (a regra é do núcleo); a lista crua existe para a tela de edição do
+   canal reabrir a escolha, e sem ela o formulário apresentava todo canal restrito como se
+   fosse aberto.
+
+### 134.3 O que estava escrito e ninguém chamava
+
+O mesmo tema de §132, de novo — cinco superfícies declaradas sem produtor:
+
+| Superfície | Estava | Ficou |
+|---|---|---|
+| `identity.update` / `identity.setPresence` | sem chamador em produto; nome, cor e presença viviam só na memória do renderer e o primeiro resync os apagava | porta injetada em `identityStore`; recusa reverte o otimismo e nomeia o motivo |
+| `presence.changed` | sem assinante; o roster congelava na presença do último `query.members` | delta aplicado no roster (exceção declarada à regra 5 de §15.1) |
+| `typing.changed` + `channel.subscribeTyping` | sem assinante e sem publicador | interesse declarado por quem abre o canal, e `channel.typing` (§15.4, novo) publica |
+| `assinarCicloDoNucleo` | definida e nunca chamada; `core.restarted` sem ouvinte | chamada no boot, sem o `core.ready` duplicado |
+| `firstUnreadSeq` / `firstUnreadMessageId` | o DTO trazia o `seq` e o adaptador o descartava; o campo de id não tinha escritor nenhum, e `<UnreadDivider>` nunca renderizava | `Channel.firstUnreadSeq` × `Message.seq` |
+
+### 134.4 O resto
+
+- **`readOnly: true` → `readOnlyForRoleIds: []`.** Lista vazia significa "ninguém
+  silenciado": `#avisos` abria com o compositor liberado para qualquer pessoa, e a recusa só
+  aparecia depois de a mensagem ser escrita.
+- **Bolha otimista duplicada para sempre.** `message.accepted` perdido num `evStale` deixava
+  a bolha viva ao lado da linha real. Fechado pela reconciliação de 134.2(1), que também
+  cobre o override que mascarava a base e a bolha presa em "enviando".
+- **Download congelado no restart.** `emCursoById` marcava "em voo" e nada o limpava no
+  resync; o card ficava em "baixando N %" e o botão inerte até a pessoa cancelar à mão.
+- **Preferências sem reconciliação.** `.catch(() => {})` com o LS já gravado: a escolha
+  voltava sozinha no boot seguinte. Sem fila (§15.4 é explícita), mas com **reposição** —
+  a escrita que não confirmou fica por chave e é reenviada no resync, **antes** da leitura.
+- **`retryJoin` sobre roster morto.** Mantinha os participantes da sessão anterior, e
+  `MalhaDeVoz.entrar()` limpava o próprio estado sem avisar `aoSair` — os `<audio>`, as telas
+  e câmeras recebidas e a gravação ficavam de pé. Agora `#limparEstado` dispara `aoSair`, e o
+  roster volta a ser só quem está refazendo a chamada.
+- **Reentrada sobre chamada encerrada pelo host.** `encerradaPeloHost(motivo)` preserva os
+  três ids de propósito (é deles que o banner tira o "por quê"), e a reentrada olhava só para
+  eles: um epoch posterior apagava o banner e tentava `voice.join` num canal morto. Marca
+  própria (`terminadaPeloHost`).
+- **`comExclusao` sem borda de saída.** O descarte era benigno no caminho feliz e deixava de
+  ser onde dói: consulta em voo que **falha** (timeout durante o respawn) perdia o evento
+  seguinte sem rastro. Ganhou marca de "suja": no máximo uma volta extra por chave.
+- **`sincronizarComunidade` abortava tudo quando só a estrutura falhava**, jogando fora
+  cargos e detalhe que tinham respondido — justamente no pós-crash, e cargo atrasado é gate
+  de UI errado.
+- **Comunidade esquecida deixava fantasmas** em `remote` e nos mapas locais; canal órfão
+  continuava resolvível, e a busca de recentes ainda o oferecia.
+- **`community.replication` assinado duas vezes** e o resync refazendo fila e moderação que
+  `abrirComunidade` já inclui — dobrava a carga de query no pior momento.
+- **`ResolvedMessageLink.not-synced` tipava `channelId` como obrigatório**, contra a emenda
+  de 2026-08-22 de §15.6; a tela indexava mapas com `undefined`.
+
+### 134.5 Emendas normativas
+
+Seis, todas em `backend-v2.md`, mais uma correção em `frontend.md`:
+
+- **§11.6 regra 4** — `query.outbox` é o desfecho de quem perdeu o evento; ausência é aceite;
+  `terminal:false` não é falha para a UI.
+- **§15.1 r. 5** — a detecção de perda por `evSeq` é do renderer, com as três obrigações.
+- **§15.2** — a ordem entre o aviso e a porta é normativa, e o passo 4 tem duas metades.
+- **§15.4** — `channel.typing {communityId, channelId}` — standard; efêmero, teto de 1 / 2 s,
+  `invisible` não publica.
+- **§15.5** — `presence.changed` e `typing.changed` são exceção declarada à regra 5 de §15.1.
+- **§15.6** — `ChannelDto.readOnlyForRoleIds`, e a resolução de `readOnly` por R-22.
+- **`frontend.md`** — o divisor de não lidas ancora em `firstUnreadSeq`, não num id.
+
+### 134.6 Validação
+
+- `frontend`: `npm run lint`, `npm run build`, `npm test` — **664** testes (34 novos). Os
+  novos cobrem a reassinatura na porta nova, a ordem e o buraco de `evSeq`, a reconciliação
+  pela fila nos seis casos, a escrita de identidade, o delta de presença, o `readOnly` do
+  DTO ao seletor, a reposição de preferências e a reentrada de voz sobre roster morto e
+  sobre chamada encerrada pelo host.
+- `core`: `npm run build` (com a barreira de §4), `npm test` — **1295** testes (3 novos):
+  `channel.typing` no host, `invisible` sem publicar, e `readOnly` resolvido por R-22 com a
+  lista de cargos junto.
+- `app`: `npm run build`, `npm run typecheck`, `smoke:fechamento`, `smoke:clipboard`,
+  `smoke:deeplink` e **`smoke:voz`** — este último porque `MalhaDeVoz.#limparEstado` passou a
+  disparar `aoSair`, e a suíte de unidade finge o WebRTC. Duas pontas reais, mídia nos dois
+  sentidos, troca de canal e reentrada: verde.
+
+### 134.7 O que não foi corrigido
+
+- **A reconciliação pela fila é por comunidade consultada.** `query.outbox` sem recorte
+  responde todas, mas `sincronizarFila` só é chamada com `communityId`; bolha de uma
+  comunidade que não é a ativa não é julgada até alguém abrir aquela comunidade. Não é
+  regressão — antes nada era julgado.
+- **O teto de typing do renderer é por canal, em memória de módulo.** Ele não sobrevive à
+  recarga, e não precisa: o teto que vale é o do núcleo.
+- **Nenhuma tela desta fatia tem teste de render** (`B20`). O divisor de não lidas, o botão
+  de reconectar e o indicador de digitação estão cobertos pelo dado que os alimenta, não
+  pelo JSX.

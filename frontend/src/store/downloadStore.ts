@@ -39,6 +39,14 @@ interface DownloadState {
   aplicarConcluido: (blobIdHex: string) => void;
   aplicarIndisponivel: (blobIdHex: string) => void;
   aplicarCorrompido: (blobIdHex: string, causa: string) => void;
+  /**
+   * §15.2 4d — o núcleo reiniciou e levou junto toda transferência em voo. Solta as marcas
+   * de "baixando" para o card voltar a oferecer "Baixar": o núcleo novo não conhece os
+   * downloads do processo morto e nenhum `blob.progress` chega mais para eles, então a
+   * guarda de re-pedido de `iniciar` deixava o anexo parado em "baixando N %" para sempre.
+   * O que já terminou não é tocado — o arquivo está no disco.
+   */
+  interromperEmVoo: () => void;
   reset: () => void;
 }
 
@@ -141,6 +149,22 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
       emCursoById: omitir(state.emCursoById, blobIdHex),
       corrompidoById: { ...state.corrompidoById, [blobIdHex]: causa },
     })),
+
+  interromperEmVoo: () => {
+    set((state) => {
+      const ids = Object.keys(state.emCursoById);
+      if (ids.length === 0) return {};
+      const progressById = { ...state.progressById };
+      const peersById = { ...state.peersById };
+      const noticeById = { ...state.noticeById };
+      for (const id of ids) {
+        delete progressById[id];
+        delete peersById[id];
+        delete noticeById[id];
+      }
+      return { emCursoById: {}, progressById, peersById, noticeById };
+    });
+  },
 
   reset: () => {
     set({

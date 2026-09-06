@@ -2700,6 +2700,41 @@ Regras normativas que decorrem:
    documentada.
 3. `E_VERSION_UNSUPPORTED` é **classificado como terminal** e vira `dropped` com motivo
    `client-outdated`, não fica 72 h queimando retry. Fecha `DS-25`.
+4. **Emenda de 2026-09-06 — `query.outbox` é o desfecho de quem perdeu o evento, e a
+   AUSÊNCIA na fila é o aceite.**
+
+   `message.accepted{clientRef, messageId}` é a via rápida da reconciliação otimista, e ela
+   tem buraco: um `evStale` (§15.1 r. 4) ou um reinício do núcleo no instante errado descarta
+   o quadro. Quando isso acontece, `query.messages` não ajuda — `MessageDto` não carrega
+   `clientRef`, e não pode carregar: `client_ref` é metadado **local** de `local_outbox`
+   (§11.2), não viaja no log, e some junto com a linha quando a reconciliação a remove. A
+   bolha otimista ficava viva ao lado da mensagem já projetada — duplicada na tela para
+   sempre — ou presa em "enviando" contra uma op morta.
+
+   A resposta não é heurística de autor/instante/conteúdo, nem `clientRef` no `MessageDto`.
+   É que **`query.outbox` já responde tudo**, porque este mesmo algoritmo só tira item da
+   fila por um caminho:
+
+   - `clientRef` presente na resposta em estado não terminal ⇒ **ainda pendente**; a bolha
+     vale, no estado que `state` disser.
+   - `clientRef` presente com `state:'dropped'` ⇒ **descartada**, com o motivo nomeado de
+     §11.7. É o `message.dropped` que não chegou.
+   - `clientRef` **ausente** da resposta, tendo esta instalação despachado a op ⇒
+     **aceita**. O ramo de remoção acima exige `observed_ops`, que registra só `APPLIED`:
+     não há outra forma de sair da fila sem virar `dropped`. É o `message.accepted` que não
+     chegou, e a linha real está (ou estará, pela consulta do mesmo resync) em
+     `query.messages`.
+
+   Vale para os dois tipos de otimismo: a bolha própria (que some) e a escrita sobre mensagem
+   real — editar, fixar, reagir, apagar, abrir thread —, cujo override é aposentado e cujo
+   rollback é descartado, exatamente como faria o evento. Sem isso o resync trazia a base
+   verdadeira e o override otimista continuava mascarando-a até a próxima recarga.
+
+   Corolário: **`message.failed` com `terminal:false` não é falha para a UI.** O evento
+   carrega `terminal` e `retryInMs` justamente para isso; tratá-lo como recusa desfazia o
+   otimismo de uma operação que a outbox ia reaplicar segundos depois — texto voltando ao
+   antigo, aviso de erro, e a edição reaparecendo sozinha. Quem redesenha a linha nesse caso
+   é o `outbox.changed` que acompanha a retentativa.
 
 ### 11.7 Descarte com motivo nomeado
 
@@ -3525,6 +3560,24 @@ Resposta direta aos blockers B6 (contrato executável) e B9 (rastreabilidade de 
    verdadeiro. Fora da saturação, (b) continua sendo literalmente o último recebido.
    O `evAck` **avança** a marca de confirmação (`lastAcked`), nunca zera um contador: um ack
    atrasado de evento antigo não pode reabrir a janela inteira.
+   **Emenda de 2026-09-06 — quem detecta a perda é o RENDERER, e o `evSeq` é conferido na
+   entrega.** A regra (3) dava ao `evSeq` o papel de "correlação e detecção de perda" sem
+   dizer de quem é a detecção, e o cliente do renderer não guardava `evSeq` nenhum: ele
+   despachava todo quadro `ev` na ordem em que o `MessagePort` o entregasse e confirmava
+   tudo. Fica declarado que o renderer mantém, **por `subId`**, o último `evSeq`
+   **despachado**, e que:
+   (a) quadro com `evSeq ≤ último` é **descartado sem despachar** — é repetição ou atraso, e
+   aplicá-lo regride estado (o caso concreto: `blob.progress` de 70 % chegando depois do de
+   100 % e devolvendo a barra de download);
+   (b) `evSeq > último + 1` é **perda**, pelo próprio mecanismo do parágrafo acima (o
+   descarte consome `evSeq`), e obriga à mesma re-query do item (a) da regra 5 — sem esperar
+   o `evStale`, que só chega `IPC_STALE_MS` depois e que **nem sempre chega**: perda por
+   outro caminho nunca vira `stale`;
+   (c) o `evAck` sai em **todos** os casos, inclusive no do quadro descartado por (a). Deixar
+   de confirmar o repetido manteria a janela de (4) cheia para sempre.
+   O último `evSeq` zera junto com o `subId` (assinatura nova recomeça a numeração) e é
+   levado a `toSeq` quando um `evStale` é reconhecido — assim a retomada não é lida como
+   buraco novo.
 6. **Timeouts:** default 10 000 ms. Comandos síncronos que dependem do host: 30 000 ms
    (marcados ⏱). Estouro → `E_TIMEOUT` no renderer, e o núcleo **continua** processando.
    Como toda escrita é idempotente por `(author, communityId, sequenceScope, authorSeq)`, repetir é seguro.
@@ -3537,20 +3590,53 @@ Resposta direta aos blockers B6 (contrato executável) e B9 (rastreabilidade de 
 ### 15.2 Recuperação de crash do núcleo (procedimento normativo)
 
 ```
-1. main detecta exit do utilityProcess
-2. main cria MessageChannelMain novo, sobe o núcleo, cruza as portas
-3. núcleo emite hello{epoch: N+1}
-4. renderer, ao ver epoch novo:
+1. main detecta exit do utilityProcess, incrementa o epoch e AVISA o renderer
+   (`core-epoch`) — imediatamente, antes de existir núcleo novo
+2. depois do backoff de §3.3 (1 s/4 s/10 s), o main cria MessageChannelMain novo,
+   sobe o núcleo e cruza as portas
+3. núcleo emite hello{epoch: N+1} pela porta NOVA
+4. renderer:
+     no aviso do passo 1 (o núcleo já morreu, ainda não há substituto):
      a. falha TODAS as requests em voo com E_CORE_RESTARTED (NUNCA as reenvia
         automaticamente)
-     b. descarta todos os subId antigos
+     b. descarta todos os subId antigos E SOLTA a porta morta — request nova
+        falha na hora com E_NO_PORT, não espera o timeout de §15.1 r. 6
+     e. mostra o estado conn-reconnecting, já a partir daqui
+     no `hello` do passo 3 (existe núcleo do outro lado):
      c. refaz todas as assinaturas (o cliente IPC mantém a lista declarativa)
      d. refaz todas as queries ativas; com chamada de voz ativa, reexecuta o
         `voice.join` idempotente (nova sessão, emenda B43 de 2026-09-03)
-     e. mostra o estado conn-reconnecting durante (c) e (d)
 5. escrita em voo perdida: nada a fazer — ela está na outbox (manifest.db, FULL) e será
    reconciliada por §11.6. Nenhuma escrita é reenviada pelo renderer.
 ```
+
+**Emenda de 2026-09-06 — a ordem entre o aviso e a porta nova é NORMATIVA, e o passo 4 tem
+duas metades.** O procedimento anterior escrevia o passo 4 como um bloco disparado "ao ver
+epoch novo", sem fixar se o aviso do main (`core-epoch`) vem antes ou depois da transferência
+da `MessagePort` do núcleo novo. Ele vem **antes**, e não por acaso: o main sabe do epoch no
+`exit` do `utilityProcess`, e a porta nova só pode existir depois do backoff de §3.3 — até
+10 s depois, e nunca, se a cota de três reinícios em 60 s estourou. Não há ordem alternativa a
+implementar.
+
+O que isso obriga, e o que custava não estar escrito:
+
+- **Reassinar no aviso é reassinar no vazio.** A porta que o cliente tem naquele instante é a
+  do processo morto. Os `sub` iam para uma porta neuterada, o bump ficava gasto, e o `hello`
+  do núcleo novo chegava com um epoch que o cliente **já tinha** — não disparava nada. As
+  assinaturas ficavam perdidas pelo resto da vida da janela, com a tela desenhando estado
+  congelado e nenhum erro em lugar nenhum.
+- **Consultar no aviso é consultar no vazio.** O `recarregar` que acompanha o resync batia na
+  porta morta, estourava o timeout de 10 s e punha a sessão em falha permanente — e a falha
+  não tinha saída, porque o único caminho de volta era recarregar a janela, que por esta
+  mesma seção é a operação **mais** cara do produto.
+- Por isso (c) e (d) pertencem ao `hello` da porta nova, e (e) pertence ao aviso: a UI diz
+  "reconectando" no instante em que o núcleo cai, não quando o substituto responde.
+- **O `hello` de epoch IGUAL ao corrente é significativo** quando há reassinatura pendente.
+  Ele é a prova de que existe núcleo do outro lado; sem tratá-lo, a recuperação depende de o
+  `hello` chegar antes do aviso, que é exatamente a ordem que não acontece.
+- **A reconexão tem prazo, e o fim dela tem botão.** Passado o teto de reinícios de §3.3 sem
+  `hello`, o estado vira falha declarada com uma ação de "tentar novamente" que refaz o
+  aperto de mão — não a recarga do documento.
 
 **Convergência garantida:** depois de (d), o estado da UI é derivado só de queries, e as
 queries leem `view.db`, que é derivado do log. Três crashes seguidos convergem para o mesmo
@@ -3704,6 +3790,29 @@ afirmação de aceite de um modo que nunca esteve em uso, e se o ambiente degrad
 gate de `create` já estaria vencido sem ninguém ter visto a tela. Aceitar **não** torna o
 cofre seguro — `CoreStatus.keystore` continua `insecure-fallback`, que é o que mantém o
 indicador permanente aceso.
+
+**Emenda de 2026-09-06 — `channel.typing {communityId, channelId}` — standard — entra na
+tabela, e é a outra metade do "digitando…".**
+
+A emenda de 2026-08-23 (item 2 acima) fechou a lacuna de **receber**: quem abre canal declara
+interesse. A de **publicar** ficou aberta e ninguém reparou, porque §16.2 já tinha o campo:
+`presencePublish{status, typingChannelId?}`. Só que `typingChannelId` não tinha produtor em
+lugar nenhum — nem o refresh de presença de §22.1 (que publica `{status}` puro) nem qualquer
+comando de §15.4 o preenchia. Consequência: `PresenceManager.publishTyping` era código sem
+chamador, `typing.changed` nunca era emitido para canal de comunidade, e o indicador da tela
+estava morto **dos dois lados**. `dm.typing` (§31.8) funcionava porque tem comando próprio.
+
+O comando é efêmero e local: **sem log, sem fila, sem retentativa** — como toda a família de
+§17.6. No host, publica no agregador local; no membro, sai por `presencePublish` com
+`typingChannelId` quando há canal vivo (sem ele, nada é enfileirado — §11.8). O teto é o de
+§17.6: **1 / 2 s por autor e canal**, e passar dele é `E_RATE_LIMITED` — desfecho normal, que
+a UI ignora em silêncio. O renderer aplica o mesmo teto antes de chamar: gastar o canal para
+colher recusa não é tentativa, é ruído.
+
+`invisible` **não publica typing**, pela regra que §6.16 já fixa ("não publica presença nem
+`typing`"): o "digitando…" carrega identidade, canal e o fato de estar conectado agora —
+exatamente o que o modo invisível esconde. A recusa é silenciosa (`{ok:true}` sem efeito):
+quem escolheu ficar invisível não precisa de um aviso a cada tecla.
 
 #### Comunidade
 
@@ -3926,6 +4035,30 @@ Cada evento é **sinal para reconsultar**, com o mínimo para a UI decidir se pr
 | `attachment.corrupt` | `{blobsCoreKey, blobId, cause:'hash'\|'size'}` | Fecha `A-5` |
 | `config.nonDefault` | `{keys[]}` | Configuração de rede fora do default (§25.5) |
 
+**Emenda de 2026-09-06 — os efêmeros de §17.6 são exceção declarada à regra 5 de §15.1.**
+
+"Evento é sinal para reconsultar, nunca fonte de verdade" pressupõe que exista consulta que
+reconstrua o que o evento diz. Para `presence.changed` e `typing.changed` não existe:
+`typing` não tem query nenhuma (TTL de 5 s, nada persistido) e a presença só aparece dentro
+de `query.members`, que é o roster inteiro — reconsultá-lo a cada `PRESENCE_TICK_MS` (2 s)
+custaria a lista completa por dois segundos de vida útil. Estes dois **aplicam o payload**,
+como `voice.signal` (§17.4) e `dm.typing` (§31.8) já faziam.
+
+Isso é o que faltava para o renderer poder escutá-los: enquanto a regra 5 valia sem exceção,
+a única leitura conforme era "reconsulte o roster", que ninguém ia fazer — e o resultado foi
+não escutar nada. O roster congelava todo mundo em `online` até um `members.changed`
+qualquer, e "digitando…" nunca acendia.
+
+Duas consequências que o renderer deve cumprir:
+
+- `presence.changed` carrega **delta**, e `removed[]` (§17.6) é quem saiu pelo TTL. Quem está
+  em `removed` volta a `offline`, que é o que a ausência de publicação significa (§6.1);
+  status desconhecido é ignorado, não convertido em palpite.
+- O interesse em `typing.changed` é **efêmero e vive no host**: um reinício de núcleo o
+  perde. O resync de §15.2 (4c) refaz `channel.subscribeTyping` do canal aberto, e limpa o
+  "digitando…" da tela — sem a sessão do outro lado, quem estava digitando digitaria para
+  sempre.
+
 ### 15.6 IPC-R — queries, **com schema de resposta**
 
 Fecha `DR-46` (nenhuma das 17 queries tinha schema) e as cinco superfícies sem fonte de
@@ -3968,7 +4101,7 @@ type CoreStatus = {
 | `query.identity` | `{}` | `{key, displayName, handle, avatarColor, presence, createdAt} \| null` |
 | `query.communities` | `{}` | `[{ id, name, iconEmoji?, iconColor, memberCount, isHostedByMe, hostStatus: HostStatus, replication: {state, lag}, unread:{count, mentions}, notificationLevel, endedAt?, inactiveDays, partialInterpretation }]` na ordem de entrada |
 | `query.community` | `{communityId}` | `{ ...community, myPermissions: string[], myRoleIds: string[], myTopRank: Rank, isHost, hostRef: UserRef, successorKeys: Key[], pendingReentry?: UserRef[], replication, partialInterpretation }` — `pendingReentry` só existe quando a comunidade é continuação (`originCommunityId` presente) e a origem está replicada aqui: são os membros ativos da origem que ainda não reentraram (L-23, §18.8.1), a lista da tela de sucessão (U-18c) |
-| `query.structure` | `{communityId}` | `{ categories: [{ id, name, rank, collapsed, channels: [{ id, name, type, topic?, rank, readOnly: boolean, muted, unread:{count,mentions}, firstUnreadSeq?, speechMode, queueTurnSeconds, voice?: {count, first: UserRef[]} }] }] }` — `voice` fecha `RT-05`; `speechMode`/`queueTurnSeconds` são da emenda de 2026-08-28 (§6.6) e valem os defaults de §6.6 quando ausentes no log |
+| `query.structure` | `{communityId}` | `{ categories: [{ id, name, rank, collapsed, channels: [{ id, name, type, topic?, rank, readOnly: boolean, readOnlyForRoleIds: string[], muted, unread:{count,mentions}, firstUnreadSeq?, speechMode, queueTurnSeconds, voice?: {count, first: UserRef[]} }] }] }` — `voice` fecha `RT-05`; `speechMode`/`queueTurnSeconds` são da emenda de 2026-08-28 (§6.6) e valem os defaults de §6.6 quando ausentes no log |
 | `query.messages` | `{communityId, channelId, cursor?, limit=50, direction:'before'\|'after'}` | `{ messages: MessageDto[], nextCursor?, hasMore, replication: ReplicationState }` |
 | `query.message` | `{communityId, messageId}` | `MessageDto & { reactions: ReactionDto[], attachment?: AttachmentDto, thread?: ThreadRefDto } \| null` |
 | `query.reactors` | `{communityId, messageId, emoji, limit=24}` | `{ total, users: UserRef[] }` — fecha `DR-47` |
@@ -4058,6 +4191,26 @@ têm `seq`: o "mais recente primeiro" de §23.2 se dá por `at`, com desempate p
 alvo, e o cursor carrega `{seq: at, id}` — mesmo formato opaco, mesma recusa. Em
 `query.bans` só entram bans vivos (`revoked_at IS NULL`): o schema da resposta não declara
 revogação, e quem foi revogado não está banido.
+
+**Emenda de 2026-09-06 — `ChannelDto` leva o booleano resolvido **e** a lista de cargos, e a
+resolução usa a regra do `fold`.**
+
+Duas coisas estavam erradas aqui, e as duas produziam a mesma tela: `#avisos` gravável para
+quem não pode postar.
+
+1. **A lista faltava.** `readOnly` é resolvido para quem pergunta, e essa é a fonte do gate
+   da UI — recalculá-lo fora do núcleo seria uma segunda cópia da regra de §9.2/R-22. Mas a
+   tela de **edição** do canal (`channel.update{readOnlyForRoleIds}`) precisa saber *quais*
+   cargos estão silenciados para reabrir a escolha, e o DTO não dizia. O renderer contornava
+   traduzindo `readOnly: true` para uma lista vazia, e uma lista vazia significa "ninguém
+   silenciado": o gate lia o contrário do que o núcleo dissera, e o formulário abria todo
+   canal restrito como se fosse aberto. Fica declarado que `readOnlyForRoleIds: string[]` vai
+   no `ChannelDto`, cru, ao lado do booleano. Ele **não** é a fonte do gate.
+2. **A resolução divergia do `fold`.** R-22 recusa `message.send` quando **todos** os cargos
+   do autor estão na lista — basta um de fora para escrever. `query.structure` resolvia com
+   "algum", e quem tivesse Membro (silenciado) junto de Moderador (livre) via o compositor
+   bloqueado num canal em que a mensagem seria aceita. As duas pontas passam a chamar a mesma
+   função de L1 (`isReadOnlyFor`); a divergência nasceu de haver duas cópias da regra.
 
 **Emenda de 2026-08-22 — `resolveMessageLink` no `not-synced`.** O `channelId` da resposta
 fica **ausente** nesse status: a op ainda não foi projetada nesta instalação, e ninguém —
@@ -5567,6 +5720,16 @@ passa a ser broadcast de canal aberto.
 **LIMITAÇÃO DECLARADA (L-13):** presença e digitando são **at-most-once**. Perder um
 evento efêmero é aceitável e esperado; o TTL corrige em ≤ 45 s. Isso é declarado e não é
 defeito de durabilidade (fecha `DS-30`).
+
+**Emenda de 2026-09-06 — o `typing` desta seção tem porta de publicação, e ela é
+`channel.typing` (§15.4).** A linha `typing` da tabela acima descreve fan-out e teto, e
+`presencePublish{status, typingChannelId?}` (§16.2) descreve o quadro — mas nenhuma das duas
+dizia **quem** publica pelo renderer, e o resultado foi que ninguém publicava: o
+`typingChannelId` não tinha produtor no produto, e o "digitando…" nunca existiu fora da
+conversa direta. O comando entra em §15.4, é efêmero (sem log, sem fila) e carrega o mesmo
+teto de 1 / 2 s por canal. `invisible` não publica typing, como §6.16 já manda — publicá-lo
+enquanto se esconde a presença deixaria o modo meia-porta, e o comando de §15.4 é o primeiro
+lugar do produto onde essa regra tem como ser desobedecida.
 
 ### 17.7 Relay voluntário (v2)
 

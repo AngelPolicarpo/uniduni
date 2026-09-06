@@ -26,7 +26,7 @@ import type { ViewDb } from '../l0/view/index.ts';
 import type { DecisionState } from '../l1/fold/index.ts';
 import { hierarchyTargetOf } from '../l1/fold/targets.ts';
 import { KINDS, decodeEnvelope, decodeOp, decodePayload, kindName } from '../l1/opCodec/index.ts';
-import { PERMISSION_BY_NUMBER, authorizeOverTarget, permissionFromNumber, topRank, type Permission } from '../l1/permissions/index.ts';
+import { PERMISSION_BY_NUMBER, authorizeOverTarget, isReadOnlyFor, permissionFromNumber, topRank, type Permission } from '../l1/permissions/index.ts';
 import { modoDeRevelacao, type BlobManager, type ModoDeRevelacao } from '../l2/blobs/index.ts';
 import type { SearchPartialReason } from '../l2/search/service.ts';
 import { memberHasPermission } from '../l2/voiceCoordinator/host.ts';
@@ -362,11 +362,26 @@ export function queryReadPorts(deps: QueryReadDeps) {
       const porCategoria = new Map<string, Array<Record<string, unknown>>>();
       for (const c of canais) {
         let somenteLeitura = false;
+        // §15.6 (emenda de 2026-09-06) — a LISTA vai junto do booleano resolvido. Ela não
+        // substitui `readOnly` (a regra de §6.7 continua sendo do núcleo): é o que a tela de
+        // edição do canal precisa para dizer quais cargos ainda podem postar, e sem ela o
+        // formulário abria todo canal restrito como se fosse aberto.
+        let cargosSemEscrita: string[] = [];
         try {
           const ids: unknown = JSON.parse(c.readOnlyRoleIds);
-          if (Array.isArray(ids)) somenteLeitura = ids.some((r) => typeof r === 'string' && cargos.has(r));
+          if (Array.isArray(ids)) {
+            cargosSemEscrita = ids.filter((r): r is string => typeof r === 'string');
+            // **A regra é R-22, e ela é `todos`, não `algum`.** O `some` que estava aqui
+            // silenciava na tela quem o `fold` deixa escrever: basta UM cargo de fora da
+            // lista para postar (§9.2), e quem tivesse Membro (silenciado) + Moderador
+            // (livre) via o compositor bloqueado num canal em que a mensagem seria aceita.
+            // A resolução é a MESMA função que o `fold` usa — duas cópias da regra é como
+            // esta divergência nasceu.
+            somenteLeitura = isReadOnlyFor([...cargos], cargosSemEscrita);
+          }
         } catch {
           somenteLeitura = false;
+          cargosSemEscrita = [];
         }
         const leitura = manifest.getReadState(communityId, c.id);
         const lista = porCategoria.get(c.categoryId) ?? [];
@@ -377,6 +392,7 @@ export function queryReadPorts(deps: QueryReadDeps) {
           ...(c.topic !== null ? { topic: c.topic } : {}),
           rank: c.rank,
           readOnly: somenteLeitura,
+          readOnlyForRoleIds: cargosSemEscrita,
           // §6.6 (R-29): os defaults de §6.6 valem quando o log não carrega o campo.
           speechMode: c.speechMode ?? 0,
           queueTurnSeconds: c.queueTurnSeconds ?? 300,
