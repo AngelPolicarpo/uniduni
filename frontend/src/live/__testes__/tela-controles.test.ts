@@ -62,6 +62,13 @@ function comTela(papel: "apresentador" | "espectador") {
       },
     ],
   });
+  /*
+   * O `join` acima é MONTAGEM, não o que cada caso exercita — e ele legitimamente para a
+   * captura da chamada anterior (a câmera e a tela não sobrevivem à troca de canal, §17.2 /
+   * §17.5 A19). Sem limpar aqui, a chamada de `parar` da montagem seria contada como se
+   * tivesse saído da ação sob teste. O que cada `it` afirma continua sendo sobre a ação.
+   */
+  for (const espiao of Object.values(porta)) espiao.mockClear();
   return porta;
 }
 

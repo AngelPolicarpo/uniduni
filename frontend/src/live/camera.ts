@@ -131,7 +131,19 @@ export class CameraDaChamada {
       log("câmera encerrada na fonte");
       this.#eventos.aoEncerrarNaFonte();
     };
-    await this.#malha.definirVideoLocal(track, stream);
+    /*
+     * A negociação pode falhar (par que caiu, `replaceTrack` recusado): quem chamou vê
+     * a exceção e desenha o erro, mas o DISPOSITIVO já está aberto — e ninguém mais tem
+     * a referência para fechá-lo. Sem isto, a câmera ficava capturando com a luz acesa
+     * sobre um botão que diz "Ligar câmera", que é a mesma decoração invertida que §85.2
+     * tirou do mudo.
+     */
+    try {
+      await this.#malha.definirVideoLocal(track, stream);
+    } catch (e) {
+      await this.desligar();
+      throw e;
+    }
     log(`ligada · '${track.label}'`);
     return { rotulo: track.label };
   }

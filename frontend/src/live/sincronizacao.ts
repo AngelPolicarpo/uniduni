@@ -18,6 +18,7 @@ import { registrarResync, useSessao, type MotivoResync } from "./sessao";
 import { canal as adaptarCanal, categoria, comunidade, identidade, cargo, membroDeEntrada, bolhaDaFila, reacoes, anexo, entradaDeAuditoria, banido, timeout as adaptarTimeout } from "./adaptadores";
 import { codigoDoErro } from "../ipc/frames";
 import { estaFalando } from "./vad";
+import { descartarGravacao } from "./gravacao";
 import type { EvMessageAccepted, AuditItem, BanItem, Pagina, TimeoutItem } from "../ipc/dto";
 import { useCommunityStore } from "../store/communityStore";
 import { useIdentityStore } from "../store/identityStore";
@@ -862,7 +863,12 @@ function configurarVoz(): void {
   const ligarVad = () => {
     desligarVad();
     vad = setInterval(() => {
-      const nivel = malha.nivelDeVoz();
+      // §17.6 — quem está calado não fala, e o nível do microfone não sabe disso: o mudo
+      // imposto com Modo Música corta a trilha MISTURADA e deixa o microfone captando
+      // (§17.5 item 5). Sem esta linha, quem espera a vez na fila de karaokê acendia o anel
+      // de fala do canal inteiro ao tossir. `false` explícito, e não só "não medir": a
+      // virada precisa CHEGAR ao roster, senão o anel fica aceso no último valor.
+      const nivel = malha.vozAudivel ? malha.nivelDeVoz() : 0;
       if (nivel === null) return; // sem medição: VAD honestamente desligado
       const sens = useSettingsStore.getState().sensibilidadeVoz;
       // sens 0 → threshold 0.31 (só voz alta); sens 100 → 0.01 (qualquer sussurro).
@@ -873,6 +879,21 @@ function configurarVoz(): void {
         void api.voiceSetSelf({ speaking: agora }).catch(() => undefined);
       }
     }, 250);
+  };
+
+  /**
+   * Encerrar a chamada **localmente** — o único caminho, para os três que existem: o botão
+   * de sair (pela porta do store), `voice.revoked` e `voice.failed`.
+   *
+   * Os dois eventos chamavam `malha.sair()` direto e pulavam o `desligarVad()` que a porta
+   * fazia: o relógio de 250 ms ficava vivo depois de a chamada acabar, medindo nada até a
+   * entrada seguinte o substituir. Inócuo por sorte (sem malha, `nivelDeVoz()` é `null`),
+   * mas é um relógio a mais por expulsão — e o `entrar` que o desligava era o mesmo que o
+   * religava.
+   */
+  const encerrarMalha = (): Promise<void> => {
+    desligarVad();
+    return malha.sair();
   };
 
   useVoiceStore.getState().configurarVoz({
@@ -897,10 +918,7 @@ function configurarVoz(): void {
       await reconsultarFila(a);
       ligarVad();
     },
-    sair: () => {
-      desligarVad();
-      return malha.sair();
-    },
+    sair: () => encerrarMalha(),
     mudarSelf: (patch) => void api.voiceSetSelf(patch).catch(() => undefined),
     // §17.4 L-12 — o mudo do PRÓPRIO microfone é efetivo, não conselho: quem controla o
     // microfone é quem o possui. Contar ao host acende o ícone do outro lado; o que
@@ -987,6 +1005,15 @@ function configurarVoz(): void {
       return { erro: null };
     },
     definirVolumeMusica: (volume) => malha.definirVolumeMusica(volume / 100),
+    // §15.4 `voice.muteParticipant` / L-12 — o conselho vai pelo HOST: ele marca `muted` no
+    // roster do alvo e republica, e o cliente do alvo corta a própria trilha ao ler isso
+    // (`definirMudoImpositivo`). Não há enforcement de mídia daqui, e nem deveria haver:
+    // quem controla o microfone é quem o possui.
+    mutarParticipante: async (identityKey, muted) => {
+      const communityId = useVoiceStore.getState().communityId;
+      if (communityId === null) return;
+      await api.voiceMuteParticipant({ communityId, identityKey, muted });
+    },
     // Épico 4 — o que ESTA máquina ouve: o áudio de cada par (os `<audio>` fora do React)
     // + o próprio mic. É sobre estes streams que a gravação local monta o mix.
     fluxosParaGravacao: () => {
@@ -1115,7 +1142,7 @@ function configurarVoz(): void {
       malha.aplicarRoster(restantes);
       return;
     }
-    void malha.sair();
+    encerrarMalha();
     useVoiceStore.getState().encerradaPeloHost();
   });
 
@@ -1137,7 +1164,7 @@ function configurarVoz(): void {
     if (dado.sessionId !== undefined && malha.entrando) return;
     const razao = dado.reason;
     console.log("[voz] chamada encerrada pelo host:", razao ?? "sem motivo");
-    void malha.sair();
+    encerrarMalha();
     useVoiceStore.getState().encerradaPeloHost(motivoDaChamada(razao));
   });
 
@@ -1275,6 +1302,42 @@ function configurarCamera(malha: MalhaDeVoz): void {
     },
   });
 
+  /*
+   * §10, 3.1 (B47) — **trocar de câmera nas configurações vale DURANTE a chamada**, como o
+   * microfone ao lado.
+   *
+   * A assinatura de ajustes reagia a microfone, volumes e saída e ignorava `cameraId`: a
+   * escolha nova ficava esperando o próximo desliga/liga, sem aviso, e o vídeo continuava
+   * saindo da câmera antiga. `CameraDaChamada.ligar` já É a troca (desliga a anterior antes
+   * de capturar a nova) e `definirVideoLocal` é `replaceTrack` sem renegociação — a troca
+   * custa o mesmo que a do microfone.
+   *
+   * Só troca o que está LIGADO: mudar a preferência com a câmera desligada não é motivo
+   * para acender o dispositivo e pedir a permissão do sistema. Falhar não desliga a chamada
+   * — nomeia o motivo, como qualquer câmera que não liga (§20.1).
+   */
+  useSettingsStore.subscribe((estado, anterior) => {
+    if (estado.cameraId === anterior.cameraId) return;
+    if (useVoiceStore.getState().channelId === null) return;
+    if (!camera.ligada) return;
+    void camera
+      .ligar(estado.cameraId)
+      .then(() => {
+        guardarCameraLocal(camera.stream);
+        useVoiceStore.getState().cameraDoParChegou(
+          useIdentityStore.getState().identity?.id ?? "",
+        );
+      })
+      .catch((e: unknown) => {
+        // A anterior já foi desligada por `ligar`: o estado honesto é câmera apagada com o
+        // motivo à vista, não um botão aceso sobre dispositivo nenhum.
+        console.log("[camera] troca ao vivo falhou:", e);
+        guardarCameraLocal(null);
+        useVoiceStore.getState().cameraCaiu(motivoDoErroDeCamera(e));
+        void api.voiceSetSelf({ cameraOn: false }).catch(() => undefined);
+      });
+  });
+
   // O fim da chamada, por qualquer caminho: `aoSair` da malha passa por `pararTudo`, e a
   // câmera é dispositivo desta máquina — ninguém a apaga por ela.
   aoPararTudo.push(() => void camera.desligar().catch(() => undefined));
@@ -1388,6 +1451,17 @@ function configurarTela(malha: MalhaDeVoz): void {
     definirCaptura: (a) => estrela.definirCaptura(a),
     perfilDeCaptura: () => estrela.perfilDeCaptura(),
   });
+
+  /*
+   * O fim da chamada, por qualquer caminho — irmão exato da linha que a câmera registra.
+   *
+   * §17.5 põe a sessão de tela DENTRO da chamada (A19), e `pararTudo` já esquecia os
+   * `MediaStream`; esquecer a referência não para a CAPTURA. Sem isto, sair da chamada ou
+   * ser desconectado deixava a tela (e o áudio do sistema junto com ela) sendo capturada
+   * pelo SO — indicador de gravação aceso, custo de codificação vivo — para uma sessão que
+   * não existe mais. É o mesmo defeito que §85.2 tirou do mudo, agora na tela.
+   */
+  aoPararTudo.push(() => void estrela.parar().catch(() => undefined));
 
   /**
    * §15.5 — os quatro eventos de tela. `share.started` e `share.stopped` chegam a todos os
@@ -1555,6 +1629,9 @@ function pararTudo(): void {
   esquecerTodasAsTelas();
   // Nem câmera: §17.2 põe a malha dentro da chamada pela mesma razão.
   esquecerTodasAsCameras();
+  // Nem a gravação local: o que ela grava é o canal, e sem chamada não há canal a gravar.
+  // Sem isto, o `AudioContext` e uma fonte por par ficavam de pé até o app fechar.
+  descartarGravacao();
   for (const f of aoPararTudo) f();
 }
 

@@ -1527,6 +1527,11 @@ export class CoreRuntime {
         onSessionEvent: (ev: ShareSessionEvent) => {
           const alvos = destinatariosDaTela(voice, ev);
           if (ev.kind === 'started') {
+            // §6.16 — o `sharing` do roster. O campo estava no contrato e ninguém o
+            // escrevia: quem apresentava perdia o ícone no primeiro roster que passasse, e
+            // com ele a confirmação de saída de §11 (C11). A sessão de tela é do host, e é
+            // aqui que ela nasce.
+            voice.setSharing(ev.channelId, ev.presenterKeyHex, true);
             empurra('share.started', { sessionId: ev.sessionId, presenterKey: ev.presenterKeyHex, channelId: ev.channelId }, alvos);
           } else if (ev.kind === 'viewersChanged') {
             empurra('share.viewersChanged', { sessionId: ev.sessionId, viewerCount: ev.viewerCount }, alvos);
@@ -1536,6 +1541,9 @@ export class CoreRuntime {
             // imediato, em vez de deixar quem entrou esperando até 2 s pela cadência.
             saude.tick(now());
           } else {
+            // A marca do roster cai junto com a sessão — inclusive quando quem a derrubou
+            // foi o host (moderação, canal apagado, varredura de §17.5).
+            voice.setSharing(ev.channelId, ev.presenterKeyHex, false);
             // §16.3 declara `{sessionId, presenterKey, channelId}` no MESMO quadro de
             // `share.started`. Mandar só o id obrigava o renderer a adivinhar de qual
             // sessão se tratava quando há tela em mais de um canal.

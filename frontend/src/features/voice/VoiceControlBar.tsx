@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AudioLines,
   Circle,
@@ -18,9 +18,10 @@ import {
 import { cn } from "../../lib/cn";
 import { Tooltip } from "../../components/ui/Tooltip";
 import {
-  criarGravadorDeCanal,
+  gravacaoEmCurso,
   gravacaoSuportada,
-  type GravadorDeCanal,
+  iniciarGravacao,
+  pararGravacao,
 } from "../../live/gravacao";
 import { useVoiceStore } from "../../store/voiceStore";
 import type { Channel, VoiceParticipant } from "../../domain/types";
@@ -104,9 +105,18 @@ export function VoiceControlBar({
   const musicaAtiva = useVoiceStore((state) => state.musicaAtiva);
   const toggleMusica = useVoiceStore((state) => state.toggleMusica);
 
-  // Épico 4 — gravação local do canal (o que ESTA máquina ouve), sem protocolo nenhum.
-  const gravadorRef = useRef<GravadorDeCanal | null>(null);
-  const [gravando, setGravando] = useState(false);
+  /*
+   * Épico 4 — gravação local do canal (o que ESTA máquina ouve), sem protocolo nenhum.
+   *
+   * O gravador mora em `live/gravacao.ts`, fora do React: esta barra desmonta quando a
+   * grade se recolhe para a barra persistente (§9, 2.3.1), e um gravador em `useRef` ia
+   * embora junto — `AudioContext` aberto para sempre e o arquivo perdido sem aviso. Aqui
+   * fica só o que a UI precisa: se está gravando ou não, ressincronizado na montagem.
+   */
+  const [gravando, setGravando] = useState(gravacaoEmCurso);
+  useEffect(() => {
+    setGravando(gravacaoEmCurso());
+  }, []);
 
   return (
     <div className="flex shrink-0 flex-wrap items-center justify-center gap-2 border-t border-border-subtle p-3">
@@ -218,7 +228,7 @@ export function VoiceControlBar({
       onClick={() => {
         const store = useVoiceStore.getState();
         if (gravando) {
-          void gravadorRef.current?.parar().then((blob) => {
+          void pararGravacao().then((blob) => {
             setGravando(false);
             if (blob === null) return;
             const url = URL.createObjectURL(blob);
@@ -226,15 +236,17 @@ export function VoiceControlBar({
             a.href = url;
             a.download = `comunidade-${channel.name}-${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.webm`;
             a.click();
-            URL.revokeObjectURL(url);
+            // A revogação SÍNCRONA corria contra o download: o Chromium resolve o `blob:`
+            // fora desta pilha, e revogá-lo no mesmo tique deixava o arquivo vazio ou com
+            // erro de rede. Um tique de folga é o bastante — e não revogar seria o
+            // vazamento equivalente do lado do blob.
+            setTimeout(() => URL.revokeObjectURL(url), 60_000);
           });
           return;
         }
         const fluxos = store.consultarFluxos();
-        if (fluxos === null || fluxos.length === 0) return;
-        gravadorRef.current ??= criarGravadorDeCanal();
-        gravadorRef.current?.iniciar(fluxos);
-        setGravando(gravadorRef.current?.gravando === true);
+        if (fluxos === null) return;
+        setGravando(iniciarGravacao(fluxos));
       }}
       icon={
         gravando ? (

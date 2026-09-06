@@ -285,6 +285,64 @@ describe("Modo Música na malha — mixagem, replaceTrack e o mudo em dois níve
     expect(trilhaMic.enabled).toBe(true);
   });
 
+  /*
+   * §17.5 item 5-bis (emenda de 2026-09-06) — a fonte de sistema é REAPROVEITADA na troca
+   * de microfone, e por isso a trilha anterior só pode ser parada quando é OUTRA.
+   *
+   * Verificado por mutação: voltar o `stop()` a ser incondicional derruba este caso — que é
+   * exatamente o defeito relatado, a música emudecendo para todos sem erro nenhum no meio
+   * de uma troca de microfone que aparentemente deu certo.
+   */
+  it("trocar de microfone com música ativa NÃO para a trilha de sistema reaproveitada", async () => {
+    const trilhaMic = trilhaFalsa("mic-original");
+    const trilhaMistura = trilhaFalsa("mistura");
+    const loopback = trilhaFalsa("loopback");
+    const streamDeSistema = { getAudioTracks: () => [loopback] } as unknown as MediaStream;
+    const { malha } = montar(trilhaMic, () => mixadorFalso(trilhaFalsa("mistura-nova")));
+    await malha.entrar({ communityId: "c1", channelId: "ch", euHex: EU, microfoneId: "default", agora: 1_000 });
+    await malha.ativarMusica(streamDeSistema);
+    expect(trilhaMistura).toBeDefined();
+
+    await malha.trocarMicrofone("outro-mic");
+
+    // A trilha do loopback é a MESMA de antes: `trocarMicrofone` remonta o grafo com ela.
+    // Pará-la aqui deixaria a mistura montada sobre uma fonte morta.
+    expect(loopback.stop).not.toHaveBeenCalled();
+  });
+
+  it("uma fonte de sistema NOVA para a anterior — trocar de fonte não acumula captura", async () => {
+    const trilhaMic = trilhaFalsa("mic-original");
+    const primeira = trilhaFalsa("loopback-1");
+    const segunda = trilhaFalsa("loopback-2");
+    const { malha } = montar(trilhaMic, () => mixadorFalso(trilhaFalsa("mistura")));
+    await malha.entrar({ communityId: "c1", channelId: "ch", euHex: EU, microfoneId: "default", agora: 1_000 });
+
+    await malha.ativarMusica({ getAudioTracks: () => [primeira] } as unknown as MediaStream);
+    await malha.ativarMusica({ getAudioTracks: () => [segunda] } as unknown as MediaStream);
+
+    expect(primeira.stop).toHaveBeenCalled();
+    expect(segunda.stop).not.toHaveBeenCalled();
+  });
+
+  /*
+   * §6.16 (emenda de 2026-09-06) — `speaking` é sobre o que SAI. Com Modo Música ligado, o
+   * mudo imposto corta só a trilha misturada e deixa o microfone captando; sem esta
+   * propriedade, quem espera a vez na fila acendia o anel de fala do canal inteiro.
+   */
+  it("a voz deixa de ser audível sob mudo próprio E sob mudo imposto", async () => {
+    const { malha } = await rigComMusica();
+    expect(malha.vozAudivel).toBe(true);
+
+    malha.definirMudoImpositivo(true);
+    expect(malha.vozAudivel).toBe(false);
+
+    malha.definirMudoImpositivo(false);
+    expect(malha.vozAudivel).toBe(true);
+
+    malha.definirMudo(true);
+    expect(malha.vozAudivel).toBe(false);
+  });
+
   it("o volume da música vai para o nó de ganho do grafo", async () => {
     const { malha, mixador } = await rigComMusica();
     malha.definirVolumeMusica(0.3);

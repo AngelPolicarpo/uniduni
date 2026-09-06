@@ -353,3 +353,76 @@ describe("§17.5 — encerramento", () => {
     expect(eventos.aoEncerrarNaFonte).toHaveBeenCalled();
   });
 });
+
+/**
+ * §17.5 (emenda de 2026-09-06) — **apresentar e parar formam uma fila**.
+ *
+ * "Tentar novamente" é parar e começar, e a interface as dispara em sequência sem esperar
+ * a primeira: as duas são longas (o host decide, o main declara, o seletor espera a pessoa
+ * responder) e as duas escrevem o mesmo `#stream`/`#track`/`#sessionId`. Entrelaçadas, o
+ * `parar` que começou primeiro volta de seus `await` já com a captura NOVA à vista — para
+ * as trilhas dela, zera a sessão nova e desfaz a declaração que o main acabou de receber.
+ * A retentativa nasce morta, e de forma dependente de tempo.
+ *
+ * O encerramento por espectador é o `await` lento de `parar` — é ele que dá a janela — e
+ * por isso os casos abaixo o tornam explicitamente lento: com fakes instantâneos a corrida
+ * não acontece, e um teste que não a produz não prova nada sobre ela.
+ *
+ * Verificado por mutação: trocar `parar()` por uma chamada direta a `#parar()` (sem a fila)
+ * derruba os dois primeiros casos.
+ */
+describe("§17.5 — parar e apresentar não se atropelam (2026-09-06)", () => {
+  /** Uma apresentação viva, com um espectador cujo encerramento demora alguns ticks. */
+  async function comEncerramentoLento() {
+    const r = montar();
+    await r.estrela.apresentar({ communityId: "c1", channelId: "ch", euHex: EU });
+    await r.estrela.atualizarEspectadores([ESPECTADOR]);
+    r.envios.get(ESPECTADOR)!.encerrar.mockImplementation(
+      () => new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 5)),
+    );
+    return r;
+  }
+
+  it("o retry não mata a captura nova: a captura viva no fim é a da segunda apresentação", async () => {
+    const r = await comEncerramentoLento();
+    const primeira = r.track;
+
+    // O gesto exato de "Tentar novamente": as duas promessas soltas, na mesma pilha.
+    const parando = r.estrela.parar();
+    const apresentando = r.estrela.apresentar({ communityId: "c1", channelId: "ch", euHex: EU });
+    await Promise.all([parando, apresentando]);
+
+    // A primeira foi parada, como se pediu…
+    expect(primeira.stop).toHaveBeenCalled();
+    // …e a segunda ficou de pé: sessão viva e captura viva. Sem a fila, `parar` voltava do
+    // encerramento dos espectadores e derrubava justamente esta.
+    expect(r.estrela.sessionId).toBe("sess-1");
+    expect(r.estrela.stream).not.toBeNull();
+  });
+
+  it("a declaração de captura que sobra é a da sessão NOVA, não o `null` do parar", async () => {
+    const r = await comEncerramentoLento();
+
+    const parando = r.estrela.parar();
+    const apresentando = r.estrela.apresentar({ communityId: "c1", channelId: "ch", euHex: EU });
+    await Promise.all([parando, apresentando]);
+
+    // Sem a fila, o `declararSessao(null)` do `parar` chegava DEPOIS da declaração da nova,
+    // e o main negaria a captura que já estava no ar.
+    const ultima = (r.captura.declararSessao as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
+    expect(ultima).toMatchObject({ sessionId: "sess-1" });
+  });
+
+  it("uma apresentação que falha não trava a fila — é depois dela que se tenta de novo", async () => {
+    const r = montar();
+    (r.porta.start as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("host recusou"));
+
+    await expect(
+      r.estrela.apresentar({ communityId: "c1", channelId: "ch", euHex: EU }),
+    ).rejects.toThrow();
+
+    // A seguinte roda normalmente: a fila é ordem, não propagação de falha.
+    await r.estrela.apresentar({ communityId: "c1", channelId: "ch", euHex: EU });
+    expect(r.estrela.sessionId).toBe("sess-1");
+  });
+});

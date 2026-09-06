@@ -107,6 +107,29 @@ describe("§17.2 — a câmera é da malha", () => {
     expect(camera.ligada).toBe(false);
   });
 
+  /*
+   * §17.2 (emenda de 2026-09-06, item 4) — uma captura que não vira transmissão é desfeita.
+   *
+   * A negociação pode falhar depois de `getUserMedia` ter aberto o dispositivo (par que
+   * caiu, `replaceTrack` recusado). Quem chamou vê a exceção e desenha o erro — mas a luz da
+   * câmera fica acesa e ninguém mais tem a referência para fechá-la.
+   *
+   * Verificado por mutação: tirar o `try/catch` de `ligar` derruba este caso.
+   */
+  it("a negociação que falha não deixa a câmera aberta atrás dela", async () => {
+    const r = montarCamera();
+    (r.malha.definirVideoLocal as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("replaceTrack recusado"),
+    );
+
+    await expect(r.camera.ligar("default")).rejects.toThrow();
+
+    // O motivo sobe (o botão mostra o erro) E o dispositivo fecha.
+    expect(r.track.stop).toHaveBeenCalled();
+    expect(r.camera.ligada).toBe(false);
+    expect(r.camera.stream).toBeNull();
+  });
+
   it("a câmera que morre na fonte avisa — cabo puxado não é estado que a UI adivinhe", async () => {
     const { camera, eventos, track } = montarCamera();
     await camera.ligar("default");

@@ -1189,7 +1189,15 @@ export class MalhaDeVoz {
       if (mistura === null) return false;
       this.#mistura = mistura;
     }
-    this.#trilhaDeSistema?.stop();
+    /*
+     * A anterior só é parada quando é OUTRA. `trocarMicrofone` remonta a mistura com a
+     * MESMA fonte de sistema (`ativarMusica(this.#streamDeSistema)`), e o `stop()`
+     * incondicional matava justamente a trilha que estava sendo reaproveitada: a música
+     * emudecia para todos, sem erro nenhum, no meio de uma troca de microfone.
+     */
+    if (this.#trilhaDeSistema !== null && this.#trilhaDeSistema !== sistema) {
+      this.#trilhaDeSistema.stop();
+    }
     this.#trilhaDeSistema = sistema;
     this.#streamDeSistema = stream;
     this.#mistura.definirSistema(stream);
@@ -1212,6 +1220,21 @@ export class MalhaDeVoz {
    */
   nivelDeVoz(): number | null {
     return this.#detector?.nivel() ?? null;
+  }
+
+  /**
+   * §17.6 — **a voz desta máquina está saindo?** É o que o VAD precisa saber antes de
+   * publicar `speaking`, e o nível do microfone não responde.
+   *
+   * Os dois níveis de mudo de §17.5 (item 5) calam a saída por caminhos diferentes: o mudo
+   * PRÓPRIO desliga a trilha do microfone — e aí o detector, que mede o microfone, lê
+   * silêncio e o VAD se cala sozinho —, mas o mudo IMPOSTO com o Modo Música ligado corta
+   * só a trilha MISTURADA e deixa o microfone captando. O detector continuava ouvindo, e
+   * quem estava calado na fila de karaokê aparecia com o anel de fala aceso para todo o
+   * canal. É a decoração de §85.2 outra vez, agora no `speaking`.
+   */
+  get vozAudivel(): boolean {
+    return !this.#mudoProprio && !this.#mudoImposto;
   }
 
   /** Voltar ao microfone puro: a trilha original volta por `replaceTrack`. */

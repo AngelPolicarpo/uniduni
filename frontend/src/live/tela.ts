@@ -164,6 +164,21 @@ export class EstrelaDeTela {
   /** Perfil pedido no `share.start`; base de quem entra depois (§17.5). */
   #qualityBase: ShareQualityDto = "balanced";
   #relogio: ReturnType<typeof setInterval> | null = null;
+  /**
+   * **A fila de captura** — `apresentar` e `parar` nunca correm juntas.
+   *
+   * As duas são longas (o host decide, o main declara, o seletor do sistema espera a
+   * pessoa) e as duas escrevem `#stream`/`#track`/`#sessionId`. "Tentar novamente" chama
+   * as duas em sequência SÍNCRONA (`stopShare()` e depois `startShare()` no store, cada
+   * uma disparando uma promessa que ninguém aguarda), e aí a corrida é a regra e não a
+   * exceção: `parar()` lê `#stream` DEPOIS dos seus `await` e encontrava a captura NOVA —
+   * parava as trilhas dela, zerava a sessão nova e desfazia a declaração que o main acabara
+   * de receber. A retentativa nascia morta.
+   *
+   * Não é lock de exclusão mútua: é ordem. Quem chega segundo espera o primeiro terminar,
+   * que é exatamente a semântica que "parar e começar de novo" pede.
+   */
+  #fila: Promise<unknown> = Promise.resolve();
 
   constructor(
     porta: PortaDeTela,
@@ -223,6 +238,28 @@ export class EstrelaDeTela {
     /** Pedir o som da fonte junto. Opt-in: som de máquina não se transmite por descuido. */
     audio?: boolean;
   }): Promise<{ sessionId: string }> {
+    return this.#enfileirar(() => this.#apresentar(a));
+  }
+
+  /**
+   * Serializa uma operação de captura contra as outras. A fila não propaga falha: um
+   * `apresentar` que lançou não pode impedir o `parar` seguinte de rodar.
+   */
+  #enfileirar<T>(op: () => Promise<T>): Promise<T> {
+    const proxima = this.#fila.then(op, op);
+    this.#fila = proxima.catch(() => undefined);
+    return proxima;
+  }
+
+  async #apresentar(a: {
+    communityId: string;
+    channelId: string;
+    euHex: string;
+    quality?: ShareQualityDto;
+    kind?: "screen" | "window";
+    sourceId?: string | null;
+    audio?: boolean;
+  }): Promise<{ sessionId: string }> {
     const quality = a.quality ?? "balanced";
     log(`share.start em ${a.channelId} · perfil ${quality}`);
 
@@ -264,7 +301,9 @@ export class EstrelaDeTela {
     const track = this.#stream.getVideoTracks()[0] ?? null;
     if (track === null) {
       log("captura sem trilha de vídeo — encerrando a sessão");
-      await this.parar();
+      // O corpo, não a porta: já estamos DENTRO da fila, e reentrar nela esperaria a si
+      // mesmo para sempre.
+      await this.#parar();
       throw new Error("captura sem trilha de vídeo");
     }
     this.#track = track;
@@ -449,6 +488,10 @@ export class EstrelaDeTela {
 
   /** Encerra a apresentação: para a captura, os envios e a sessão no host. */
   async parar(): Promise<void> {
+    return this.#enfileirar(() => this.#parar());
+  }
+
+  async #parar(): Promise<void> {
     const sessionId = this.#sessionId;
     this.#pararMedicao();
     // Em paralelo: encerrar é uma operação por conexão, e em fila o fechamento da

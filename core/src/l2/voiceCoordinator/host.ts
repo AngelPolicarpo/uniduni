@@ -103,7 +103,11 @@ export interface IceServer {
 export type VoiceParticipantState = {
   readonly muted: boolean;
   readonly deafened: boolean;
-  /** Campo do contrato `VoiceRoster`/`voiceState`; quem muda é o `shareStar` (fase 8). */
+  /**
+   * Campo do contrato `VoiceRoster` (§6.16). Quem o muda é o `shareStar` via
+   * `setSharing`, chamado pela composição no `started`/`stopped` da sessão de tela — não
+   * `voiceState`, que só carrega o que o próprio cliente declara.
+   */
   readonly sharing: boolean;
   readonly cameraOn: boolean;
   readonly speaking: boolean;
@@ -152,6 +156,12 @@ interface Participant {
   deafened: boolean;
   cameraOn: boolean;
   speaking: boolean;
+  /**
+   * §17.5 — este participante tem sessão de tela viva neste canal. Diferente dos vizinhos,
+   * **não vem de `voiceState`**: a sessão de tela é do host (`share.start`/`share.stop`), e
+   * o cliente não a declara. Quem o escreve é a composição, ao ver o evento de `shareStar`.
+   */
+  sharing: boolean;
 }
 
 interface Session {
@@ -243,7 +253,7 @@ function participantEntry(keyHex: string, p: Participant): RosterEntry {
     keyHex,
     muted: p.muted,
     deafened: p.deafened,
-    sharing: false,
+    sharing: p.sharing,
     cameraOn: p.cameraOn,
     speaking: p.speaking,
   };
@@ -378,6 +388,9 @@ export class VoiceHostSessions {
       deafened: false,
       cameraOn: false,
       speaking: false,
+      // Quem entra na chamada não está transmitindo tela: se estivesse, a sessão de tela
+      // teria sido criada dentro de uma chamada que ele acabou de deixar (§17.5, A19).
+      sharing: false,
     });
     if (isNew) this.#sessions.set(args.channelId, session);
 
@@ -473,6 +486,32 @@ export class VoiceHostSessions {
     target.muted = args.muted;
     this.#emitRoster(session);
     return { ok: true };
+  }
+
+  /**
+   * §17.5 / §6.16 — **o `sharing` do roster passa a ser escrito.**
+   *
+   * O campo está no contrato de `VoiceRoster` desde sempre e o host publicava `false`
+   * constante, com o comentário dizendo que "quem muda é o `shareStar`" — e nada mudava. O
+   * custo não era cosmético: o renderer reconstrói a lista inteira a cada roster, então a
+   * marca de "está compartilhando tela" que `share.started` acendia era apagada pelo roster
+   * seguinte — o de qualquer `voiceState` de qualquer participante. Sumiam junto o ícone do
+   * tile de quem apresenta e a confirmação de §11 (C11) ao sair da chamada compartilhando,
+   * que lê exatamente este campo.
+   *
+   * A autoridade é do host porque a **sessão** é dele: `share.start` e `share.stop` passam
+   * por aqui, e o cliente não tem como declarar o que ele não decide. Quem chama é a
+   * composição, no mesmo ponto em que emite `share.started`/`share.stopped`.
+   *
+   * Idempotente e silencioso quando nada muda: um `viewersChanged` não republica roster.
+   */
+  setSharing(channelId: Id, memberKeyHex: KeyHex, sharing: boolean): void {
+    const session = this.#sessions.get(channelId);
+    const p = session?.participants.get(memberKeyHex);
+    if (session === undefined || p === undefined) return;
+    if (p.sharing === sharing) return;
+    p.sharing = sharing;
+    this.#emitRoster(session);
   }
 
   /**

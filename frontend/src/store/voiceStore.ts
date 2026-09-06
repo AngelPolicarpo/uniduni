@@ -84,6 +84,17 @@ export interface PortaDeMalha {
   ) => Promise<{ erro: "indisponivel" | "negado" | "recusada" | "sem-som" | "sem-mistura" | null }>;
   /** Volume da música 0..100 (§17.5 — só a perna de sistema do grafo). */
   definirVolumeMusica: (volume: number) => void;
+  /**
+   * §15.4 `voice.muteParticipant` / §17.4 L-12 — silenciar OUTRO participante. É **conselho
+   * ao cliente do alvo**, e o caminho do conselho é o host: ele marca `muted` no roster e
+   * republica, e o cliente do alvo lê isso como imposição (`definirMudoImpositivo`) e corta
+   * a trilha que sai. Sem esta linha o botão só pintava o ícone desta máquina, e o próximo
+   * roster o desfazia — silenciar era decoração, exatamente o que L-12 manda a UI distinguir
+   * de "removido da chamada".
+   *
+   * Opcional pelas mesmas razões das vizinhas: uma ponte anterior não a conhece.
+   */
+  mutarParticipante?: (identityKey: string, muted: boolean) => Promise<void>;
   /** Épico 4 — os streams que a gravação local mistura (pares + mic). */
   fluxosParaGravacao: () => MediaStream[];
 }
@@ -602,8 +613,13 @@ export const useVoiceStore = create<VoiceState>()(
 
       join: (channel, localId) => {
 
+        // Hex é hex em qualquer caixa: o resto do arquivo compara identidade por
+        // `toLowerCase()` (`minhaTela`, `telaComecou`, `cameraDoParChegou`) e esta linha
+        // era a exceção. Um `localId` que chegasse com caixa diferente da do roster punha
+        // a identidade local DUAS vezes na grade — o próprio tile e o "outro" que é ele.
+        const eu = localId.toLowerCase();
         const others = (channel.voiceParticipantIds ?? []).filter(
-          (id) => id !== localId,
+          (id) => id.toLowerCase() !== eu,
         );
         const participants: VoiceParticipant[] = [
           ...others.map((identityId) => ({
@@ -649,6 +665,15 @@ export const useVoiceStore = create<VoiceState>()(
           consentRequest: null,
         });
 
+        // A câmera e a tela da chamada ANTERIOR não sobrevivem a esta. `malha.entrar()`
+        // limpa o próprio estado (fecha as conexões, zera o vídeo local), mas quem possui
+        // os DISPOSITIVOS é a captura, e ela não fica sabendo pelo store trocar de canal —
+        // o mesmo motivo pelo qual `leave` desliga as duas explicitamente. Sem isto,
+        // trocar de canal com a câmera ligada deixava a luz acesa transmitindo para
+        // ninguém, e a tela continuava sendo capturada pelo SO.
+        void portaDeCamera?.desligar().catch(() => undefined);
+        void portaDeTela?.parar().catch(() => undefined);
+
         // Sem porta não há chamada: o estado fica em `connecting` e é honesto sobre isso.
         // Com porta, quem tira de `connecting` é o par conectando de verdade.
         void portaDeMalha
@@ -660,7 +685,39 @@ export const useVoiceStore = create<VoiceState>()(
       retryJoin: () => {
         const { channelId, communityId, localId } = get();
         if (channelId === null || communityId === null || localId === null) return;
-        set({ stage: "connecting", motivoDaFalha: null, erroDeMicrofone: null });
+        /*
+         * §17.2/§17.5 — **a reentrada nasce sem mídia, e a tela precisa dizer isso.**
+         *
+         * `malha.entrar()` começa por `#limparEstado()`: as conexões são fechadas, o vídeo
+         * local é zerado, a mistura é encerrada. O transporte volta limpo — e o store não
+         * voltava. Ficava `cameraOn: true` sobre uma câmera que não chega a par nenhum,
+         * `musicaAtiva: true` sobre uma mistura que não existe mais, e a transmissão de
+         * tela congelada numa sessão que o host já esqueceu.
+         *
+         * Restaurar é gesto de quem está na chamada, não adivinhação daqui: ligar a câmera
+         * de volta pediria a permissão do sistema outra vez, e ressuscitar a música pediria
+         * outra captura de áudio. O que se deve é apagar honestamente.
+         */
+        void portaDeCamera?.desligar().catch(() => undefined);
+        void portaDeTela?.parar().catch(() => undefined);
+        set((state) => ({
+          stage: "connecting" as VoiceStage,
+          motivoDaFalha: null,
+          erroDeMicrofone: null,
+          erroDeCamera: null,
+          cameraPendente: false,
+          musicaAtiva: false,
+          musicaErro: null,
+          shares: [],
+          shareSessionId: null,
+          capturaDaTela: CAPTURA_LIVRE,
+          cameraSeq: state.cameraSeq + 1,
+          participants: state.participants.map((p) =>
+            p.identityId === state.localId
+              ? { ...p, cameraOn: false, sharingScreen: false }
+              : p,
+          ),
+        }));
         void portaDeMalha
           ?.entrar({ communityId, channelId, localId })
           // A malha é nova: as trilhas voltam abertas, e a preferência precisa ser
@@ -673,6 +730,10 @@ export const useVoiceStore = create<VoiceState>()(
         // A luz da câmera não sobrevive à chamada. `sair()` derruba a malha, mas quem possui
         // o dispositivo é a captura — e ela não fica sabendo pelo estado ir para IDLE.
         void portaDeCamera?.desligar().catch(() => undefined);
+        // Nem a da tela, pela mesma razão e com um agravante: a captura de tela leva o
+        // áudio do sistema junto, e o indicador de gravação do SO fica aceso sobre uma
+        // sessão que acabou. Sem porta de malha (teste, Storybook) nada mais pararia.
+        void portaDeTela?.parar().catch(() => undefined);
         void portaDeMalha?.sair().catch(() => undefined);
         set({ ...IDLE });
       },
@@ -699,7 +760,9 @@ export const useVoiceStore = create<VoiceState>()(
           // Roster VAZIO não entra aqui: isso não é "sozinho", é "sem chamada" — é o que
           // sobra depois de `encerradaPeloHost`, e ressuscitá-lo apagaria o motivo que
           // aquele caminho existe para preservar.
-          const sozinho = participantes.length === 1 && participantes[0]?.keyHex === local;
+          const euHex = local?.toLowerCase() ?? null;
+          const sozinho =
+            participantes.length === 1 && participantes[0]?.keyHex.toLowerCase() === euHex;
           return {
             stage:
               sozinho && (state.stage === "connecting" || state.stage === "failed")
@@ -710,7 +773,9 @@ export const useVoiceStore = create<VoiceState>()(
             // retentativa contra ninguém.
             motivoDaFalha: sozinho && state.stage === "failed" ? null : state.motivoDaFalha,
             participants: participantes.map((p) => {
-              const anterior = state.participants.find((x) => x.identityId === p.keyHex);
+              const anterior = state.participants.find(
+                (x) => x.identityId.toLowerCase() === p.keyHex.toLowerCase(),
+              );
               return {
                 identityId: p.keyHex,
                 speaking: p.speaking ?? false,
@@ -723,12 +788,16 @@ export const useVoiceStore = create<VoiceState>()(
                 // câmera acesa e transmitindo. Quem possui o dispositivo responde por ele,
                 // pela mesma razão que `connectionToMe` é local logo abaixo.
                 cameraOn:
-                  p.keyHex === local ? (anterior?.cameraOn ?? false) : (p.cameraOn ?? false),
+                  p.keyHex.toLowerCase() === euHex
+                    ? (anterior?.cameraOn ?? false)
+                    : (p.cameraOn ?? false),
                 sharingScreen: p.sharing ?? false,
                 // O roster é do host e não sabe como ESTA máquina enxerga cada par: o
                 // estado da conexão é local e sobrevive à republicação da lista.
                 connectionToMe:
-                  p.keyHex === local ? ("ok" as MeshStatus) : (anterior?.connectionToMe ?? ("ok" as MeshStatus)),
+                  p.keyHex.toLowerCase() === euHex
+                    ? ("ok" as MeshStatus)
+                    : (anterior?.connectionToMe ?? ("ok" as MeshStatus)),
               };
             }),
           };
@@ -738,7 +807,9 @@ export const useVoiceStore = create<VoiceState>()(
         // sai (mic + música). O próprio muto continua sendo L-12 — quem aqui desmuta é o
         // roster mudando de ideia (turno acabou de chegar), nunca um timer local.
         const st = get();
-        const eu = st.participants.find((p) => p.identityId === st.localId);
+        const eu = st.participants.find(
+          (p) => p.identityId.toLowerCase() === st.localId?.toLowerCase(),
+        );
         const imposto = (eu?.muted ?? false) && !st.selfMuted;
         portaDeMalha?.definirMudoImpositivo?.(imposto);
       },
@@ -1052,14 +1123,21 @@ export const useVoiceStore = create<VoiceState>()(
         portaDeMalha?.definirVolume(identityId, volume);
       },
 
-      setParticipantMuted: (identityId, muted) =>
+      setParticipantMuted: (identityId, muted) => {
+        // Otimista, como o volume: o ícone responde ao clique e o roster do host é quem
+        // confirma (ou desfaz, se a permissão não estiver lá).
         set((state) => ({
           participants: state.participants.map((p) =>
-            p.identityId === identityId
+            p.identityId.toLowerCase() === identityId.toLowerCase()
               ? { ...p, muted, speaking: muted ? false : p.speaking }
               : p,
           ),
-        })),
+        }));
+        // O efeito de verdade (§17.4 L-12): o host marca o roster, e o cliente do alvo
+        // corta a própria trilha ao lê-lo. Recusa (`E_PERMISSION_DENIED`) não precisa de
+        // tratamento aqui — o roster seguinte devolve o estado que vale.
+        void portaDeMalha?.mutarParticipante?.(identityId, muted).catch(() => undefined);
+      },
 
       configurarTela: (porta) => {
         portaDeTela = porta;

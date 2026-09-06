@@ -9606,3 +9606,163 @@ esconde a linha inteira", que nasceu depois em *A observar*, passou a **B75**.
   comunidade; o caminho de DM segue com a evidência de §109 e de §123.2, e nada aqui muda
   isso. O que esta fatia acrescentou ao caminho da chamada — bloquear e esquecer encerrando —
   está medido pela superfície (`E_SESSION_GONE` depois do comando), não pela mídia.
+
+---
+
+## 130. Varredura da mídia de comunidade pela interface: voz, câmera, tela e música — 2026-09-06
+
+Verificação do relatório consolidado GEMINI/SPARK sobre o caminho de **mídia da comunidade**
+no renderer (voz, câmera, compartilhamento de tela, Modo Música e gravação local): 16 achados
+e 6 "lacunas de especificação". A regra é a de sempre — **cada achado é confirmado na fonte
+antes de virar correção**. Treze confirmados como escritos, dois com o mecanismo certo e o
+alcance exagerado, **um refutado**. Das seis lacunas, todas as seis eram reais e fecharam por
+emenda.
+
+O tema é um só, e ele atravessa quase todos os achados: **esquecer a referência não fecha o
+dispositivo.** O produto tem três capturas que vivem só no renderer e não têm sessão no host —
+a câmera, a tela e a gravação local — e nenhuma seção dizia quando cada uma morre. O resultado
+foi a mesma família de vazamento em quatro caminhos diferentes.
+
+### 130.1 Os defeitos confirmados e corrigidos
+
+- **Sair da chamada compartilhando tela deixava o SO capturando.** O crítico do relatório, e
+  ele estava certo por inteiro. `pararTudo` (`live/sincronizacao.ts`) esquecia os `MediaStream`
+  de tela e rodava a lista `aoPararTudo` — em que **só a câmera** estava registrada;
+  `configurarTela` nunca pôs a estrela lá. Sair pelo botão, ser revogado, o host sumir: nos
+  quatro caminhos a captura de tela seguia viva, com o áudio do sistema junto e o indicador de
+  gravação do SO aceso, servindo uma sessão que o host já tinha esquecido. A correção é a
+  linha irmã da da câmera; a emenda de §17.2 é o que impede a assimetria de voltar.
+- **A câmera vazava aberta quando a negociação falhava.** Em `CameraDaChamada.ligar`, o
+  dispositivo é aberto e só então a trilha vai à malha. Se `definirVideoLocal` lançasse, a
+  exceção subia com `#stream`/`#track` preenchidos e ninguém mais tinha a referência: a luz
+  ficava acesa sob um botão que dizia "Ligar câmera". O `catch` de `configurarCamera` só
+  traduzia o motivo. Agora a captura que não vira transmissão é desfeita antes de a falha
+  subir.
+- **Trocar de canal de voz não desligava câmera nem tela.** `voiceStore.join` zerava
+  `cameraOn` e `shares` no estado e chamava `malha.entrar()`, que começa por `#limparEstado()`
+  — fecha conexões, zera o vídeo local, encerra a mistura. Nada disso toca nos **dispositivos**:
+  a luz da câmera do canal anterior seguia acesa transmitindo para ninguém.
+- **A reentrada por epoch deixava o estado mentindo.** `retryJoin` rearmava só as flags de
+  erro. O transporte voltava limpo e o store continuava com `cameraOn: true` sobre uma trilha
+  que não chega a par nenhum, `musicaAtiva: true` sobre uma mistura encerrada e a transmissão
+  de tela congelada numa sessão que o host esqueceu. Agora as três nascem desligadas, e as
+  capturas param junto — a lacuna 6 do relatório, resolvida a favor de "nasce limpo".
+- **Trocar de microfone com o Modo Música ligado emudecia a música.** O achado mais preciso do
+  relatório. `trocarMicrofone` guarda o `MediaStream` de sistema, encerra a mistura e chama
+  `ativarMusica(sistema)` para remontar o grafo com o microfone novo — e dentro de
+  `ativarMusica` o `this.#trilhaDeSistema?.stop()` incondicional parava **a mesma trilha** que
+  estava sendo reaproveitada. A música sumia para todos, sem erro nenhum, no meio de uma troca
+  que aparentemente deu certo. A anterior agora só é parada quando é outra.
+- **"Tentar novamente" do apresentador corria contra o próprio parar.** `retryShare` chama
+  `stopShare()` e `startShare()` em sequência síncrona, cada um disparando uma promessa que
+  ninguém aguarda. `EstrelaDeTela.parar()` lê `#stream` **depois** de seus `await` (o
+  encerramento por espectador é o lento) e encontrava a captura NOVA: parava as trilhas dela,
+  zerava a sessão nova e desfazia a declaração que o main acabara de receber. A retentativa
+  nascia morta, dependendo de tempo. `apresentar` e `parar` passam a formar uma fila.
+- **"Silenciar nesta chamada" não silenciava nada.** `setParticipantMuted` era um `set(...)` e
+  mais nada: nenhum comando saía, o áudio continuava audível e o `voice.roster` seguinte
+  desfazia o ícone. O verbo existe (`voice.muteParticipant`, §15.4), o núcleo o implementa, o
+  cliente do alvo já sabe honrá-lo (`definirMudoImpositivo`) — faltava a chamada. "Conselho"
+  em L-12 tinha sido lido como "não faz nada".
+- **O `sharing` do roster nunca era escrito.** O host publicava `false` constante com a nota
+  de que "quem muda é o `shareStar`", e nada mudava. Como o renderer reconstrói a lista de
+  participantes a cada roster, a marca que `share.started` acendia era apagada pelo roster
+  seguinte — o de **qualquer** `voiceState` de **qualquer** participante, que chega o tempo
+  todo. Sumiam junto o ícone de quem apresenta e a confirmação de §11 (C11) ao sair da chamada
+  compartilhando, que lê exatamente este campo: a transmissão morria sem a pergunta. É a
+  lacuna 1 do relatório, e a correção é de autoridade — o host escreve, porque a sessão é dele.
+- **A confirmação de saída não cobria a fase `starting`.** Entre escolher a fonte e a captura
+  voltar já existe sessão no host, e sair a mata. O guarda lia só o roster, que nem tinha
+  chegado. Agora ele lê o estado local da transmissão em qualquer fase; o roster é a
+  confirmação, não a condição.
+- **Trocar de câmera nas configurações era ignorado em chamada.** A assinatura de ajustes
+  reagia a microfone, volumes e saída (B47) e não a `cameraId` — sem que nada dissesse por
+  quê. Com o m-line 1 reservado (§17.2, 2026-09-03), trocar de câmera é `replaceTrack`, o
+  mesmo custo da troca de microfone. É a lacuna 4, resolvida a favor da simetria.
+- **A gravação local morava no ciclo de vida de um componente.** `VoiceControlBar` vive dentro
+  da grade expandida, que **desmonta** ao recolher para a barra persistente (§9, 2.3.1) — e a
+  chamada continua. Cada recolhimento durante uma gravação abandonava um `AudioContext` aberto
+  com uma fonte por par **e** perdia o arquivo em silêncio: o botão voltava apagado, sem
+  download. O gravador foi para `live/gravacao.ts`, fora do React, com `encerrar()` de
+  verdade e descarte no fim da chamada. É a lacuna 3.
+- **O `AudioContext` da gravação nunca fechava.** Mesmo sem desmontar: `parar()` encerrava o
+  `MediaRecorder` e deixava de pé o contexto, o destino e as fontes.
+- **O `blob:` do download era revogado no mesmo tique do clique.** O Chromium resolve o
+  download fora dessa pilha; revogar ali deixa o arquivo vazio ou com erro de rede.
+- **Os dois encerramentos vindos do host vazavam o relógio do VAD.** `voice.revoked` e
+  `voice.failed` chamavam `malha.sair()` direto e pulavam o `desligarVad()` que a porta do
+  store fazia. Inócuo por sorte — sem malha, `nivelDeVoz()` é `null` —, mas é um relógio a
+  mais por expulsão. Os três caminhos passam a ser um só.
+
+### 130.2 O que o relatório errou
+
+- **REFUTADO — `definirSistema` não empilha ganho.** O relatório afirma que
+  `ganhoSistema.connect(destino)` a cada troca de fonte soma uma aresta e eleva o volume
+  percebido. O Web Audio não funciona assim: a especificação de `AudioNode.connect` diz que só
+  pode existir **uma** conexão entre uma saída específica de um nó e uma entrada específica de
+  outro, e que conexões repetidas com os mesmos extremos são **ignoradas**. `mixagem.ts` está
+  correto como está, e nada foi mudado ali.
+- **ALCANCE EXAGERADO — o VAD sob mudo.** O mecanismo apontado é real (o loop não consulta
+  estado de mudo nenhum), mas a consequência descrita — "usuários silenciados ainda disparam
+  `speaking`" — só vale num recorte. Uma `MediaStreamTrack` desabilitada entrega silêncio ao
+  `MediaStreamAudioSourceNode`, então o mudo **próprio** já calava o detector sozinho, e o
+  mudo **imposto sem Modo Música** também (ali os dois níveis convergem na mesma trilha). O
+  caso que sobra é o único em que a saída é cortada sem tocar no microfone: **mudo imposto com
+  o Modo Música ligado** — exatamente a fila de karaokê que o relatório usou de exemplo,
+  quando quem espera a vez está com música. Corrigido pela propriedade certa (`vozAudivel`),
+  que cobre os três casos de uma vez em vez de remendar o recorte.
+- **ALCANCE EXAGERADO — a comparação de ids sensível a caixa.** A comparação estrita existe e
+  é a exceção num arquivo que compara por `toLowerCase()` em todo o resto. Mas os dois lados
+  vêm de `Buffer.toString('hex')` do núcleo, que é sempre minúsculo: o defeito é **latente**,
+  não ativo, e o relatório o descreve como se o usuário já se visse duas vezes. Normalizado
+  assim mesmo — é barato e é o idioma do arquivo —, mas registrado pelo que é.
+
+### 130.3 As seis lacunas de especificação — as seis reais
+
+| # | Lacuna | Onde fechou |
+|---|---|---|
+| 1 | Autoridade sobre `sharing` no roster de voz | §6.16 — o host escreve, pelo `shareStar`; corolário para o guarda de §11 (C11) |
+| 2 | Supressão de `speaking` sob mudo impositivo | §6.16 — `speaking` é sobre o que SAI, não sobre o que o microfone capta |
+| 3 | Ciclo de vida do pipeline Web Audio da gravação local | §17.2 — item 5 da emenda de ciclo de vida da mídia local |
+| 4 | Troca ao vivo de câmera | §17.2 — emenda própria, simétrica à do microfone (B47) |
+| 5 | `speaking` ao mutar e ao sair | §6.16 — a virada para `false` é enviada; sem medição, nada é publicado |
+| 6 | Destino de câmera, música e tela na reentrada (epoch) | §17.2 — item 3: nascem desligados, e a interface reflete |
+
+Uma sétima emenda saiu da varredura e não estava na lista do relatório: **§17.5 — apresentar e
+parar são serializados entre si**. A ordem de `T-41` descrevia uma apresentação isolada e não
+dizia nada sobre duas operações sobrepostas, que é o caminho mais comum de todos.
+
+E duas emendas fecharam limitações que estavam sendo lidas como ausência de mecanismo:
+**§17.4 L-12** (o conselho tem um caminho, e ele é `voice.muteParticipant`) e **§17.5 item
+5-bis** (a fonte de sistema é reaproveitada na remontagem do grafo).
+
+### 130.4 O que foi medido
+
+- `core`: `npm run build` (barreira de camadas), `npm run typecheck`, `npm test` — 1284 testes.
+  Quatro novos em `test/voice-host.test.ts` para `setSharing`.
+- `frontend`: `npm run lint`, `npm run build`, `npm test` — 584 testes. Sete novos:
+  `src/store/__testes__/midia-local.test.ts` (ciclo de vida da captura nos três caminhos de
+  saída e o `voice.muteParticipant`), mais casos em `musica.test.ts` (trilha de sistema
+  reaproveitada, `vozAudivel`), `tela.test.ts` (a fila de captura, com o encerramento por
+  espectador explicitamente lento — com fakes instantâneos a corrida não acontece) e
+  `camera.test.ts` (a negociação que falha não deixa a câmera aberta).
+- `app`: `npm run build`, `npm run typecheck`, `smoke:fechamento`, `smoke:captura`
+  (um cenário **não medido** — janelas, sem gerenciador de janelas neste ambiente) e
+  **`smoke:voz`**, que exercita duas pontas reais: as doze afirmações passaram, incluindo
+  troca de canal, reentrada com uma conexão por par e mídia fluindo depois das duas.
+- Cinco correções foram verificadas por **mutação** (reverter a correção derruba o teste):
+  a trilha de sistema reaproveitada, a fila de captura (dois casos), a câmera que vaza na
+  falha de negociação e o `sharing` do roster.
+
+### 130.5 O que não foi medido
+
+- **A troca ao vivo de câmera não tem teste de unidade.** Ela vive na assinatura de
+  `useSettingsStore` dentro de `configurarCamera`, que só roda a partir de `configurarVoz()` —
+  e esse caminho exige o cliente IPC-R inteiro. Está coberta por tipo e build, e o mecanismo
+  que ela usa (`CameraDaChamada.ligar` como troca de dispositivo) já tem teste próprio. Mesma
+  situação da troca de microfone, que também não é exercitada por unidade nessa camada.
+- **O gate do VAD no laço tem a propriedade testada, não o laço.** `malha.vozAudivel` tem
+  teste; a linha que o consulta dentro do `setInterval` de `configurarVoz` não, pela mesma
+  razão acima.
+- **A revogação síncrona do `blob:`** é comportamento do Chromium sob download real: a
+  correção segue a documentação da plataforma e não há harness que a exercite aqui.

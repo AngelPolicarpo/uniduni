@@ -669,3 +669,79 @@ describe('imporTurno — quem ganha a vez abre o mic; quem perde é silenciado',
     assert.equal(r.rosters.length, 0);
   });
 });
+
+// ─── setSharing — o `sharing` do roster passa a ser escrito (§6.16, 2026-09-06) ──────────
+
+/**
+ * O campo `sharing` está no contrato de `VoiceRoster` desde o início e o host publicava
+ * `false` constante. O custo não era cosmético: o renderer reconstrói a lista a cada roster,
+ * então a marca que `share.started` acendia era apagada pelo roster seguinte — o de qualquer
+ * `voiceState` de qualquer participante. Sumiam junto o ícone de quem apresenta e a
+ * confirmação de §11 (C11) ao sair da chamada compartilhando.
+ *
+ * A autoridade é do host porque a SESSÃO é dele: o cliente não declara o que não decide.
+ */
+describe('setSharing — quem escreve o `sharing` do roster (§6.16, 2026-09-06)', () => {
+  it('marca e desmarca o apresentador, e o roster republicado leva a marca', () => {
+    const { g, vozId, alice, bob } = voiceWorld();
+    const r = rig();
+    const aliceHex = alice.publicKey.toString('hex');
+    r.sessions.join({ state: g.world.state, channelId: vozId, memberKeyHex: aliceHex });
+    r.sessions.join({ state: g.world.state, channelId: vozId, memberKeyHex: bob.publicKey.toString('hex') });
+
+    // Entrar na chamada não é apresentar: ninguém nasce com a marca.
+    const aoEntrar = r.rosters.at(-1)!;
+    assert.equal(aoEntrar.participants.every((p) => p.sharing === false), true);
+
+    r.sessions.setSharing(vozId, aliceHex, true);
+
+    const comTela = r.rosters.at(-1)!;
+    assert.equal(comTela.participants.find((p) => p.keyHex === aliceHex)?.sharing, true);
+    // Só quem apresenta: a marca é de um participante, não da sessão.
+    assert.equal(comTela.participants.filter((p) => p.sharing).length, 1);
+
+    r.sessions.setSharing(vozId, aliceHex, false);
+    assert.equal(r.rosters.at(-1)!.participants.find((p) => p.keyHex === aliceHex)?.sharing, false);
+  });
+
+  it('é idempotente: repetir o mesmo valor não republica o roster', () => {
+    const { g, vozId, alice } = voiceWorld();
+    const r = rig();
+    const aliceHex = alice.publicKey.toString('hex');
+    r.sessions.join({ state: g.world.state, channelId: vozId, memberKeyHex: aliceHex });
+
+    r.sessions.setSharing(vozId, aliceHex, true);
+    const depoisDaPrimeira = r.rosters.length;
+    r.sessions.setSharing(vozId, aliceHex, true);
+
+    // Um `share.viewersChanged` não pode custar um roster à chamada inteira.
+    assert.equal(r.rosters.length, depoisDaPrimeira);
+  });
+
+  it('canal sem sessão ou participante fora dela não republica nada', () => {
+    const { g, vozId, alice, bob } = voiceWorld();
+    const r = rig();
+    r.sessions.join({ state: g.world.state, channelId: vozId, memberKeyHex: alice.publicKey.toString('hex') });
+    const antes = r.rosters.length;
+
+    r.sessions.setSharing('ch-que-nao-existe', alice.publicKey.toString('hex'), true);
+    r.sessions.setSharing(vozId, bob.publicKey.toString('hex'), true);
+
+    assert.equal(r.rosters.length, antes);
+  });
+
+  it('quem entra de novo entra sem a marca — a sessão de tela vive DENTRO da chamada (A19)', () => {
+    const { g, vozId, alice } = voiceWorld();
+    const r = rig();
+    const aliceHex = alice.publicKey.toString('hex');
+    const joined = r.sessions.join({ state: g.world.state, channelId: vozId, memberKeyHex: aliceHex });
+    assert.equal(joined.ok, true);
+    if (!joined.ok) return;
+    r.sessions.setSharing(vozId, aliceHex, true);
+
+    r.sessions.leave({ sessionId: joined.sessionId, memberKeyHex: aliceHex });
+    r.sessions.join({ state: g.world.state, channelId: vozId, memberKeyHex: aliceHex });
+
+    assert.equal(r.rosters.at(-1)!.participants.find((p) => p.keyHex === aliceHex)?.sharing, false);
+  });
+});

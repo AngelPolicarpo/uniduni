@@ -1181,6 +1181,49 @@ canal só volta a zero porque a última pessoa saiu dele.
 ao host em `voiceState{speaking}` com histerese de 200 ms, e reemitido no roster. Não é
 inferido pelo núcleo, que não vê mídia.
 
+**Emenda de 2026-09-06 — `speaking` é sobre o que SAI, não sobre o que o microfone capta.**
+O texto dizia "VAD local sobre o próprio microfone" e a implementação o cumpria ao pé da
+letra: media-se o microfone e publica-se a virada, sem olhar para o mudo. Isso acende o anel
+de fala de quem está calado. Os dois níveis de mudo de §17.5 (item 5) cortam a saída por
+caminhos diferentes — o mudo **próprio** desliga a trilha do microfone (e aí o detector, que
+mede o microfone, lê silêncio e se cala sozinho), mas o mudo **imposto** pelo modo de fala ou
+pela fila (§16.4) corta só a trilha **misturada** quando o Modo Música está ligado, deixando
+o microfone captando. Quem espera a vez na fila de karaokê acendia o indicador do canal
+inteiro ao tossir. Fica normativo:
+
+1. **`speaking` só pode ser `true` quando a voz desta máquina está audível para os pares** —
+   isto é, sem mudo próprio e sem mudo imposto. Não é "não medir": é medir zero.
+2. **A virada para `false` é enviada**, como qualquer outra. Silenciar não é deixar de
+   publicar: o roster guarda o último valor, e parar de mandar deixaria o anel aceso para
+   sempre. A cadência de 250 ms continua sendo o único gatilho — não há evento extra.
+3. **Sem medição não há `speaking`.** Sem captura de microfone (somente-escuta) ou sem
+   `AudioContext`, o VAD fica honestamente desligado e nada é publicado, em vez de publicar
+   `false` periodicamente sobre uma chamada que não mede nada.
+
+**Emenda de 2026-09-06 — quem escreve `sharing` no roster.** O campo está declarado na linha
+`VoiceRoster` acima desde o início e **ninguém o escrevia**: o host publicava `false`
+constante, com a nota de que "quem muda é o `shareStar`". O custo não era cosmético. O
+renderer reconstrói a lista de participantes a cada roster, então a marca de "está
+compartilhando tela" que `share.started` acendia era apagada pelo roster seguinte — o de
+qualquer `voiceState` de qualquer participante, que chega o tempo todo. Sumiam junto o ícone
+do tile de quem apresenta e a confirmação de §11 (C11) ao sair da chamada compartilhando,
+que lê exatamente este campo e por isso deixava a transmissão morrer sem perguntar.
+
+A autoridade é do **host**, e não do cliente, porque a **sessão** é dele: `share.start` e
+`share.stop` passam pelo `shareStar`, e o cliente não tem como declarar o que ele não decide
+— `voiceState` carrega só o que o próprio nó controla (mudo, ensurdecido, câmera, fala).
+`sharing` passa a `true` no mesmo ponto em que `share.started` é emitido e a `false` no de
+`share.stopped`, inclusive quando quem derrubou a sessão foi o host (moderação, canal
+apagado, a varredura de §17.5). A mudança é idempotente e não republica roster à toa: um
+`share.viewersChanged` não mexe nele.
+
+**Corolário para a UI:** a confirmação de saída de §11 (C11) não pode depender **só** do
+roster. Entre o gesto de compartilhar e o roster que o confirma há um round-trip, e a fase
+`starting` de §17.5 — entre escolher a fonte e a captura voltar — já tem sessão viva no host.
+Sair nesse intervalo mata a sessão, então a pergunta tem de sair. O estado local da
+transmissão é quem sabe disso na hora, em qualquer fase; o roster é a confirmação, não a
+condição.
+
 ### 6.17 Invariantes — o que elas são em v2
 
 Em v1, violar invariante abortava a projeção e parava a comunidade. Em v2 isso é
@@ -4351,6 +4394,59 @@ nenhum campo novo entra no IPC-R, nenhuma linha entra nas tabelas fechadas de §
 e o discriminador nunca atravessa o núcleo — ele vive na SDP, que §17.2 já manda viajar ponta
 a ponta e que o núcleo já declaradamente não lê.
 
+**Emenda de 2026-09-06 — o ciclo de vida da mídia LOCAL, que nenhuma seção declarava.**
+
+Três capturas vivem só no renderer e não têm sessão no host: a **câmera** (§17.2), a
+**captura de tela** (§17.5) e a **gravação local do canal** (Épico 4). Nenhuma delas se
+apaga sozinha quando a chamada acaba — quem possui o dispositivo é quem o abriu —, e a
+especificação não dizia quando cada uma morre. O silêncio custou três vazamentos da mesma
+família: sair da chamada compartilhando tela deixava o SO capturando (com o áudio do sistema
+junto e o indicador de gravação aceso) para uma sessão que não existia mais; trocar de canal
+de voz com a câmera ligada deixava a luz acesa transmitindo para ninguém; e recolher a grade
+durante uma gravação abandonava o `AudioContext` aberto e perdia o arquivo em silêncio.
+
+Fica normativo:
+
+1. **Toda captura local morre com a chamada, por qualquer caminho de saída.** Sair pelo
+   botão, ser revogado (`voice.revoked`), a sessão falhar (`voice.failed`), o host sumir ou
+   o núcleo respawnar são o mesmo evento para a mídia local. Vale para câmera, tela e
+   gravação — §17.5 já punha a sessão de tela DENTRO da chamada (A19) e §17.2 faz o mesmo
+   com a câmera; o que faltava era dizer que **esquecer a referência não para a captura**.
+2. **Trocar de canal de voz é sair da anterior**, e a mídia local morre junto. "Voz é uma só"
+   (§15.4) vale para a captura também: a chamada nova nasce sem câmera, sem tela e sem
+   música.
+3. **Reentrar é começar de novo, e a interface precisa dizê-lo.** A reentrada por epoch
+   (`B43`) ou por "Tentar novamente" limpa o transporte inteiro — conexões fechadas, vídeo
+   local zerado, mistura encerrada. Câmera, Modo Música e transmissão de tela **nascem
+   desligados**, e o estado que a tela lê nasce desligado com eles. Restaurar é gesto de
+   quem está na chamada, nunca adivinhação: religar a câmera pede a permissão do sistema
+   outra vez, e ressuscitar a música pede outra captura de áudio do sistema. Anunciar
+   `cameraOn: true` sobre uma trilha que não chega a par nenhum é a decoração que §85.2
+   tirou do mudo.
+4. **Uma captura que falha ao entrar na malha é desfeita.** Se `getUserMedia` sobe o
+   dispositivo e a negociação seguinte falha, quem chamou vê o erro — mas o dispositivo
+   continua aberto e ninguém mais tem a referência para fechá-lo. A captura que não vira
+   transmissão é parada antes de a falha subir.
+5. **A gravação local é do CANAL e não sobrevive à chamada.** Ela não sobe, não sinaliza e
+   não consulta o host (§17.2: mídia nunca toca o núcleo), mas possui recursos do processo —
+   um `AudioContext`, um `MediaRecorder`, uma fonte de áudio por par. Por isso **não pode
+   morar no ciclo de vida de um componente**: a grade expandida (§9, 2.3) desmonta ao
+   recolher para a barra persistente (2.3.1) e a chamada continua. O arquivo do que já foi
+   capturado é perdido quando a chamada acaba, de propósito: iniciar sozinho um download que
+   ninguém pediu seria surpresa.
+
+**Emenda de 2026-09-06 — trocar de câmera vale DURANTE a chamada (B47).** §10 (3.1) declara
+a escolha de câmera ao lado da de microfone, e o B47 fez o microfone, os volumes e a saída
+passarem a valer na chamada em curso — a câmera ficou de fora sem que nada dissesse por quê.
+A escolha nova esperava, sem aviso, um ciclo desliga/liga, e o vídeo continuava saindo do
+dispositivo antigo. Não há razão de arquitetura para a assimetria: com o m-line 1 já
+negociado (a tabela acima), trocar de câmera é `replaceTrack` — o mesmo custo da troca de
+microfone, sem renegociação e sem tocar na SDP. Duas condições, e as duas seguem a do
+microfone: só troca o que está **ligado** (mudar a preferência com a câmera desligada não é
+motivo para acender o dispositivo e pedir a permissão do sistema), e falhar **não encerra a
+chamada** — nomeia o motivo no vocabulário de `RT-10` e deixa a câmera apagada, que é o
+estado honesto depois de a anterior já ter sido desligada para dar lugar à nova.
+
 ### 17.3 STUN e TURN comunitários
 
 O núcleo do host escuta STUN/TURN **na mesma socket UDP do UDX**, demultiplexando pelo
@@ -4812,6 +4908,27 @@ quem o possui. O que é enforcement é a **remoção do roster e a revogação d
 precisa distinguir "silenciado nesta chamada" (reversível, cooperativo) de "removido da
 chamada" (efetivo). Delta U-08.
 
+**Emenda de 2026-09-06 — o conselho tem um caminho, e ele é o host.** "Conselho" foi lido
+como "não faz nada", e o botão de silenciar outro participante só pintava o ícone da máquina
+de quem clicava: nenhum comando saía, o áudio continuava audível, e o `voice.roster` seguinte
+desfazia a marca. Isso não é a limitação de L-12 — é a limitação sendo confundida com
+ausência de mecanismo. O caminho existe e está declarado: `voice.muteParticipant` (§15.4)
+marca `muted` no roster do alvo e o host republica; o cliente do alvo lê essa marca como
+**imposição** e corta a própria trilha de saída (§17.5, item 5), que é exatamente a natureza
+cooperativa que L-12 descreve. O que continua verdadeiro é o resto de L-12: um cliente
+modificado ignora a marca, e por isso o enforcement segue sendo remover do roster.
+
+Três consequências para quem desenha a superfície:
+
+1. **O clique tem de sair da máquina.** Pintar o ícone local e não chamar `voice.muteParticipant`
+   é a decoração de §85.2 aplicada ao mudo alheio.
+2. **A marca local é otimista; o roster é a verdade.** Uma recusa (`E_PERMISSION_DENIED`, sem
+   `voice_mute_others`) não precisa de tratamento próprio: o roster seguinte devolve o estado
+   que vale.
+3. **O silenciamento não cala o `<audio>` de quem clicou.** Isso seria ouvir menos por decisão
+   de moderação, e quem quer ouvir menos tem o volume por participante e o ensurdecer, que
+   são locais e já existem (§9, 2.3).
+
 **Emenda de 2026-09-03 — microfone ausente não é saída: é somente-escuta.** Quem
 controla o microfone é quem o possui (L-12) — e quando não há microfone a possuir, a
 chamada segue sem ele. Sem microfone não há o que transmitir, e o m-line 0 vazio é lido
@@ -4839,6 +4956,23 @@ do outro lado como silêncio honesto — nunca como saída. Três regras:
 main **consulta o núcleo** (`capture.authorize`) e só concede se existir uma sessão
 `share.start` autorizada pelo host com `captureToken` válido. A ordem é: `share.start` →
 host autoriza → `captureToken` → `getDisplayMedia`. Nunca o contrário.
+
+**Emenda de 2026-09-06 — começar e parar a captura são SERIALIZADOS entre si.** A ordem de
+`T-41` acima descreve uma apresentação isolada e não dizia nada sobre duas operações
+sobrepostas — e elas se sobrepõem no caminho mais comum de todos: **"Tentar novamente"** é
+parar e começar, e a interface as dispara em sequência sem esperar a primeira. As duas são
+longas por natureza (o host decide, o main declara a sessão, o seletor do sistema espera a
+pessoa responder) e as duas escrevem o mesmo estado local — o stream capturado, a trilha e o
+`sessionId` corrente. Entrelaçadas, o `parar` que começou primeiro volta de seus `await` já
+com a captura NOVA à vista: para as trilhas dela, zera a sessão nova e desfaz a declaração de
+captura que o main acabou de receber. A retentativa nasce morta, e de forma dependente de
+tempo — o defeito aparece em uma máquina e não em outra.
+
+Fica normativo: **apresentar e parar formam uma fila por instalação**; quem chega segundo
+espera o primeiro terminar. Não é exclusão mútua (nenhuma das duas é recusada por a outra
+estar em curso) — é ordem, que é exatamente a semântica que "parar e começar de novo" pede.
+A fila não propaga falha: um `apresentar` que lançou não pode impedir o `parar` seguinte de
+rodar, porque é justamente depois de uma falha que se tenta de novo.
 
 **Emenda de 2026-08-22 — a renovação de ticket é do núcleo, não do renderer.** §16.2 tinha
 `voiceTicket` e §26.2 tinha a cadência (`MEDIA_TICKET_TTL_MS/3`), mas nenhum dono: §15.4 não
@@ -5240,6 +5374,19 @@ de `getDisplayMedia` com `systemAudio: include`, Windows loopback); o Modo Músi
    saindo. O mute **imposto** (host, modo de fala, fila) continua sendo `track.enabled =
    false` na trilha misturada — corta tudo, música incluída. O roster de §17.4 continua
    dono do segundo; o primeiro é estado local de captura, nunca sobe ao host como "muted".
+   **Emenda de 2026-09-06:** é justamente esta assimetria que faz o VAD precisar da regra
+   nova de §6.16 — com o Modo Música ligado, o mudo imposto não toca no microfone, e um VAD
+   que só olha o microfone publica `speaking` de quem está calado.
+5-bis. **A fonte de sistema sobrevive à remontagem do grafo (emenda de 2026-09-06).**
+   Trocar de microfone durante a chamada (B47, §10 3.1) remonta o grafo de mixagem com o
+   dispositivo novo, e a perna de sistema é **reaproveitada** — não recapturada: pedir a
+   captura de áudio do sistema de novo passaria outra vez pelo main, pelo token e, no
+   Wayland, pela caixa do portal, para chegar exatamente à mesma fonte. Reaproveitar impõe
+   uma regra ao caminho de ativação: **a trilha de sistema anterior só é parada quando é
+   outra**. Pará-la incondicionalmente mata a que está sendo reusada, e o desfecho é o pior
+   possível — a música emudece para todos, sem erro nenhum, no meio de uma troca de
+   microfone que aparentemente deu certo.
+
 6. **Processamento.** A trilha de sistema **não** passa por AGC/NS/EC do navegador — o
    grafo a alimenta direto do loopback. O toggle de processamento de voz das configurações
    afeta só o nó do microfone.

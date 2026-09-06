@@ -3,7 +3,21 @@
 O que está aberto, hoje. Uma linha por item: **nome e ponteiro**. A descrição mora na
 referência — repetir aqui seria a segunda cópia a envelhecer.
 
-Não normativo. Atualizado em 2026-09-05 (§129). **§129** foi a verificação do relatório de
+Não normativo. Atualizado em 2026-09-06 (§130). **§130** foi a verificação do relatório de
+auditoria da **mídia de comunidade** pela interface (GEMINI/SPARK): voz, câmera, tela, Modo
+Música e gravação local. Dos 16 achados, treze confirmados, dois com o mecanismo certo e o
+alcance exagerado e **um refutado** (o empilhamento de ganho em `mixagem.ts` — o Web Audio
+ignora conexões repetidas entre os mesmos extremos). As **seis** lacunas de especificação eram
+reais e fecharam por emenda. Treze defeitos corrigidos, e o tema é um só: **esquecer a
+referência não fecha o dispositivo** — sair da chamada compartilhando tela deixava o SO
+capturando com o áudio do sistema junto, e trocar de canal deixava a luz da câmera acesa
+transmitindo para ninguém. Sete emendas normativas: §17.2 (o ciclo de vida da captura local,
+em cinco regras; e a troca ao vivo de câmera, simétrica à do microfone), §6.16 (quem escreve
+`sharing` no roster — o host, pelo `shareStar`; e `speaking` é sobre o que SAI, não sobre o que
+o microfone capta), §17.4 L-12 (o conselho tem um caminho, e ele é `voice.muteParticipant`),
+§17.5 (apresentar e parar são serializados entre si; e a fonte de sistema é reaproveitada na
+remontagem do grafo). Nenhum item desta lista fechou nem abriu por causa dela.
+Atualizado antes em 2026-09-05 (§129). **§129** foi a verificação do relatório de
 auditoria da **interface** da conversa direta (GEMINI/SPARK; §127 foi o do núcleo dela): dos
 14 achados, doze confirmados, um refutado e um com o mecanismo certo e a causa errada. As
 **duas** lacunas de especificação eram reais e fecharam por emenda. Doze defeitos corrigidos —
