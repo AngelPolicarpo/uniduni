@@ -1448,17 +1448,6 @@ export class MalhaDeVoz {
   }
 
   /**
-   * O `MediaStream` recebido para o slot indicado ("camera", "tela" ou "voz").
-   * Permite que consumidores (como `telaStreams`) resgatem o stream vivo mesmo
-   * se o evento de chegada foi perdido ou ocorreu antes da inicialização do receptor.
-   */
-  streamDe(parHex: string, slot: OrigemDaTrilha | "voz"): MediaStream | null {
-    const p = this.#pares.get(parHex.toLowerCase()) ?? this.#pares.get(parHex);
-    if (p === undefined) return null;
-    return p.recebidos.get(slot) ?? null;
-  }
-
-  /**
    * As trilhas locais entrando nos m-lines: voz no 0, câmera no 1.
    *
    * A tela não entra aqui porque ela é **por par** (§17.5, e §31.15 numa dupla): quem decide

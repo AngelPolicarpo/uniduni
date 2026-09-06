@@ -1611,14 +1611,35 @@ export class CoreRuntime {
       paradas.push(relogioDaSaude);
 
       host = { admission, voice, share, shareHealth: saude, connections, invites, vistoEm, fila };
-      // Fecha o laço da tela: `share` só existe agora, e o roster (lá em cima) precisa
-      // reconferi-lo a cada mudança.
+      /**
+       * Fecha o laço da tela: `share` só existe agora, e o roster (lá em cima) precisa
+       * reconferi-lo a cada mudança — e §17.5 pede mais que reconferir.
+       *
+       * **Quem ENTRA na chamada precisa saber das telas que já estão de pé.**
+       *
+       * `share.started` era emitido só no instante do `share.start`, e o roster não
+       * substitui isso: o `sharing` que ele carrega acende um ícone, não cria a sessão do
+       * lado de quem assiste nem dispara o `share.join`. Quem chegava depois do começo da
+       * transmissão não a via **nunca** — e a câmera, sendo malha, chegava do mesmo jeito,
+       * que é por que o defeito parecia ser só da tela.
+       *
+       * **Só a quem entrou** (correção de 2026-09-06). Reemitir a toda a chamada em toda
+       * mudança de roster era barato de escrever e caro de rodar: `#emitRoster` sai também
+       * em `setSelf`, e o `speaking` do VAD é publicado a cada virada num relógio de 250 ms
+       * — cada uma delas viraria um `share.started` para a chamada inteira, e cada
+       * espectador responde a esse evento com um `share.join` (que cunha um ticket
+       * Ed25519). O diff do roster é o que separa "alguém chegou" de "alguém falou".
+       */
+      const audienciaAnterior = new Map<string, ReadonlySet<string>>();
       conciliarTela.agora = (channelId?: string, alvos?: readonly string[]) => {
         share.sweepAgainst(voiceStateOf(projector.ds));
-        if (channelId !== undefined && alvos !== undefined && alvos.length > 0) {
-          for (const s of share.sessionsOf(channelId)) {
-            empurra('share.started', { sessionId: s.sessionId, presenterKey: s.presenterKeyHex, channelId: s.channelId }, alvos);
-          }
+        if (channelId === undefined || alvos === undefined) return;
+        const antes = audienciaAnterior.get(channelId) ?? new Set<string>();
+        audienciaAnterior.set(channelId, new Set(alvos));
+        const entrantes = alvos.filter((k) => !antes.has(k));
+        if (entrantes.length === 0) return;
+        for (const s of share.sessionsOf(channelId)) {
+          empurra('share.started', { sessionId: s.sessionId, presenterKey: s.presenterKeyHex, channelId: s.channelId }, entrantes);
         }
       };
       // §17.4/§19.8 — a revogação derivada do log. `sweepAgainst` existia nos dois módulos,

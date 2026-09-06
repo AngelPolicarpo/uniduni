@@ -426,3 +426,99 @@ describe("§17.5 — parar e apresentar não se atropelam (2026-09-06)", () => {
     expect(r.estrela.sessionId).toBe("sess-1");
   });
 });
+
+/**
+ * §17.5 (correção de 2026-09-06) — **a audiência é NÍVEL, tem fila própria, e a plateia
+ * não atrapalha a captura.**
+ *
+ * O host dispara um tique de saúde a cada `viewersChanged` (`composition/boot.ts`), então
+ * dois espectadores entrando com milissegundos de diferença produzem dois `share.health`
+ * sobrepostos — e o primeiro já chega vencido. Sem serialização, o laço de `saindo` da
+ * lista velha derruba o espectador que a nova acabou de servir: a tela do segundo pisca ou
+ * fica preta, que é o defeito relatado ("só um consegue ver").
+ *
+ * Servir um espectador espera a negociação dos m-lines daquele par (até 5 s em
+ * `live/voz.ts`), então a fila da audiência **não pode ser a da captura**: um par travado
+ * prendia o "Parar de compartilhar" atrás de si, e o tique de 2 s reenfileirava outro antes
+ * do anterior terminar, sem teto. Daí coalescer em vez de empilhar.
+ *
+ * O envio lento é o que abre a janela; com fakes instantâneos a corrida não acontece, e um
+ * teste que não a produz não prova nada sobre ela.
+ *
+ * Verificado por mutação: voltar `atualizarEspectadores` para a fila de captura
+ * (`#enfileirar`) derruba o caso do `parar`; aplicá-la sem fila nenhuma derruba o primeiro;
+ * trocar o coalescimento por uma fila FIFO derruba o terceiro.
+ */
+describe("§17.5 — a audiência não atropela a plateia nem a captura (2026-09-06)", () => {
+  /**
+   * Uma apresentação viva cujo `enviarTrilha` demora — a janela em que os tiques se cruzam.
+   *
+   * O atraso é POR PAR, e isso é a própria armadilha: a corrida só existe quando o tique
+   * velho volta de seus `await` **depois** de o novo já ter registrado o espectador que só
+   * ele conhece. Com um atraso igual para todos, as duas voltas caem no mesmo tique do
+   * relógio e o defeito não aparece.
+   */
+  async function comEnvioLento(atraso: number | ((par: string) => number) = 20) {
+    const r = montar();
+    const abertos: string[] = [];
+    const encerrados: string[] = [];
+    const atrasoDe = typeof atraso === "function" ? atraso : () => atraso;
+    (r.malha.enviarTrilha as ReturnType<typeof vi.fn>).mockImplementation(
+      async (par: string, t: MediaStreamTrack) => {
+        await new Promise((resolve) => setTimeout(resolve, atrasoDe(par)));
+        if (t.kind === "video") abertos.push(par);
+        return {
+          definirBitrateKbps: vi.fn(async () => undefined),
+          estatisticas: vi.fn(async () => ({ rttMs: 20, lossPct: 0 })),
+          encerrar: vi.fn(async () => {
+            encerrados.push(par);
+          }),
+        } as unknown as EnvioDeTrilha;
+      },
+    );
+    await r.estrela.apresentar({ communityId: "c1", channelId: "ch", euHex: EU });
+    return { ...r, abertos, encerrados };
+  }
+
+  it("o tique com a lista VELHA não derruba quem o tique novo acabou de servir", async () => {
+    // Quem já estava demora a ser servido; quem acabou de entrar é rápido. É o arranjo em
+    // que a lista velha termina por último e alcança o espectador novo já registrado.
+    const r = await comEnvioLento((par) => (par === OUTRO ? 5 : 60));
+
+    // Os dois `share.health` que a entrada de dois espectadores produz, na mesma pilha.
+    const primeiro = r.estrela.atualizarEspectadores([ESPECTADOR]);
+    const segundo = r.estrela.atualizarEspectadores([ESPECTADOR, OUTRO]);
+    await Promise.all([primeiro, segundo]);
+
+    expect([...r.estrela.espectadores].sort()).toEqual([ESPECTADOR, OUTRO].sort());
+    expect(r.encerrados).toEqual([]);
+  });
+
+  it("parar() não espera a plateia: a fila da captura não é a da audiência", async () => {
+    const r = await comEnvioLento(1_000);
+
+    void r.estrela.atualizarEspectadores([ESPECTADOR]);
+    const t0 = Date.now();
+    await r.estrela.parar();
+
+    // Na fila compartilhada isto media o atraso inteiro do envio travado.
+    expect(Date.now() - t0).toBeLessThan(500);
+    expect(r.estrela.sessionId).toBeNull();
+  });
+
+  it("a lista intermediária é descartada — ela não custa uma renegociação a quem ficou", async () => {
+    const r = await comEnvioLento();
+
+    // A primeira aplicação ainda corre quando as outras duas chegam: a do meio nunca vale,
+    // porque audiência é estado e não sequência.
+    const emCurso = r.estrela.atualizarEspectadores([ESPECTADOR, OUTRO]);
+    const intermediaria = r.estrela.atualizarEspectadores([ESPECTADOR]);
+    const corrente = r.estrela.atualizarEspectadores([ESPECTADOR, OUTRO]);
+    await Promise.all([emCurso, intermediaria, corrente]);
+
+    expect([...r.estrela.espectadores].sort()).toEqual([ESPECTADOR, OUTRO].sort());
+    // Em fila FIFO, `OUTRO` era encerrado pela lista do meio e reaberto pela seguinte.
+    expect(r.encerrados).toEqual([]);
+    expect(r.abertos.filter((p) => p === OUTRO)).toHaveLength(1);
+  });
+});

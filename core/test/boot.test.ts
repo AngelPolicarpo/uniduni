@@ -12,6 +12,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import { MEDIA_TICKET_TTL_MS } from '../src/l1/fold/index.ts';
+import { permissionNumber } from '../src/l1/permissions/index.ts';
 import { OP_VERSION } from '../src/l1/opCodec/index.ts';
 import { deriveCommunityKeyPairs, type CoreHandle } from '../src/l0/corestore/index.ts';
 import { ManifestDb } from '../src/l0/manifest/index.ts';
@@ -71,6 +72,19 @@ async function bootRig(opts: { readonly hosted: boolean }) {
     payload: { categoryId: g.categoryId, type: 1, name: 'voz', readOnlyForRoleIds: [] },
   });
   const voiceChannelId = world.id('channel', g.founder, world.authorSeq.get(g.founder.publicKey.toString('hex'))!);
+  // O cargo base de §19.1 nasce com quatro permissões e `voice_share_screen` não é uma
+  // delas — sem esta linha nenhum membro do rig consegue abrir uma sessão de tela.
+  world.submit({
+    kind: 'role.update',
+    author: g.founder,
+    hostTs: T0 + 130,
+    payload: {
+      roleId: g.baseRoleId,
+      permissions: ['send_messages', 'attach_files', 'add_reactions', 'voice_speak', 'voice_share_screen'].map(
+        (nome) => permissionNumber(nome as Parameters<typeof permissionNumber>[0]),
+      ),
+    },
+  });
 
   const communityId = pares.log.publicKey.toString('hex');
   const blocks = [...world.log].map((b) => Buffer.from(b));
@@ -364,6 +378,81 @@ describe('§44 boot — mapa conexão↔membro (§43.3, §16.3 regra 4)', () => 
       assert.ok(
         paraBea.includes('voice.occupancyChanged'),
         `bea está de fora da chamada e precisa da ocupação: ${JSON.stringify(paraBea)}`,
+      );
+    } finally {
+      await rig.cleanup();
+    }
+  });
+
+  /**
+   * §17.5 — **quem entra na chamada com a tela já no ar precisa saber dela.**
+   *
+   * `share.started` era emitido só no instante do `share.start`, e nada o repunha: quem
+   * chegava depois não criava a sessão do lado de quem assiste e nunca mandava o
+   * `share.join`, então o apresentador nunca era mandado servi-lo. A câmera não sofria
+   * porque é malha (§17.2) — chega a quem entra na primeira negociação, sem autorização
+   * nenhuma. Era por isso que o defeito parecia ser só da tela: com dois espectadores,
+   * um via e o outro não, para sempre.
+   *
+   * O evento vai **só a quem entrou**. O roster sai também em `voiceState`, e o `speaking`
+   * do VAD é publicado a cada virada num relógio de 250 ms; reemitir a toda a chamada em
+   * toda mudança de roster faria de cada virada de fala um `share.started` para todos — e
+   * cada espectador responde a ele com um `share.join`, que cunha um ticket Ed25519.
+   *
+   * Verificado por mutação: sem a reemissão, bea entra e nunca sabe da tela; reemitindo a
+   * `alvos` inteiro em vez de aos entrantes, ana recebe o evento de novo e o VAD o repete.
+   */
+  it('quem entra na chamada com a tela no ar recebe `share.started`, e só ele (§17.5)', async () => {
+    const rig = await bootRig({ hosted: true });
+    try {
+      const anaHex = rig.ana.publicKey.toString('hex');
+      const beaHex = rig.bea.publicKey.toString('hex');
+      const [ladoAnaHost, ladoAna] = rpcPair();
+      const [ladoBeaHost, ladoBea] = rpcPair();
+      rig.runtime.attachMemberConnection({ communityId: rig.communityId, peerKeyHex: anaHex, transport: ladoAnaHost });
+      rig.runtime.attachMemberConnection({ communityId: rig.communityId, peerKeyHex: beaHex, transport: ladoBeaHost });
+      const clienteAna = new RpcClient({ protocol: 'community', transport: ladoAna, role: 'member' });
+      const clienteBea = new RpcClient({ protocol: 'community', transport: ladoBea, role: 'member' });
+      const paraAna: string[] = [];
+      const paraBea: string[] = [];
+      clienteAna.onNotify((topic) => paraAna.push(topic));
+      clienteBea.onNotify((topic) => paraBea.push(topic));
+
+      const chamar = async (c: RpcClient, cmd: string, arg: unknown): Promise<Record<string, unknown>> => {
+        const r = await c.call(cmd, new Uint8Array(Buffer.from(JSON.stringify(arg), 'utf8')));
+        assert.ok(r.ok, `${cmd} recusado: ${JSON.stringify(r)}`);
+        return JSON.parse(Buffer.from(r.body).toString('utf8')) as Record<string, unknown>;
+      };
+
+      await chamar(clienteAna, 'voiceJoin', { channelId: rig.voiceChannelId });
+      await chamar(clienteAna, 'shareStart', { channelId: rig.voiceChannelId, quality: 'balanced' });
+      await tick(20);
+      assert.ok(
+        !paraBea.includes('share.started'),
+        'bea está fora da chamada e a audiência de tela é a chamada (A19)',
+      );
+
+      paraAna.length = 0;
+      await chamar(clienteBea, 'voiceJoin', { channelId: rig.voiceChannelId });
+      await tick(20);
+      assert.ok(
+        paraBea.includes('share.started'),
+        `bea entrou com a tela no ar e não soube dela: ${JSON.stringify(paraBea)}`,
+      );
+      assert.ok(
+        !paraAna.includes('share.started'),
+        'ana já estava na chamada — o evento é de quem entrou, não de todo mundo',
+      );
+
+      // O roster sai a cada `voiceState`, e nenhuma virada de fala é uma tela nova.
+      paraAna.length = 0;
+      paraBea.length = 0;
+      await chamar(clienteBea, 'voiceState', { speaking: true });
+      await chamar(clienteBea, 'voiceState', { speaking: false });
+      await tick(20);
+      assert.ok(
+        !paraAna.includes('share.started') && !paraBea.includes('share.started'),
+        `o VAD republicou a sessão de tela: ana=${JSON.stringify(paraAna)} bea=${JSON.stringify(paraBea)}`,
       );
     } finally {
       await rig.cleanup();

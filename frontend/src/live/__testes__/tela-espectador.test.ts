@@ -15,12 +15,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useVoiceStore, type PortaDeTelaStore } from "../../store/voiceStore";
-import {
-  configurarPortaDeStream,
-  esquecerTodasAsTelas,
-  guardarTelaRecebida,
-  telaRecebida,
-} from "../telaStreams";
+import { esquecerTodasAsTelas, guardarTelaRecebida, telaRecebida } from "../telaStreams";
 
 const EU = "aa".repeat(32);
 const OUTRO = "bb".repeat(32);
@@ -160,23 +155,19 @@ describe("§94.3 — a falha de quem assiste é da transmissão que ele assiste"
     expect(useVoiceStore.getState().telaSeq).toBe(seqInicial + 1);
   });
 
-  it("telaRecebida busca da porta da malha quando não está em cache", () => {
+  /**
+   * A regressão que a consulta de reserva à malha criava: com os m-lines reservados
+   * (§17.2), a malha tem `MediaStream` de tela para todo par da chamada desde a primeira
+   * negociação — trilha muda inclusive. `telaRecebida` precisa responder pelo que CHEGOU,
+   * porque é ela que decide se `share.started` já pode marcar a transmissão como `live`.
+   */
+  it("telaRecebida só conhece o que aoChegarVideo guardou, e esquecer esquece", () => {
     esquecerTodasAsTelas();
-    const fakeStream = { id: "stream-da-malha" } as unknown as MediaStream;
-    const porta = {
-      streamDe: vi.fn((parHex: string, slot: "camera" | "tela" | "voz") => {
-        if (parHex === OUTRO && slot === "tela") return fakeStream;
-        return null;
-      }),
-    };
-    configurarPortaDeStream(porta);
+    expect(telaRecebida(OUTRO)).toBeNull();
 
-    expect(telaRecebida(OUTRO)).toBe(fakeStream);
-    expect(porta.streamDe).toHaveBeenCalledWith(OUTRO, "tela");
-
-    // Segunda chamada lê do cache
-    expect(telaRecebida(OUTRO)).toBe(fakeStream);
-    expect(porta.streamDe).toHaveBeenCalledTimes(1);
+    const chegou = { id: "tela-de-verdade" } as unknown as MediaStream;
+    guardarTelaRecebida(OUTRO, chegou);
+    expect(telaRecebida(OUTRO)).toBe(chegou);
 
     esquecerTodasAsTelas();
     expect(telaRecebida(OUTRO)).toBeNull();

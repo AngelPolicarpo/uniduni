@@ -37,7 +37,6 @@ import { acharMonitorDeSistema } from "./dispositivos";
 import { EstrelaDeTela } from "./tela";
 import { CameraDaChamada, motivoDoErroDeCamera } from "./camera";
 import {
-  configurarPortaDeStream,
   esquecerTelaRecebida,
   esquecerTodasAsTelas,
   guardarTelaDoApresentador,
@@ -1084,7 +1083,6 @@ function configurarVoz(): void {
       aoMicrofoneAusente: (motivo) => useVoiceStore.getState().microfoneCaiu(motivo),
     },
   );
-  configurarPortaDeStream(malha);
 
   /**
    * §17.5 item 7 — o Modo Música onde a plataforma **não** tem loopback: o monitor de

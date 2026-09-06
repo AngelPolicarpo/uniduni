@@ -55,10 +55,6 @@ export interface PortaDaMalha {
     track: MediaStreamTrack,
     stream: MediaStream,
   ): Promise<EnvioDeTrilha | null>;
-  streamDe?(
-    parHex: string,
-    slot: "camera" | "tela" | "voz",
-  ): MediaStream | null;
 }
 
 /** A superfície de §15.4 que a tela usa. */
@@ -168,6 +164,13 @@ export class EstrelaDeTela {
   /** Perfil pedido no `share.start`; base de quem entra depois (§17.5). */
   #qualityBase: ShareQualityDto = "balanced";
   #relogio: ReturnType<typeof setInterval> | null = null;
+  /**
+   * A última audiência anunciada e ainda não aplicada, e o laço que a aplica. Ver
+   * `atualizarEspectadores`: audiência é nível, e o laço é o que a serializa **fora** da
+   * fila de captura.
+   */
+  #audienciaPendente: readonly string[] | null = null;
+  #aplicandoAudiencia: Promise<void> | null = null;
   /**
    * **A fila de captura** — `apresentar` e `parar` nunca correm juntas.
    *
@@ -337,9 +340,43 @@ export class EstrelaDeTela {
    *
    * Quem entra nesta lista é decisão do HOST (§17.5): ela já vem pronta. Filtrar de novo
    * aqui criaria uma segunda fonte de verdade para a mesma regra.
+   *
+   * **Uma de cada vez, e a audiência é NÍVEL, não sequência** (correção de 2026-09-06).
+   *
+   * Duas metades, e as duas foram medidas. A primeira: o host dispara um tique de saúde a
+   * cada `viewersChanged` (`composition/boot.ts`), então dois espectadores entrando com
+   * milissegundos de diferença produzem dois `share.health` sobrepostos — o primeiro com a
+   * lista velha. Correndo juntas, o laço de `saindo` da chamada velha derruba o espectador
+   * que a nova acabou de servir: a tela do segundo pisca ou fica preta, que é o defeito
+   * relatado. Serializar resolve.
+   *
+   * A segunda: a fila **não pode ser a da captura**. `#enfileirar` é de `apresentar` e
+   * `parar`, e servir um espectador espera a negociação dos m-lines daquele par (até 5 s em
+   * `live/voz.ts`). Compartilhando a fila, um par travado prendia o "Parar de
+   * compartilhar" atrás de si — medido em >4 s — e o tique de 2 s reenfileirava outro antes
+   * do anterior terminar, sem teto.
+   *
+   * Por isso **coalescer** em vez de empilhar: a lista de espectadores é um estado, não uma
+   * ordem. Quem chega enquanto uma aplicação corre não vira mais uma volta — substitui a
+   * pendente, e o laço aplica a última quando puder. É a mesma disciplina do coalescimento
+   * de ocupação de §17.6, pela mesma razão: quem chega no meio só precisa do valor final.
    */
   async atualizarEspectadores(chaves: readonly string[]): Promise<void> {
-    return this.#enfileirar(() => this.#atualizarEspectadores(chaves));
+    this.#audienciaPendente = chaves;
+    if (this.#aplicandoAudiencia !== null) return this.#aplicandoAudiencia;
+    const laco = (async () => {
+      try {
+        while (this.#audienciaPendente !== null) {
+          const alvo = this.#audienciaPendente;
+          this.#audienciaPendente = null;
+          await this.#atualizarEspectadores(alvo);
+        }
+      } finally {
+        this.#aplicandoAudiencia = null;
+      }
+    })();
+    this.#aplicandoAudiencia = laco;
+    return laco;
   }
 
   async #atualizarEspectadores(chaves: readonly string[]): Promise<void> {
@@ -392,6 +429,15 @@ export class EstrelaDeTela {
       this.#trackDeAudio === null
         ? null
         : await this.#malha.enviarTrilha(par, this.#trackDeAudio, stream);
+    // A captura pode ter parado enquanto este envio abria — `parar()` deixou de esperar na
+    // mesma fila que a audiência. Registrar aqui um espectador de uma apresentação morta
+    // deixaria um envio pendurado que o `#parar` já passou e ninguém mais encerra.
+    if (this.#track !== track) {
+      await envio.encerrar().catch(() => undefined);
+      await envioDeAudio?.encerrar().catch(() => undefined);
+      log(`espectador ${par.slice(0, 8)} descartado — a captura mudou no meio`);
+      return;
+    }
     this.#espectadores.set(par, { envio, envioDeAudio, quality: this.#qualityBase });
     await envio.definirBitrateKbps(SHARE_QUALITY_KBPS[this.#qualityBase]);
     log(
@@ -502,6 +548,9 @@ export class EstrelaDeTela {
   async #parar(): Promise<void> {
     const sessionId = this.#sessionId;
     this.#pararMedicao();
+    // A audiência que ainda não foi aplicada é desta sessão e morre com ela: aplicá-la
+    // depois seria servir a plateia velha da apresentação seguinte.
+    this.#audienciaPendente = null;
     // Em paralelo: encerrar é uma operação por conexão, e em fila o fechamento da
     // apresentação demorava o tamanho da plateia.
     await Promise.all(
