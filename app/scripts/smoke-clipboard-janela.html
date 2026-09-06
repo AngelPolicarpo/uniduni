@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>smoke:clipboard</title>
+<body>
+  <!--
+    Página mínima carregada por `file://` — o mesmo esquema do renderer do produto (§3.1),
+    e o que importa aqui: `data:` tem origem opaca e não é contexto seguro, então
+    `navigator.clipboard` nem existe. Medir sobre `data:` mediria outra coisa.
+  -->
+  <p>smoke da área de transferência</p>
+</body>

@@ -3,6 +3,7 @@ import { Bell, BellOff, Check, Link2, Pencil, Trash2 } from "lucide-react";
 import { Menu } from "../ui/Menu";
 import type { MenuItem } from "../ui/Menu";
 import { INVITE_LINK_HOST } from "../../mocks/dataset";
+import { copiarTexto } from "../../lib/copiar";
 import {
   useChannelCount,
   useCommunityStore,
@@ -81,12 +82,9 @@ export function ChannelContextMenu({
       label: "Copiar link do canal",
       icon: <Link2 size={ICON} strokeWidth={2} />,
       onSelect: () => {
-        void navigator.clipboard
-          .writeText(`${INVITE_LINK_HOST}/m/${channel.id}`)
-          .then(
-            () => showToast("Link copiado"),
-            () => showToast("Não foi possível copiar o link", "error"),
-          );
+        void copiarTexto(`${INVITE_LINK_HOST}/m/${channel.id}`).then((ok) =>
+          showToast(ok ? "Link copiado" : "Não foi possível copiar o link", ok ? "success" : "error"),
+        );
       },
     });
 

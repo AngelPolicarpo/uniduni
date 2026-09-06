@@ -67,6 +67,26 @@ export const PERMISSION_GROUPS: {
 
 export const INVITE_LINK_HOST = "p2p.app";
 
+/**
+ * O link de convite que se copia — a forma que o sistema operacional **abre**.
+ *
+ * §15.4 aceita as duas gramáticas de `codeOrLink` (`comunidadep2p://join/<CODE16>` e
+ * `<scheme>://<host>/invite/<CODE16>`, com o host ignorado e nunca contactado), mas §3.5
+ * só tem rota de protocolo para a primeira: um deep link é `join/`, `m/` ou `u/`, e mais
+ * nada. O que estava sendo copiado — `p2p.app/invite/<code>` — não é nenhuma das duas:
+ * não tem esquema, então nem casa a segunda gramática, e como link é inerte em qualquer
+ * lugar onde seja colado. `p2p.app` é domínio de exemplo do dataset original, que ninguém
+ * possui e o produto nunca resolve.
+ *
+ * A forma nativa serve os dois caminhos com uma string só: o handler de §3.5 a abre, e o
+ * campo "cole um link ou código" de 0.3 a aceita (a normalização pega tudo depois da
+ * última `/`). Os hífens de exibição saem — `CODE16` de §3.5 são 16 símbolos, sem
+ * separador.
+ */
+export function linkDeConvite(code: string): string {
+  return `comunidadep2p://join/${normalizeInviteCode(code) ?? code}`;
+}
+
 /** §12.1 — Base32 Crockford, sem `I`, `L`, `O` e `U`. */
 const CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 /** §12.1 — `I` e `L` valem `1`, `O` vale `0`. Caixa é irrelevante. */

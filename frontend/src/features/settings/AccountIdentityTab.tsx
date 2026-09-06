@@ -12,6 +12,7 @@ import {
   chaveParaExibir,
 } from "./chaveDeIdentidade";
 import { useToastStore } from "../../store/toastStore";
+import { copiarTexto } from "../../lib/copiar";
 import { nextAvatarColor } from "../../lib/avatar";
 import { useIdentityStore } from "../../store/identityStore";
 import { useCommunityStore } from "../../store/communityStore";
@@ -135,8 +136,12 @@ export function AccountIdentityTab({ identity }: { identity: Identity }) {
                 onClick={() => {
                   // O que se copia é o valor exato exibido: a chave não é reformatada na
                   // tela justamente para que as duas coisas não possam divergir.
-                  void navigator.clipboard.writeText(chavePublica);
-                  showToast("Chave copiada");
+                  void copiarTexto(chavePublica).then((ok) =>
+                    showToast(
+                      ok ? "Chave copiada" : "Não foi possível copiar a chave",
+                      ok ? "success" : "error",
+                    ),
+                  );
                 }}
               >
                 <Copy size={16} strokeWidth={2} aria-hidden="true" />

@@ -192,9 +192,12 @@ export async function sincronizarConvites(communityId: string): Promise<void> {
     invites: [
       ...outras,
       ...r.items.map((i) => ({
-        // O mock chaveia convite por `code`; §15.6 só entrega o código a quem o criou NESTA
-        // instalação (delta U-04). Sem código, a chave pública é o identificador estável.
-        code: i.code ?? i.invitePublicKey,
+        // §15.6 só entrega o código a quem o criou NESTA instalação (delta U-04), e diz
+        // isso em `codeAvailable`. O `?? i.invitePublicKey` que estava aqui apagava a
+        // distinção: a chave pública de 64 hex ia para o campo do código e a tela a
+        // mostrava como se fosse um. Ausente é ausente — quem desenha decide o que dizer.
+        ...(i.codeAvailable && i.code !== undefined ? { code: i.code } : {}),
+        invitePublicKey: i.invitePublicKey,
         communityId,
         createdById: i.createdBy.key,
         createdAt: new Date(i.createdAt).toISOString(),

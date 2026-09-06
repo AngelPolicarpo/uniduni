@@ -264,7 +264,19 @@ export interface Thread {
 /* ─── Convites (§7, 0.3) ─────────────────────────────────────────── */
 
 export interface Invite {
-  code: string;
+  /**
+   * Delta **U-04** — presente **só** nos convites criados nesta instalação.
+   *
+   * O segredo do convite nunca entra no log (`F-21`, `adr-v2.md` A08): se entrasse,
+   * qualquer membro poderia emitir convite em nome de outro. `query.invites` já dizia isso
+   * por `codeAvailable`, e o adaptador jogava a informação fora com
+   * `code: i.code ?? i.invitePublicKey` — o que punha a **chave pública** de 64 hex no
+   * lugar do código de 16 caracteres, em fonte monoespaçada, com um botão de copiar ao
+   * lado. O que se copiava não era convite nenhum.
+   */
+  code?: string;
+  /** O identificador estável da linha (§15.6): existe para todo convite, criado aqui ou não. */
+  invitePublicKey: string;
   communityId: string;
   createdById: string;
   createdAt: string;

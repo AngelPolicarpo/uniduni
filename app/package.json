@@ -12,6 +12,7 @@
     "montar": "node scripts/montar.mjs",
     "smoke:fechamento": "node scripts/smoke-fechamento.mjs",
     "smoke:captura": "node scripts/smoke-captura.mjs",
+    "smoke:clipboard": "node scripts/smoke-clipboard.mjs",
     "smoke:token": "node scripts/smoke-token.mjs",
     "smoke:deeplink": "node scripts/smoke-deeplink.mjs",
     "dist": "npm run montar && electron-builder --config electron-builder.json --publish never",

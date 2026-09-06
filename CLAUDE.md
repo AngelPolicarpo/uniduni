@@ -92,6 +92,8 @@ npm run build
 npm run typecheck
 xvfb-run -a npm run smoke:fechamento
 xvfb-run -a npm run smoke:captura
+xvfb-run -a npm run smoke:clipboard
+xvfb-run -a npm run smoke:deeplink
 xvfb-run -a npm run smoke:voz
 ```
 
@@ -106,6 +108,18 @@ fonte que sumiu da lista viva é negada em vez de trocada pela primeira. O cená
 **janelas** exige um gerenciador de janelas — sem ele o Chromium não enumera janela nenhuma
 e o smoke o declara **não medido**, nunca aprovado. Rode-a ao encostar no caminho de
 captura.
+
+`smoke:clipboard` (§133) mede a lista de permissões de janela de `app/src/main/permissoes.ts`
+contra uma janela real: com os handlers do produto a escrita na área de transferência resolve
+e o texto chega lá; com a lista anterior (`media` sozinha) ela rejeita — o segundo cenário é a
+mutação, embutida. Foi a falta de `clipboard-sanitized-write` que deixou **todo** botão de
+copiar do produto quebrado enquanto três deles diziam "copiado". Rode-a ao encostar no handler
+de permissão ou em `frontend/src/lib/copiar.ts`.
+
+`smoke:deeplink` (§132) exercita a gramática fechada de §3.5 contra `main/deeplink.ts` **e**
+entrega um link a um renderer real, conferindo que ele produziu efeito. Só a primeira metade
+existia, e ela passava com o produto inteiro surdo — `assinarDeepLinks` nunca era chamada.
+Rode-o ao encostar no parse do main, no preload ou em `frontend/src/live/deeplink.ts`.
 
 `smoke:voz` (§98) sobe uma DHT local, DOIS núcleos reais (`utilityProcess` do produto) e
 duas janelas com a `MalhaDeVoz` real, e mede bytes de `inbound-rtp` nos dois sentidos — a

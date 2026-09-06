@@ -5,7 +5,8 @@ import { Modal } from "../../components/ui/Modal";
 import { Select } from "../../components/ui/Select";
 import { SettingsRow, SettingsSection } from "./SettingsLayout";
 import { formatRelativeTime } from "../../lib/format";
-import { INVITE_LINK_HOST } from "../../mocks/dataset";
+import { linkDeConvite } from "../../mocks/dataset";
+import { copiarTexto } from "../../lib/copiar";
 import { api } from "../../ipc/api";
 import { mensagemDeErro } from "../../live/sessao";
 import { sincronizarConvites } from "../../live/sincronizacao";
@@ -26,6 +27,10 @@ const USES_OPTIONS = [
   { value: "10", label: "10 usos" },
   { value: "100", label: "100 usos" },
 ];
+
+/** Delta U-04 — texto obrigatório, e a razão de o código de terceiros não aparecer. */
+const TEXTO_U04 =
+  "Só quem criou um convite consegue ver o código dele. Isso é o que impede alguém de emitir convites em nome de outra pessoa.";
 
 /**
  * Convites da comunidade (§10, 3.1b) — a única porta de entrada; não existe
@@ -69,24 +74,22 @@ export function CommunityInvitesSection({ community }: { community: Community })
   }
 
   /**
-   * §15.4 `invite.revoke` — a lista de §15.6 só dá o código de quem criou
-   * aqui (delta U-04), então quem revoga por um código precisa do
-   * `invitePublicKey`, que é o identificador estável da linha.
+   * §15.4 `invite.revoke` — a chave pública é o identificador estável da linha, e §15.6 a
+   * entrega para **todo** convite (só o código é restrito, por U-04). Revogar é a ação que
+   * continua valendo sem o código, e é por isso que ela não pode depender dele.
+   *
+   * A busca em `api.invites` que existia aqui procurava o alvo comparando o código com a
+   * chave pública, porque o adaptador punha uma no campo da outra. Sem essa confusão, a
+   * linha já traz o que o comando pede.
    */
   async function revogarConvite(invite: Invite) {
     if (revogando !== null) return;
-    setRevogando(invite.code);
+    setRevogando(invite.invitePublicKey);
     try {
-      const lista = await api.invites(community.id);
-      const alvo = lista.items.find(
-        (i) => i.code === invite.code || i.invitePublicKey === invite.code,
-      );
-      if (alvo === undefined) {
-        showToast("Este convite não existe mais", "error");
-        await sincronizarConvites(community.id);
-        return;
-      }
-      await api.inviteRevoke({ communityId: community.id, invitePublicKey: alvo.invitePublicKey });
+      await api.inviteRevoke({
+        communityId: community.id,
+        invitePublicKey: invite.invitePublicKey,
+      });
       await sincronizarConvites(community.id);
     } catch (e) {
       showToast(mensagemDeErro(e), "error");
@@ -109,29 +112,41 @@ export function CommunityInvitesSection({ community }: { community: Community })
 
         {invites.map((invite) => (
           <SettingsRow
-            key={invite.code}
+            key={invite.invitePublicKey}
             action={
               <span className="flex shrink-0 gap-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`Copiar link do convite ${invite.code}`}
-                  onClick={() => {
-                    void navigator.clipboard.writeText(
-                      `${INVITE_LINK_HOST}/invite/${invite.code}`,
-                    );
-                    showToast("Link copiado");
-                  }}
-                >
-                  <Copy size={16} strokeWidth={2} aria-hidden="true" />
-                </Button>
+                {/*
+                  U-04 — sem código nesta instalação não há link para copiar, e a ação fica
+                  **indisponível**. Antes ela aparecia sempre e copiava
+                  `p2p.app/invite/<64 hex da chave pública>`: um link que não resgata nada.
+                */}
+                {invite.code !== undefined && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Copiar link do convite ${invite.code}`}
+                    onClick={() => {
+                      const codigo = invite.code;
+                      if (codigo === undefined) return;
+                      void copiarTexto(linkDeConvite(codigo)).then((ok) =>
+                        showToast(
+                          ok ? "Link copiado" : "Não foi possível copiar o link",
+                          ok ? "success" : "error",
+                        ),
+                      );
+                    }}
+                  >
+                    <Copy size={16} strokeWidth={2} aria-hidden="true" />
+                  </Button>
+                )}
                 {/* Revogar é destrutivo mas reversível na prática:
-                    basta criar outro convite (§15). */}
+                    basta criar outro convite (§15). Continua disponível sem o código —
+                    a chave pública é o identificador, e é ela que `invite.revoke` pede. */}
                 <Button
                   variant="ghost"
                   size="sm"
-                  loading={revogando === invite.code}
-                  disabled={revogando !== null && revogando !== invite.code}
+                  loading={revogando === invite.invitePublicKey}
+                  disabled={revogando !== null && revogando !== invite.invitePublicKey}
                   onClick={() => void revogarConvite(invite)}
                 >
                   Revogar
@@ -139,9 +154,15 @@ export function CommunityInvitesSection({ community }: { community: Community })
               </span>
             }
           >
-            <span className="block truncate font-mono text-body text-text-primary">
-              {invite.code}
-            </span>
+            {invite.code !== undefined ? (
+              <span className="block truncate font-mono text-body text-text-primary">
+                {invite.code}
+              </span>
+            ) : (
+              <span className="block truncate text-body text-text-tertiary">
+                Código não disponível neste dispositivo
+              </span>
+            )}
             <span className="block truncate text-meta text-text-tertiary">
               {findMember(community.id, invite.createdById)?.displayName ??
                 "Alguém"}{" "}
@@ -153,6 +174,11 @@ export function CommunityInvitesSection({ community }: { community: Community })
             </span>
           </SettingsRow>
         ))}
+
+        {/* U-04 — o texto é obrigatório, e explica a linha acima em vez de só constatá-la. */}
+        {invites.some((i) => i.code === undefined) && (
+          <p className="text-meta text-text-tertiary">{TEXTO_U04}</p>
+        )}
 
         <Button
           variant="secondary"

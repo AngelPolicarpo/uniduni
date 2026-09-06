@@ -10216,3 +10216,158 @@ registrados porque a diferença importa para quem for reler o relatório:
 - Uma correção foi verificada por **mutação**: comentar `assinarDeepLinks()` em `App.tsx`
   derruba o `smoke:deeplink` com `PENDENTE=null`, e só ele — a suíte de unidade continua
   verde, que é precisamente por que ela não pegou o defeito original.
+
+---
+
+## 133. Copiar não copiava: a permissão que faltava e a linha de convite que mentia — 2026-09-06
+
+Pergunta do operador: **por que copiar o convite não funciona?** A resposta tem três
+camadas, e as três estavam no mesmo botão.
+
+### 133.1 A causa raiz: `clipboard-sanitized-write` recusada
+
+`app/src/main/index.ts` instalava, no `whenReady`:
+
+```ts
+session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+  callback(permission === 'media');
+});
+session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media');
+```
+
+`navigator.clipboard.writeText` pede ao Chromium a permissão `clipboard-sanitized-write`.
+Ela não é `media`, então o handler respondia `false` e a promessa rejeitava.
+
+**Medido antes de afirmar**, em harness próprio — mesma janela, única diferença a lista de
+permissões:
+
+| Lista | Promessa | Área de transferência |
+|---|---|---|
+| só `media` (o produto) | `REJEITOU: NotAllowedError: Write permission denied` | fica com o conteúdo anterior |
+| sem handler (default do Electron) | `RESOLVEU` | recebe o texto |
+| `media` + `clipboard-sanitized-write` | `RESOLVEU` | recebe o texto |
+
+Quatro botões atingidos: link de convite (3.1b), link do canal (§15), link da mensagem
+(2.1) e chave pública (3.1). **Nenhum deles jamais copiou nada** desde que o handler
+existe.
+
+A permissão entrou na lista. Ela não afrouxa §25.4 regra 5 — a área de transferência é
+local, o Chromium só a concede com gesto do usuário e documento em foco, e o gesto é a
+pessoa clicando "copiar". Nenhum dado sai do dispositivo. A **leitura** (`clipboard-read`)
+continua recusada: o produto nunca precisa saber o que está lá.
+
+### 133.2 Por que ninguém viu: a interface afirmava o sucesso
+
+Três dos quatro chamadores faziam `void navigator.clipboard.writeText(...)` e mostravam o
+toast logo em seguida, incondicionalmente:
+
+```ts
+void navigator.clipboard.writeText(`${INVITE_LINK_HOST}/invite/${invite.code}`);
+showToast("Link copiado");
+```
+
+A promessa rejeitada era descartada e a tela dizia que tinha copiado. O único que tratava a
+recusa era o "Copiar link do canal" — e por isso era o único lugar onde o defeito **era
+visível**, como um "Não foi possível copiar o link" que aparecia sempre e que ninguém ligou
+à lista de permissões.
+
+A correção estrutural é `lib/copiar.ts`, que devolve `boolean` em vez de `void`: quem chama
+é obrigado a olhar. Os quatro sítios passaram a reportar o desfecho real.
+
+### 133.3 O que se copiava não era um convite
+
+Duas coisas separadas, as duas no mesmo `onClick`.
+
+**A linha punha a chave pública no lugar do código.** `sincronizarConvites` fazia:
+
+```ts
+code: i.code ?? i.invitePublicKey,
+```
+
+`query.invites` já serve U-04 corretamente — entrega `code` só nos convites criados nesta
+instalação e diz isso em `codeAvailable`. O adaptador jogava a informação fora: para todo
+convite de terceiro, a **chave pública de 64 hex** ia para o campo do código, a tela a
+exibia em fonte monoespaçada como se fosse um código de 16 caracteres, e oferecia
+"Copiar link do convite \<64 hex\>" — um link que não resgata nada, nem colado no campo de
+0.3.
+
+É a violação direta de **U-04**, que é explícita: "Nos demais, a coluna exibe 'código não
+disponível neste dispositivo' e a ação de copiar fica indisponível; todo o resto (quem
+criou, usos, expiração, revogar) continua." O texto obrigatório da delta também não existia
+em lugar nenhum da tela. Ambos entraram.
+
+Efeito colateral bom: `revogarConvite` fazia um `api.invites` extra e procurava o alvo
+comparando `i.code === invite.code || i.invitePublicKey === invite.code` — a busca existia
+**por causa** da confusão entre os dois campos. Com `invitePublicKey` na linha, o comando
+recebe direto o que pede.
+
+**E o link não era link.** `p2p.app/invite/<code>` vem do dataset ilustrativo de
+`frontend.md` §2. §15.4 aceita duas gramáticas de `codeOrLink` (`comunidadep2p://join/…` e
+`<scheme>://<host>/invite/…`, com o host ignorado e nunca contactado) e essa string não é
+nenhuma das duas — não tem esquema. Como link é inerte em qualquer lugar onde seja colado,
+e `p2p.app` é um domínio que ninguém possui.
+
+Passou a ser `comunidadep2p://join/<CODE16>`: a única forma que §3.5 manda o sistema
+operacional abrir, e que o campo "cole um link ou código" de 0.3 também aceita. Uma string
+serve os dois caminhos. Os hífens de exibição saem — `CODE16` são 16 símbolos, sem
+separador, e é isso que o regex do main exige.
+
+### 133.4 O smoke que faltava, e a lista que agora é decisão escrita
+
+A lista de permissões morava dentro de `main/index.ts`, que abre janela ao ser importado:
+nada ali é exercitável sem um app inteiro. É o problema de §114.5 outra vez, e a
+consequência foi a mesma — a regra que mais importa vivendo onde nenhum teste a alcança.
+
+A decisão saiu para `main/permissoes.ts` e ganhou `smoke:clipboard`, que a exercita com os
+handlers **reais** (não uma cópia — foi a cópia divergente que estragou o `smoke:deeplink`
+antes de §132). Dois cenários:
+
+- **produto** — a promessa resolve, o texto chega à área de transferência **de verdade**
+  (lida pelo módulo `clipboard` do Electron, não pela promessa), `clipboard-read` continua
+  recusada e a lista continua fechada;
+- **so-media** — a lista anterior, que **precisa continuar reprovando**: é ela que prova que
+  o verde acima é a linha nova e não o default do Electron.
+
+A mutação está embutida no smoke, então não é preciso lembrar de fazê-la.
+
+Um detalhe medido no caminho: a janela do smoke carrega `file://`, como o renderer do
+produto (§3.1). Sobre `data:` o teste media outra coisa — origem opaca não é contexto
+seguro, e ali `navigator.clipboard` é `undefined`, o que aparece como `TypeError` e não
+como a recusa de permissão que se quer observar.
+
+### 133.5 Emendas normativas
+
+- **`backend-v2.md` §25.4 regra 7** (nova): a lista de permissões de janela é fechada e está
+  escrita — `media` e `clipboard-sanitized-write`, nada mais; a leitura da área de
+  transferência é recusada; e a regra geral, que é a lição do §133.2: **quem chama uma API
+  que pede permissão trata a recusa.** Prometer o resultado antes de tê-lo é o defeito; a
+  permissão faltante só decidiu quantas vezes a promessa era falsa.
+- **`frontend.md` 3.1b**: as três regras da lista de convites — U-04 aplicada à linha
+  inteira (sem código: texto próprio, sem copiar, com revogar), o que se copia
+  (`comunidadep2p://join/<CODE16>`, e por que não `p2p.app/invite/…`), e o toast que diz o
+  que aconteceu.
+
+### 133.6 O que não foi corrigido
+
+- **B77 continua aberto.** O link de mensagem e o link de canal agora *copiam* (a permissão
+  os conserta), mas continuam produzindo `p2p.app/m/<base64url do JSON>`, que o handler de
+  §3.5 não abre. Diferente do convite, ali não dá para consertar no renderer: o MSGREF de
+  §3.5 é `communityId(32) ‖ opId(32)` e o `opId` não está no renderer. Segue precisando da
+  decisão de contrato que B77 descreve.
+- **Nenhuma tela desta fatia tem teste de render** (`B20`). A correção de
+  `CommunityInvitesSection` está coberta pelo adaptador (`convites-da-comunidade.test.ts`) e
+  por `linkDeConvite`; o JSX que decide mostrar ou esconder o botão, não.
+- **O `smoke:clipboard` mede a permissão, não os quatro botões.** Que cada chamador trate a
+  recusa é garantido pela assinatura de `copiarTexto` (devolve `boolean`) e pelo build, não
+  por execução.
+
+### 133.7 Validação
+
+- `frontend`: `npm run lint`, `npm run build`, `npm test` — **630** testes. Sete novos em
+  `convites-da-comunidade.test.ts`: o mapeamento de U-04 nos dois sentidos (incluindo
+  `codeAvailable: false` vencendo um `code` que venha junto por engano), a chave pública como
+  identificador estável, e `linkDeConvite` conferido **contra o regex de §3.5 copiado do
+  main** — mais a asserção de que a forma antiga não casa.
+- `app`: `npm run build`, `npm run typecheck`, **`smoke:clipboard`** (as seis afirmações dos
+  dois cenários), `smoke:fechamento` e `smoke:deeplink` como regressão.
+- `core`: não foi tocado.

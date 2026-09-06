@@ -24,18 +24,10 @@ import { useMessageStore, useThreadForRoot } from "../../store/messageStore";
 import { useToastStore } from "../../store/toastStore";
 import { useUiStore } from "../../store/uiStore";
 import { encodeMessageRef } from "../../lib/messageLink";
+import { copiarTexto } from "../../lib/copiar";
 import type { Message } from "../../domain/types";
 
 const ICON = 16;
-
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export interface MessageActionsProps {
   message: Message;
@@ -112,7 +104,7 @@ export function MessageActions({
       channelId: message.channelId,
       messageId: message.id,
     })}`;
-    if (await copyToClipboard(link)) showToast("Link copiado");
+    if (await copiarTexto(link)) showToast("Link copiado");
     else showToast("Não foi possível copiar o link", "error");
   }
 

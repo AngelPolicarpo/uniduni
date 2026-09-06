@@ -6646,6 +6646,29 @@ multiplexa STUN/TURN quando em modo host) e as sockets do `RTCPeerConnection` no
    escrito agora; a lista de proibições não muda.
 6. Builds assinados (Authenticode no Windows). Hash do artefato publicado junto do release.
    Notarização era exigência de macOS e saiu com ele da matriz (A16).
+7. **A lista de permissões de janela é fechada, e está escrita (emenda de 2026-09-06).** O
+   `setPermissionRequestHandler`/`setPermissionCheckHandler` do main concede exatamente
+   `media` (§17.2 — a captura é toda do renderer) e `clipboard-sanitized-write` (a **escrita**
+   na área de transferência, que `navigator.clipboard.writeText` pede). Tudo o mais é
+   recusado: geolocalização, notificações do SO, MIDI, USB, HID, serial — e a **leitura** da
+   área de transferência (`clipboard-read`), que este produto nunca precisa.
+
+   A entrada de escrita não é exceção à regra 5, e vale dizer por quê: a área de
+   transferência é local, o Chromium só a concede com gesto do usuário e documento em foco,
+   e o gesto é a pessoa clicando "copiar". Nenhum dado sai do dispositivo.
+
+   **Por que virou regra.** A lista dizia só `media`, e com isso **todo** botão de copiar do
+   produto rejeitava com `NotAllowedError` — link de convite, link do canal, link da
+   mensagem e chave pública. Três dos quatro chamadores descartavam a promessa e mostravam
+   "copiado" logo depois, então a interface afirmava um sucesso que nunca houve. A lista
+   morava só no código, dentro de um arquivo que abre janela ao ser importado e por isso não
+   era exercitável por teste nenhum (o problema de §114.5, de novo). Agora ela é decisão
+   escrita, mora em módulo próprio e o `smoke:clipboard` a mede — inclusive o cenário
+   anterior, que precisa continuar reprovando.
+
+   Regra geral, para quando a lista mudar: **quem chama uma API que pede permissão trata a
+   recusa**. Prometer o resultado antes de tê-lo é o defeito, não a permissão faltante — a
+   permissão só decidiu quantas vezes a promessa era falsa.
 
 ### 25.5 Integridade de configuração (fecha `T-22`)
 
