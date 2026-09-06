@@ -84,6 +84,8 @@ export interface CanalDeEscrita {
   abrirThread(entrada: { channelId: string; rootMessageId: string; clientRef: string }): Promise<{ opId: string }>;
   /** Hidratação de reações (`query.message` → `MessageFull.reactions`, §15.6.1). */
   observarReacoes(channelId: string, messageId: string): void;
+  /** §15.6 `query.reactors` (DR-47) — QUEM reagiu; o fio da lista só diz quantos. */
+  observarReatores(channelId: string, messageId: string, emoji: string): void;
   /** Hidratação de thread (`query.thread` → respostas além da janela do canal, §15.6). */
   observarThread(communityId: string, threadId: string): void;
   /** §9, 2.2 / §6.15 — abrir o painel É ler: o núcleo zera o contador da thread. */
@@ -112,6 +114,11 @@ const NENHUMA: Message[] = [];
 /** Prefixo do id provisório de thread, até a projeção trazer o real (§8.x R-24). */
 export const THREAD_TEMPORARIA_PREFIXO = "thr-temp-";
 
+/** Chave de `reatoresPorChip`. O `\u0000` não aparece em id nem em emoji. */
+export function chaveDoChip(messageId: string, emoji: string): string {
+  return `${messageId}\u0000${emoji}`;
+}
+
 interface MessageState {
   /** Base vinda do núcleo, por canal (§15.6 `query.messages`). */
   remoteMessages: Record<string, Message[]>;
@@ -124,11 +131,16 @@ interface MessageState {
    */
   threadLeituras: Record<string, { respostas: Message[]; total: number | null }>;
   /**
-   * Não-lidas por thread (§9, 2.2) — o que `query.thread.unread` responde para o canal
-   * ativo, por id. Só threads com contador acima de zero entram; ausência é lida.
+   * Não-lidas por thread (§9, 2.2) — o que `query.thread.unread` responde, **por
+   * canal**. Só threads com contador acima de zero entram; ausência é lida.
+   *
+   * A chave por canal não é organização: o mapa era único e a resposta de CADA
+   * canal o substituía inteiro. Trocar de canal depressa deixava a resposta lenta
+   * do canal anterior chegar por último e apagar os badges do canal na tela —
+   * eles só voltavam com a mensagem seguinte.
    */
-  naoLidasPorThread: Record<string, number>;
-  aplicarNaoLidasDeThreads: (porThread: Record<string, number>) => void;
+  naoLidasPorThread: Record<string, Record<string, number>>;
+  aplicarNaoLidasDeThreads: (channelId: string, porThread: Record<string, number>) => void;
   aplicarRemoto: (patch: { remoteMessages?: Record<string, Message[]>; remoteThreads?: Record<string, Thread> }) => void;
   /** Bolhas otimistas desta sessão, por canal. Sai delas só por desfecho. */
   sentByChannel: Record<string, Message[]>;
@@ -159,11 +171,37 @@ interface MessageState {
   /** Anexo de §15.6.1 hidratado por `query.message`, por mensagem — o fio traz no máximo um. */
   anexosRemotos: Record<string, Attachment>;
   /**
+   * Quem reagiu, por `messageId\u0000emoji` (§15.6 `query.reactors`).
+   *
+   * `Reaction.userIds` NÃO responde isso: o fio de §15.6.1 traz só
+   * `{emoji, count, mine}`, e o adaptador põe ali no máximo a própria chave. O
+   * tooltip que lia essa lista dizia " reagiu com 👍" — nome vazio — para toda
+   * reação de outra pessoa.
+   */
+  reatoresPorChip: Record<string, { total: number; identityIds: string[] }>;
+  /**
    * Como desfazer cada escrita de mensagem ainda não aceita, com o rótulo da
    * ação para o aviso. Entra no desfecho de falha e sai no de aceite — uma
    * recusa nunca fica aplicada em silêncio (lição de §58.11/§59).
    */
   undoPorRef: Record<string, { acao: string; desfazer: () => void }>;
+  /**
+   * Que mensagem — e que campos dela — cada escrita EM VOO sobre registro real
+   * está sobrescrevendo otimisticamente. É o que dá fim ao override: aceito na
+   * réplica (§11.6 passo 8), o campo volta a ser o da projeção. Sem isto o
+   * override era eterno, e uma edição minha mascarava para sempre a edição — ou
+   * o tombstone de moderação — que outra pessoa fizesse depois.
+   */
+  alvoPorRef: Record<string, { messageId: string; channelId: string; campos: ReadonlyArray<keyof Message> }>;
+  /**
+   * O pedido de envio que originou cada bolha, enquanto ela não tiver `opId`.
+   *
+   * Sem núcleo — ou com o comando falhando antes da resposta — a op nunca chegou
+   * à outbox: não existe envelope para `message.retry` reenviar (§11.3), e o
+   * botão "Tentar novamente" da linha ficava clicando no vazio. Guardar o pedido
+   * é o que dá a esse botão o único significado possível ali: enviar de novo.
+   */
+  envioPorRef: Record<string, SendMessageInput>;
 
   /** O transporte corrente; `null` é "sem núcleo". Injetado pelo sincronizador. */
   escrita: CanalDeEscrita | null;
@@ -188,6 +226,10 @@ interface MessageState {
   aplicarReacoesRemotas: (messageId: string, reactions: Reaction[]) => void;
   /** Guarda o anexo que `query.message` trouxe para uma mensagem (§15.6.1). */
   aplicarAnexoRemoto: (messageId: string, anexo: Attachment) => void;
+  /** Pede ao sincronizador quem reagiu com um emoji (`query.reactors`). */
+  hidratarReatores: (channelId: string, messageId: string, emoji: string) => void;
+  /** Guarda o que `query.reactors` respondeu para um chip. */
+  aplicarReatores: (messageId: string, emoji: string, reatores: { total: number; identityIds: string[] }) => void;
   /** Pede ao sincronizador a thread projetada (`query.thread`) — painel aberto. */
   hidratarThread: (communityId: string, threadId: string) => void;
   /** Guarda o que `query.thread` respondeu, para a vista mesclar com a página do canal. */
@@ -203,7 +245,7 @@ interface MessageState {
   marcarFalha: (ref: string, motivo: string) => void;
   /** Redesenho da fila a partir de `query.outbox`; substitui o conjunto anterior. */
   aplicarFila: (
-    bolhas: Array<{ ref: string; opId: string; channelId: string; content: string; deliveryState: Message["deliveryState"] }>,
+    bolhas: Array<{ ref: string; opId: string; channelId: string; content: string; timestamp: string; deliveryState: Message["deliveryState"] }>,
   ) => void;
   /**
    * Bolhas de canais que deixaram de existir na réplica local (§18) — devolve
@@ -211,6 +253,48 @@ interface MessageState {
    */
   descartarCanal: (channelIds: string[]) => number;
   reset: () => void;
+}
+
+/**
+ * Registra o alvo de uma escrita otimista sobre mensagem real, para o desfecho
+ * saber quais campos aposentar. Anda SEMPRE junto de `withOverride` sobre um
+ * `message.id` — override sem alvo é override que ninguém recolhe.
+ */
+function comAlvo(
+  state: MessageState,
+  ref: string,
+  message: Message,
+  campos: ReadonlyArray<keyof Message>,
+): Pick<MessageState, "alvoPorRef"> {
+  return {
+    alvoPorRef: {
+      ...state.alvoPorRef,
+      [ref]: { messageId: message.id, channelId: message.channelId, campos },
+    },
+  };
+}
+
+/** Tira do mapa de alvos o `ref` cujo desfecho já chegou. */
+function semAlvo(alvoPorRef: MessageState["alvoPorRef"], ref: string): MessageState["alvoPorRef"] {
+  const resto = { ...alvoPorRef };
+  delete resto[ref];
+  return resto;
+}
+
+/** Remove campos de um override; a chave inteira sai quando não sobra nada. */
+function semCampos(
+  overrides: Record<string, Partial<Message>>,
+  messageId: string,
+  campos: ReadonlyArray<keyof Message>,
+): Record<string, Partial<Message>> {
+  const atual = overrides[messageId];
+  if (atual === undefined) return overrides;
+  const resto: Partial<Message> = { ...atual };
+  for (const campo of campos) delete resto[campo];
+  const proximo = { ...overrides };
+  if (Object.keys(resto).length === 0) delete proximo[messageId];
+  else proximo[messageId] = resto;
+  return proximo;
 }
 
 /** Estado de entrega efetivo: o override manda sobre o da mensagem. */
@@ -231,7 +315,13 @@ function withOverride(
   };
 }
 
-/** Reação de um usuário entra ou sai; chip zerado some junto (§18). */
+/**
+ * Reação de um usuário entra ou sai; chip zerado some junto (§18).
+ *
+ * O contador anda de UM, e não vira `userIds.length`: §15.6.1 manda no fio só
+ * `{emoji, count, mine}`, então `userIds` nunca tem quem mais reagiu — derivar o
+ * contador dessa lista colapsaria as cinco reações de terceiros para a minha.
+ */
 function toggled(
   reactions: Reaction[],
   emoji: string,
@@ -249,7 +339,7 @@ function toggled(
   return reactions
     .map((reaction) =>
       reaction.emoji === emoji
-        ? { ...reaction, userIds, count: userIds.length }
+        ? { ...reaction, userIds, count: reaction.count + (mine ? -1 : 1) }
         : reaction,
     )
     .filter((reaction) => reaction.count > 0);
@@ -272,14 +362,68 @@ export const useMessageStore = create<MessageState>()((set, get) => {
       .catch((e: unknown) => get().marcarFalha(ref, e instanceof Error ? e.message : String(e)));
   }
 
+  /**
+   * O despacho do envio, separado para o "Tentar novamente" de uma bolha SEM
+   * `opId` poder repeti-lo. Cancelamento apaga a bolha; falha a deixa visível
+   * com o motivo, que é o desfecho de §11.1.
+   */
+  async function enviarPeloRef(ref: string, entrada: SendMessageInput): Promise<void> {
+    const canal = get().escrita;
+    if (canal === null) {
+      set((state) => ({
+        ...withOverride(state, ref, { deliveryState: "failed" }),
+        errosPorRef: { ...state.errosPorRef, [ref]: "O núcleo não está acessível" },
+      }));
+      return;
+    }
+    try {
+      const r = await canal.enviar({
+        communityId: entrada.communityId,
+        channelId: entrada.channelId,
+        content: entrada.content,
+        mentions: entrada.mentions,
+        ...(entrada.replyToId !== undefined ? { replyToId: entrada.replyToId } : {}),
+        ...(entrada.threadId !== undefined ? { threadId: entrada.threadId } : {}),
+        ...(entrada.attachment !== undefined ? { attachment: { ticketId: entrada.attachment.ticketId } } : {}),
+        clientRef: ref,
+      });
+      if (r.cancelado === true) {
+        // O gesto abortou antes do quadro: a bolha nunca deveria ter existido.
+        set((state) => {
+          const envioPorRef = { ...state.envioPorRef };
+          delete envioPorRef[ref];
+          return {
+            sentByChannel: {
+              ...state.sentByChannel,
+              [entrada.channelId]: (state.sentByChannel[entrada.channelId] ?? []).filter((m) => m.id !== ref),
+            },
+            envioPorRef,
+          };
+        });
+        return;
+      }
+      // Com envelope na fila, o retry passa a ser o de §11.3 (o MESMO envelope).
+      set((state) => {
+        const envioPorRef = { ...state.envioPorRef };
+        delete envioPorRef[ref];
+        return { opIdPorRef: { ...state.opIdPorRef, [ref]: r.opId }, envioPorRef };
+      });
+    } catch (e) {
+      set((state) => ({
+        ...withOverride(state, ref, { deliveryState: "failed" }),
+        errosPorRef: { ...state.errosPorRef, [ref]: e instanceof Error ? e.message : String(e) },
+      }));
+    }
+  }
+
   return {
   remoteMessages: {},
   remoteThreads: {},
   aplicarRemoto: (patch) => set(patch),
   threadLeituras: {},
   naoLidasPorThread: {},
-  aplicarNaoLidasDeThreads(porThread) {
-    set({ naoLidasPorThread: porThread });
+  aplicarNaoLidasDeThreads(channelId, porThread) {
+    set((state) => ({ naoLidasPorThread: { ...state.naoLidasPorThread, [channelId]: porThread } }));
   },
   sentByChannel: {},
   filaPorCanal: {},
@@ -292,7 +436,10 @@ export const useMessageStore = create<MessageState>()((set, get) => {
   errosPorRef: {},
   remoteReactions: {},
   anexosRemotos: {},
+  reatoresPorChip: {},
   undoPorRef: {},
+  alvoPorRef: {},
+  envioPorRef: {},
 
   escrita: null,
   configurarEscrita(canal) {
@@ -325,42 +472,14 @@ export const useMessageStore = create<MessageState>()((set, get) => {
         ...state.sentByChannel,
         [channelId]: [...(state.sentByChannel[channelId] ?? []), message],
       },
+      // Enquanto não houver `opId`, este pedido é a única forma de tentar de novo.
+      envioPorRef: {
+        ...state.envioPorRef,
+        [ref]: { communityId, channelId, content, mentions, ...(replyToId !== undefined ? { replyToId } : {}), ...(threadId !== undefined ? { threadId } : {}), ...(attachment !== undefined ? { attachment } : {}) },
+      },
     }));
 
-    const canal = get().escrita;
-    if (canal === null) {
-      set((state) => ({ ...withOverride(state, ref, { deliveryState: "failed" }), errosPorRef: { ...state.errosPorRef, [ref]: "O núcleo não está acessível" } }));
-      return;
-    }
-
-    try {
-      const r = await canal.enviar({
-        communityId,
-        channelId,
-        content,
-        mentions,
-        ...(replyToId !== undefined ? { replyToId } : {}),
-        ...(threadId !== undefined ? { threadId } : {}),
-        ...(attachment !== undefined ? { attachment: { ticketId: attachment.ticketId } } : {}),
-        clientRef: ref,
-      });
-      if (r.cancelado === true) {
-        // O gesto abortou antes do quadro: a bolha nunca deveria ter existido.
-        set((state) => ({
-          sentByChannel: {
-            ...state.sentByChannel,
-            [channelId]: (state.sentByChannel[channelId] ?? []).filter((m) => m.id !== ref),
-          },
-        }));
-        return;
-      }
-      set((state) => ({ opIdPorRef: { ...state.opIdPorRef, [ref]: r.opId } }));
-    } catch (e) {
-      set((state) => ({
-        ...withOverride(state, ref, { deliveryState: "failed" }),
-        errosPorRef: { ...state.errosPorRef, [ref]: e instanceof Error ? e.message : String(e) },
-      }));
-    }
+    await enviarPeloRef(ref, { communityId, channelId, content, mentions, ...(replyToId !== undefined ? { replyToId } : {}), ...(threadId !== undefined ? { threadId } : {}), ...(attachment !== undefined ? { attachment } : {}) });
   },
 
   createThread: (rootMessage) => {
@@ -386,6 +505,7 @@ export const useMessageStore = create<MessageState>()((set, get) => {
         ...state.overrides,
         [rootMessage.id]: { ...state.overrides[rootMessage.id], threadId: tempId },
       },
+      ...comAlvo(state, ref, rootMessage, ["threadId"]),
       undoPorRef: {
         ...state.undoPorRef,
         [ref]: {
@@ -414,9 +534,20 @@ export const useMessageStore = create<MessageState>()((set, get) => {
   retrySend: (ref) => {
     const state = get();
     const opId = state.opIdPorRef[ref];
-    // Sem `opId` não há envelope para reenviar (§11.3: retry reenvia o MESMO).
-    // Acontece só se o desfecho de erro veio antes da resposta do comando.
-    if (opId === undefined) return;
+    if (opId === undefined) {
+      // Sem `opId` não há envelope para reenviar (§11.3: retry reenvia o MESMO):
+      // a op nunca chegou à outbox — núcleo inacessível, ou o comando falhou antes
+      // da resposta. Aqui "tentar de novo" só pode significar ENVIAR de novo, e é
+      // isso que o botão faz; devolver em silêncio o deixava morto na tela.
+      const entrada = state.envioPorRef[ref];
+      if (entrada === undefined) return;
+      set((s) => ({
+        ...withOverride(s, ref, { deliveryState: "sending" }),
+        errosPorRef: Object.fromEntries(Object.entries(s.errosPorRef).filter(([id]) => id !== ref)),
+      }));
+      void enviarPeloRef(ref, entrada);
+      return;
+    }
     set((s) => ({
       ...withOverride(s, ref, { deliveryState: "sending" }),
       errosPorRef: Object.fromEntries(Object.entries(s.errosPorRef).filter(([id]) => id !== ref)),
@@ -444,6 +575,7 @@ export const useMessageStore = create<MessageState>()((set, get) => {
     const ref = clientRef();
     set((s) => ({
       ...withOverride(s, message.id, { reactions: toggled(base, emoji, userId) }),
+      ...comAlvo(s, ref, message, ["reactions"]),
       undoPorRef: {
         ...s.undoPorRef,
         [ref]: {
@@ -468,6 +600,7 @@ export const useMessageStore = create<MessageState>()((set, get) => {
     const ref = clientRef();
     set((s) => ({
       ...withOverride(s, message.id, { pinned }),
+      ...comAlvo(s, ref, message, ["pinned"]),
       undoPorRef: {
         ...s.undoPorRef,
         [ref]: {
@@ -493,6 +626,7 @@ export const useMessageStore = create<MessageState>()((set, get) => {
     const ref = clientRef();
     set((s) => ({
       ...withOverride(s, message.id, { content, edited: true }),
+      ...comAlvo(s, ref, message, ["content", "edited"]),
       undoPorRef: {
         ...s.undoPorRef,
         [ref]: {
@@ -538,21 +672,43 @@ export const useMessageStore = create<MessageState>()((set, get) => {
     })),
 
   assentarAceita(ref, messageId) {
+    const alvo = get().alvoPorRef[ref];
     set((state) => {
       // Aceite descarta o rollback: observado na réplica, não há o que desfazer.
       const undoPorRef = { ...state.undoPorRef };
       delete undoPorRef[ref];
-      return {
+      const base = {
         aceitasRefs: { ...state.aceitasRefs, [ref]: messageId },
-        ...withOverride(state, ref, { deliveryState: "sent" }),
         errosPorRef: Object.fromEntries(Object.entries(state.errosPorRef).filter(([id]) => id !== ref)),
         undoPorRef,
+        alvoPorRef: semAlvo(state.alvoPorRef, ref),
+      };
+      if (alvo === undefined) {
+        // `ref` de bolha própria: ela some quando a linha real entra na base, e até
+        // lá o override de entrega é o que a mantém "sent" em vez de piscar.
+        return { ...base, ...withOverride(state, ref, { deliveryState: "sent" }) };
+      }
+      // Escrita sobre mensagem real: o otimismo cumpriu o papel dele. Aposenta os
+      // campos que ele segurava — daqui em diante manda a projeção, e é ela que
+      // carrega a edição, o tombstone ou a fixação de QUALQUER pessoa (§11.6 passo 8).
+      //
+      // Reação é o caso em que a projeção não responde sozinha: §15.6.1 não põe
+      // reação na lista do canal. Por isso o override dela sai só quando a
+      // hidratação relida chegar — quem a pede é a linha abaixo.
+      const campos = alvo.campos.filter((c) => c !== "reactions");
+      return {
+        ...base,
+        ...(campos.length > 0 ? { overrides: semCampos(state.overrides, alvo.messageId, campos) } : {}),
       };
     });
+    if (alvo !== undefined && alvo.campos.includes("reactions")) {
+      get().escrita?.observarReacoes(alvo.channelId, alvo.messageId);
+    }
   },
 
   marcarFalha(ref, motivo) {
     const undo = get().undoPorRef[ref];
+    set((state) => ({ alvoPorRef: semAlvo(state.alvoPorRef, ref) }));
     if (undo !== undefined) {
       // Escrita sobre mensagem real (editar/apagar/fixar/reagir/thread): a recusa
       // desfaz o otimismo e avisa nomeado — nunca fica aplicada em silêncio.
@@ -576,11 +732,30 @@ export const useMessageStore = create<MessageState>()((set, get) => {
   },
 
   aplicarReacoesRemotas(messageId, reactions) {
-    set((state) => ({ remoteReactions: { ...state.remoteReactions, [messageId]: reactions } }));
+    set((state) => {
+      // A leitura é do estado projetado AGORA. Ela só não vence o override quando
+      // ainda há reação minha em voo sobre esta mensagem — aí o otimismo é o mais
+      // novo dos dois, e recolhê-lo faria o chip piscar de volta ao valor antigo.
+      const emVoo = Object.values(state.alvoPorRef).some(
+        (alvo) => alvo.messageId === messageId && alvo.campos.includes("reactions"),
+      );
+      return {
+        remoteReactions: { ...state.remoteReactions, [messageId]: reactions },
+        ...(emVoo ? {} : { overrides: semCampos(state.overrides, messageId, ["reactions"]) }),
+      };
+    });
   },
 
   aplicarAnexoRemoto(messageId, anexo) {
     set((state) => ({ anexosRemotos: { ...state.anexosRemotos, [messageId]: anexo } }));
+  },
+
+  hidratarReatores(channelId, messageId, emoji) {
+    get().escrita?.observarReatores(channelId, messageId, emoji);
+  },
+
+  aplicarReatores(messageId, emoji, reatores) {
+    set((state) => ({ reatoresPorChip: { ...state.reatoresPorChip, [chaveDoChip(messageId, emoji)]: reatores } }));
   },
 
   hidratarThread(communityId, threadId) {
@@ -627,7 +802,9 @@ export const useMessageStore = create<MessageState>()((set, get) => {
             channelId: b.channelId,
             authorId: useIdentityStore.getState().identity?.id ?? "",
             content: b.content,
-            timestamp: new Date(0).toISOString(),
+            // §15.6 `enqueuedAt` — o instante REAL do enfileiramento. A época zero
+            // que ficava aqui punha a conversa reaberta sob um separador de 1970.
+            timestamp: b.timestamp,
             edited: false,
             pinned: false,
             reactions: [],
@@ -682,7 +859,10 @@ export const useMessageStore = create<MessageState>()((set, get) => {
       errosPorRef: {},
       remoteReactions: {},
       anexosRemotos: {},
+      reatoresPorChip: {},
       undoPorRef: {},
+      alvoPorRef: {},
+      envioPorRef: {},
     }),
   };
 });
@@ -720,20 +900,33 @@ export function compose(
   for (const channelId of channelIds) {
     const base = remoteMessages[channelId] ?? NENHUMA;
     const presentes = new Set(base.map((m) => m.id));
-    const bolhas = [
-      ...(filaPorCanal[channelId] ?? []),
-      ...(sentByChannel[channelId] ?? []),
-    ].filter((bolha) => {
+    // As duas bolhas do MESMO `clientRef` são uma só linha: a da sessão nasceu no
+    // envio (com instante, anexo e menções) e a da fila é o redesenho de
+    // `query.outbox` sobre o mesmo item. Concatenar sem mesclar duplicava a
+    // mensagem na tela — e com a mesma chave de lista — durante todo o tempo em
+    // que o item ficasse enfileirado.
+    const daFila = new Map((filaPorCanal[channelId] ?? []).map((m) => [m.id, m]));
+    const bolhas: Message[] = [];
+    for (const bolha of sentByChannel[channelId] ?? []) {
+      const fila = daFila.get(bolha.id);
+      daFila.delete(bolha.id);
+      // A fila é quem sabe o estado de entrega (§11.3); o resto é da bolha viva.
+      bolhas.push(fila === undefined ? bolha : { ...bolha, deliveryState: fila.deliveryState });
+    }
+    for (const restante of daFila.values()) bolhas.push(restante);
+
+    const vivas = bolhas.filter((bolha) => {
       const aceitada = aceitasRefs[bolha.id];
       return aceitada === undefined || !presentes.has(aceitada);
     });
-    for (const message of [...base, ...bolhas]) {
+    for (const message of [...base, ...vivas]) {
       if (deleted.has(message.id)) continue;
       const override = overrides[message.id];
       let efetiva = override ? { ...message, ...override } : message;
-      // §15.6.1 — a lista não carrega reações; o que `query.message` hidratou
-      // entra como base onde a linha ainda está vazia. Override otimista manda.
-      if (efetiva.reactions.length === 0 && remoteReactions[message.id] !== undefined) {
+      // §15.6.1 — a lista não carrega reações; o que `query.message` hidratou é a
+      // base. O override só existe enquanto a reação está em voo (`alvoPorRef`), e
+      // é por isso que ele pode mandar aqui sem mascarar o que os outros fizeram.
+      if (override?.reactions === undefined && remoteReactions[message.id] !== undefined) {
         efetiva = { ...efetiva, reactions: remoteReactions[message.id] };
       }
       out.push(efetiva);
@@ -794,9 +987,11 @@ export function useThreadRoots(): Map<string, string> {
   );
 }
 
-/** §9, 2.2 — o mapa inteiro de não-lidas; a referência só muda quando o fio muda. */
-export function useNaoLidasPorThread(): Record<string, number> {
-  return useMessageStore((state) => state.naoLidasPorThread);
+const SEM_NAO_LIDAS: Record<string, number> = {};
+
+/** §9, 2.2 — as não-lidas das threads DESTE canal; a referência só muda com o fio. */
+export function useNaoLidasPorThread(channelId: string): Record<string, number> {
+  return useMessageStore((state) => state.naoLidasPorThread[channelId] ?? SEM_NAO_LIDAS);
 }
 
 /** Respostas de uma thread, em ordem cronológica, sem a mensagem raiz. */
@@ -830,6 +1025,35 @@ export function useThreadLeitura(
 /** O anexo hidratado de `query.message` para uma mensagem (§15.6.1 — no máximo um). */
 export function useAnexoRemoto(messageId: string): Attachment | undefined {
   return useMessageStore((state) => state.anexosRemotos[messageId]);
+}
+
+/**
+ * As duas fontes de anexo de uma mensagem — a bolha própria (staging local, §13.2)
+ * e a hidratação de `query.message` (§15.6.1, no máximo um anexo por mensagem) —,
+ * sem duplicar por id.
+ *
+ * Mora aqui, e não na linha, porque a linha não é a única superfície do acervo: a
+ * aba Arquivos do canal lia só `message.attachments`, que o adaptador zera para
+ * TODA mensagem projetada — a aba ficava vazia mesmo com o card do arquivo
+ * desenhado logo ali na conversa.
+ */
+export function anexosDaMensagem(message: Message, remoto: Attachment | undefined): Attachment[] {
+  if (remoto === undefined) return message.attachments;
+  if (message.attachments.some((a) => a.id === remoto.id)) return message.attachments;
+  return [...message.attachments, remoto];
+}
+
+/** Quem reagiu com um emoji, se `query.reactors` já respondeu por este chip. */
+export function useReatores(
+  messageId: string,
+  emoji: string,
+): { total: number; identityIds: string[] } | undefined {
+  return useMessageStore((state) => state.reatoresPorChip[chaveDoChip(messageId, emoji)]);
+}
+
+/** O mapa inteiro de anexos hidratados; a referência só muda quando o fio muda. */
+export function useAnexosRemotos(): Record<string, Attachment> {
+  return useMessageStore((state) => state.anexosRemotos);
 }
 
 export function useTypingIn(channelId: string): string[] {

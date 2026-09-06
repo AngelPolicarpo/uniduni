@@ -272,6 +272,12 @@ export interface OutboxItem {
   kindLabel: string;
   state: OutboxItemState;
   attempts: number;
+  /**
+   * §15.6 (emenda de 2026-09-05) — quando a op entrou na fila local (§11.2
+   * `created_at`). É o carimbo da bolha redesenhada por F-16: antes da observação
+   * na réplica não existe `hostTs`, e sem este campo a linha nascia em 1970.
+   */
+  enqueuedAt: Ms;
   nextAttemptAt: Ms;
   lastError?: string;
   droppedReason?: string;

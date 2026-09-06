@@ -1,11 +1,12 @@
 /**
- * O registro de threads de OUTRAS instalações (§61.4) a partir da página do canal.
+ * As threads de OUTRAS instalações (§61.4) que a página do canal revela.
  *
- * O que se afirma: a raiz de uma thread é o registro de MENOR `seq` do grupo (o fold só
- * aceita resposta em thread existente — R-24 —, então todo o resto veio depois dela),
- * threads já conhecidas não são reemitidas (sobrescrever reverteria o assentamento da
- * temporária local) e mensagem sem `threadId` não cria thread nenhuma. Verificado por
- * mutação: trocar min→max derruba o caso da raiz; remover o filtro derruba o de conhecidas.
+ * O que se afirma: a função devolve os **ids** ainda desconhecidos, sem palpitar a
+ * raiz. Palpitá-la como o menor `seq` da página era errado — a janela de 50 de §23.3
+ * pode não conter a raiz, e o palpite ancorava o chip "N respostas" numa resposta,
+ * de onde `conhecidas` nunca mais o tirava. Quem responde a raiz é `query.thread`.
+ * Threads já conhecidas não são reemitidas (sobrescrever reverteria o assentamento da
+ * temporária local) e mensagem sem `threadId` não revela thread nenhuma.
  */
 
 import { describe, expect, it } from "vitest";
@@ -18,39 +19,25 @@ function dto(id: string, seq: number, threadId?: string) {
 }
 
 describe("threadsDaPagina — a thread que o canal revela e a store não conhece", () => {
-  it("a raiz é o registro de MENOR seq do grupo, não o primeiro da página", () => {
-    // A página desce de `before` e chega invertida: a raiz é a ÚLTIMA a aparecer.
-    const threads = threadsDaPagina(
-      [dto("r3", 3, "t1"), dto("r7", 7, "t1"), dto("r5", 5, "t1")],
-      new Set(),
-    );
-
-    expect(threads).toHaveLength(1);
-    expect(threads[0]).toMatchObject({
-      id: "t1",
-      rootMessageId: "r3",
-      channelId: CANAL,
-    });
+  it("devolve o id, e NÃO elege raiz a partir da página", () => {
+    // A página desce de `before` e chega invertida; a raiz real pode nem estar aqui.
+    const ids = threadsDaPagina([dto("r3", 3, "t1"), dto("r7", 7, "t1"), dto("r5", 5, "t1")], new Set());
+    expect(ids).toEqual(["t1"]);
   });
 
   it("thread já conhecida não é reemitida — assentarThreadReal é quem manda na local", () => {
-    const threads = threadsDaPagina([dto("r1", 1, "t-conhecida")], new Set(["t-conhecida"]));
-    expect(threads).toEqual([]);
+    expect(threadsDaPagina([dto("r1", 1, "t-conhecida")], new Set(["t-conhecida"]))).toEqual([]);
   });
 
-  it("mensagem sem threadId não cria thread nenhuma", () => {
-    const threads = threadsDaPagina([dto("r1", 1), dto("r2", 2)], new Set());
-    expect(threads).toEqual([]);
+  it("mensagem sem threadId não revela thread nenhuma", () => {
+    expect(threadsDaPagina([dto("r1", 1), dto("r2", 2)], new Set())).toEqual([]);
   });
 
-  it("grupos distintos viram threads distintas, cada uma com a raiz dela", () => {
-    const threads = threadsDaPagina(
+  it("grupos distintos viram ids distintos, cada um uma vez só", () => {
+    const ids = threadsDaPagina(
       [dto("a2", 2, "tA"), dto("a9", 9, "tA"), dto("b4", 4, "tB"), dto("b1", 1, "tB")],
       new Set(),
     );
-
-    const porId = new Map(threads.map((t) => [t.id, t.rootMessageId]));
-    expect(porId.get("tA")).toBe("a2");
-    expect(porId.get("tB")).toBe("b1");
+    expect(ids).toEqual(["tA", "tB"]);
   });
 });

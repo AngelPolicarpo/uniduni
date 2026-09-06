@@ -80,3 +80,41 @@ describe("escopo fechado do markdown", () => {
     expect(analisarMarkdown("")).toEqual([]);
   });
 });
+
+describe("aninhamento e pontuação — o que a gramática antiga não reconhecia", () => {
+  it("negrito com itálico dentro é negrito, não asterisco cru na tela", () => {
+    const nos = analisarMarkdown("**a *b* c**");
+    expect(tipos(nos)).toEqual(["negrito"]);
+    const negrito = nos[0] as Extract<No, { t: "negrito" }>;
+    expect(tipos([...negrito.filhos])).toEqual(["texto", "italico", "texto"]);
+  });
+
+  it("`***x***` é negrito com itálico", () => {
+    const nos = analisarMarkdown("***x***");
+    expect(tipos(nos)).toEqual(["negrito"]);
+    const negrito = nos[0] as Extract<No, { t: "negrito" }>;
+    expect(tipos([...negrito.filhos])).toEqual(["italico"]);
+  });
+
+  it("link markdown não perde o parêntese que faz parte da URL", () => {
+    const [no] = analisarMarkdown("[Rust](https://pt.wikipedia.org/wiki/Rust_(linguagem))");
+    expect(no).toEqual({
+      t: "link",
+      href: "https://pt.wikipedia.org/wiki/Rust_(linguagem)",
+      rotulo: "Rust",
+    });
+  });
+
+  it("o ponto que fecha a frase não entra no destino do link", () => {
+    const nos = analisarMarkdown("olha https://exemplo.org/a.");
+    expect(tipos(nos)).toEqual(["texto", "link", "texto"]);
+    expect((nos[1] as Extract<No, { t: "link" }>).href).toBe("https://exemplo.org/a");
+    expect(nos[2]).toEqual({ t: "texto", texto: "." });
+  });
+
+  it("o `)` que fecha o parêntese de quem escreveu também fica de fora", () => {
+    const nos = analisarMarkdown("(veja https://exemplo.org/a)");
+    const link = nos.find((n) => n.t === "link") as Extract<No, { t: "link" }>;
+    expect(link.href).toBe("https://exemplo.org/a");
+  });
+});

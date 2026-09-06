@@ -60,6 +60,7 @@ export function SearchPanel({ community, activeChannel }: SearchPanelProps) {
     debounced,
     results,
     carregando,
+    erro,
     expandMessages,
     setExpandMessages,
     visibleMessages,
@@ -108,6 +109,14 @@ export function SearchPanel({ community, activeChannel }: SearchPanelProps) {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [closeSearch]);
 
+  // Trocar o escopo é trocar a consulta: manter o índice apontaria para um
+  // resultado da lista anterior.
+  const escopoAnterior = useRef(scope);
+  if (escopoAnterior.current !== scope) {
+    escopoAnterior.current = scope;
+    if (selected !== 0) setSelected(0);
+  }
+
   const searching = carregando || query !== debounced;
   // Olha a digitação viva, não a debounced: senão o estado vazio ("canais
   // recentes") pisca por 250ms no lugar do skeleton a cada primeira busca.
@@ -143,7 +152,8 @@ export function SearchPanel({ community, activeChannel }: SearchPanelProps) {
   function handleKeyDown(event: ReactKeyboardEvent) {
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setSelected((index) => Math.min(index + 1, flat.length - 1));
+      // Lista vazia não tem "próximo": sem a guarda, o clamp devolvia -1.
+      if (flat.length > 0) setSelected((index) => Math.min(index + 1, flat.length - 1));
     }
     if (event.key === "ArrowUp") {
       event.preventDefault();
@@ -229,7 +239,13 @@ export function SearchPanel({ community, activeChannel }: SearchPanelProps) {
           setFilters={aplicarFiltros}
         />
 
-        {results.partial && results.partialReason !== undefined && (
+        {erro !== null && (
+          <StatusBanner tone="offline">
+            Não foi possível buscar agora ({erro})
+          </StatusBanner>
+        )}
+
+        {erro === null && results.partial && results.partialReason !== undefined && (
           <StatusBanner tone={results.partialReason === "host-offline" ? "offline" : "reconnecting"}>
             {MOTIVO_PARCIAL[results.partialReason] ??
               "Resultado parcial desta réplica"}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../ipc/api";
+import { useMessageStore } from "../../store/messageStore";
 import { resultadoDeBusca } from "../../live/adaptadores";
 import {
   RESULTS_MAX_PER_GROUP,
@@ -41,6 +42,14 @@ export function useSearchQuery({
   const [debounced, setDebounced] = useState("");
   const [results, setResults] = useState<BuscaResults>(VAZIO);
   const [carregando, setCarregando] = useState(false);
+  /** Motivo nomeado da última falha, ou `null`. Nunca "resultado vazio". */
+  const [erro, setErro] = useState<string | null>(null);
+  // O que esta sessão apagou/editou e o índice do núcleo ainda não sabe: a op pode
+  // estar na fila (§11.3) e o FTS só deixa de responder a mensagem quando o
+  // tombstone é projetado. Até lá o resultado mostraria o texto antigo — e uma
+  // mensagem que a pessoa acabou de mandar apagar.
+  const deletedIds = useMessageStore((state) => state.deletedIds);
+  const overrides = useMessageStore((state) => state.overrides);
   // Termo novo recolhe a expansão: "Ver todos" é sobre ESTA busca, e mantê-la ligada faria
   // a consulta seguinte já nascer pedindo 100 sem ninguém ter pedido.
   //
@@ -76,6 +85,7 @@ export function useSearchQuery({
     }
     let vivo = true;
     setCarregando(true);
+    setErro(null);
     api
       .search({
         communityId,
@@ -101,8 +111,12 @@ export function useSearchQuery({
         setResults(resultadoDeBusca(r));
         setCarregando(false);
       })
-      .catch(() => {
+      .catch((e: unknown) => {
         if (!vivo) return;
+        // Sem isto, `results` guardava a resposta da busca ANTERIOR e o painel a
+        // desenhava sob o termo novo, sem dizer que a consulta falhou.
+        setResults(VAZIO);
+        setErro(e instanceof Error ? e.message : String(e));
         setCarregando(false);
       });
     return () => {
@@ -112,14 +126,33 @@ export function useSearchQuery({
     // da lista: expandir é ir buscar o resto, não revelar o que já estava aqui.
   }, [communityId, debounced, filters, scope, activeChannel, expandMessages]);
 
+  // A janela local por cima do índice: o que foi apagado sai, o que foi editado
+  // aparece com o texto novo. Sem isso a busca contradizia a conversa.
+  const reconciliados = useMemo(() => {
+    const apagadas = new Set(deletedIds);
+    const messages = results.messages
+      .filter((m) => !apagadas.has(m.id))
+      .map((m) => {
+        const conteudo = overrides[m.id]?.content;
+        if (conteudo === undefined) return m;
+        // O `snippet` do núcleo é derivado do conteúdo indexado; com o conteúdo
+        // novo em mãos, ele é o trecho honesto.
+        return { ...m, content: conteudo, snippet: conteudo };
+      });
+    return messages.length === results.messages.length && messages.every((m, i) => m === results.messages[i])
+      ? results
+      : { ...results, messages };
+  }, [results, deletedIds, overrides]);
+
   const visibleMessages = expandMessages
-    ? results.messages
-    : results.messages.slice(0, RESULTS_PER_GROUP);
+    ? reconciliados.messages
+    : reconciliados.messages.slice(0, RESULTS_PER_GROUP);
 
   return {
     debounced,
-    results,
+    results: reconciliados,
     carregando,
+    erro,
     expandMessages,
     setExpandMessages,
     visibleMessages,

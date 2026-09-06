@@ -45,26 +45,37 @@ describe("sincronizarThreadsNaoLidas — §9, 2.2", () => {
 
     await sincronizarThreadsNaoLidas("c1", "ch-1");
 
-    expect(useMessageStore.getState().naoLidasPorThread).toEqual({ t1: 3, t2: 1 });
-    expect("t0" in useMessageStore.getState().naoLidasPorThread).toBe(false);
+    expect(useMessageStore.getState().naoLidasPorThread["ch-1"]).toEqual({ t1: 3, t2: 1 });
+    expect("t0" in useMessageStore.getState().naoLidasPorThread["ch-1"]!).toBe(false);
   });
 
   it("a reconsulta SUBSTITUI o mapa: a thread que foi lida sai do badge", async () => {
-    useMessageStore.getState().aplicarNaoLidasDeThreads({ t1: 3 });
+    useMessageStore.getState().aplicarNaoLidasDeThreads("ch-1", { t1: 3 });
     api.threadUnread.mockResolvedValue({ items: [], hasMore: false });
 
     await sincronizarThreadsNaoLidas("c1", "ch-1");
 
-    expect(useMessageStore.getState().naoLidasPorThread).toEqual({});
+    expect(useMessageStore.getState().naoLidasPorThread["ch-1"]).toEqual({});
   });
 
   it("falha de consulta preserva o espelho", async () => {
-    useMessageStore.getState().aplicarNaoLidasDeThreads({ t1: 3 });
+    useMessageStore.getState().aplicarNaoLidasDeThreads("ch-1", { t1: 3 });
     api.threadUnread.mockRejectedValue(new Error("E_HOST_UNAVAILABLE"));
 
     await sincronizarThreadsNaoLidas("c1", "ch-1");
 
-    expect(useMessageStore.getState().naoLidasPorThread).toEqual({ t1: 3 });
+    expect(useMessageStore.getState().naoLidasPorThread["ch-1"]).toEqual({ t1: 3 });
+  });
+
+  it("a resposta atrasada de OUTRO canal não apaga os badges do canal aberto", async () => {
+    useMessageStore.getState().aplicarNaoLidasDeThreads("ch-2", { t9: 4 });
+    api.threadUnread.mockResolvedValue({ items: [], hasMore: false });
+
+    // #geral responde depois, e vazio: só o mapa de #geral pode mudar.
+    await sincronizarThreadsNaoLidas("c1", "ch-1");
+
+    expect(useMessageStore.getState().naoLidasPorThread["ch-2"]).toEqual({ t9: 4 });
+    expect(useMessageStore.getState().naoLidasPorThread["ch-1"]).toEqual({});
   });
 });
 

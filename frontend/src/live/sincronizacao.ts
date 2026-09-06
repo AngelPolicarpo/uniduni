@@ -45,7 +45,7 @@ import { useSettingsStore } from "../store/settingsStore";
 import { assinarDm, sincronizarConversas, sincronizarPrefsDm } from "./dm";
 import { assinarDmVoz } from "./dmVoz";
 import { mensagem as adaptarMensagem, threadsDaPagina } from "./adaptadores";
-import type { Category, Channel, Community, Member, Message, Role } from "../domain/types";
+import type { Category, Channel, Community, Member, Message, Role, Thread } from "../domain/types";
 
 /** Evita consultas concorrentes para a mesma comunidade quando vários eventos chegam juntos. */
 const emVoo = new Set<string>();
@@ -224,16 +224,54 @@ export async function sincronizarModeracao(communityId: string): Promise<void> {
 }
 
 /**
- * Não-lidas por thread do canal ativo (§9, 2.2) — `query.thread.unread` responde só
- * as com contador acima de zero; ausência no mapa É "lida". Roda nos MESMOS gatilhos
- * da página de mensagens: carregar o canal, resposta que chega, resync e leitura.
+ * Não-lidas por thread de um canal (§9, 2.2) — `query.thread.unread` responde só as
+ * com contador acima de zero; ausência no mapa É "lida". Roda nos MESMOS gatilhos da
+ * página de mensagens: carregar o canal, resposta que chega, resync e leitura.
+ *
+ * O resultado é guardado SOB O CANAL consultado. Sem isso, duas sincronizações
+ * concorrentes (troca de canal com a resposta da anterior chegando por último)
+ * deixavam o mapa do canal errado na tela e os badges do canal aberto sumiam.
  */
 export async function sincronizarThreadsNaoLidas(communityId: string, channelId: string): Promise<void> {
   const pagina = await api.threadUnread({ communityId, channelId }).catch(() => null);
   if (pagina === null) return;
   const porThread: Record<string, number> = {};
   for (const item of pagina.items) porThread[item.threadId] = item.unreadCount;
-  useMessageStore.getState().aplicarNaoLidasDeThreads(porThread);
+  useMessageStore.getState().aplicarNaoLidasDeThreads(channelId, porThread);
+}
+
+/**
+ * Resolve a raiz de cada thread nova pela fonte autoritativa (`threads.root_message_id`,
+ * via `query.thread`) e a registra em `remoteThreads`. Só as ainda desconhecidas chegam
+ * aqui — é uma consulta por thread, uma vez na vida dela nesta sessão.
+ */
+async function resolverRaizesDeThreads(communityId: string, threadIds: readonly string[]): Promise<void> {
+  const lidas = await Promise.all(
+    threadIds.map((threadId) =>
+      api
+        .thread({ communityId, threadId })
+        .then((dto) => (dto === null ? null : { threadId, dto }))
+        .catch(() => null),
+    ),
+  );
+  const store = useMessageStore.getState();
+  const novas: Record<string, Thread> = {};
+  for (const lida of lidas) {
+    if (lida === null) continue;
+    // Uma thread pode ter sido assentada enquanto a consulta ia e voltava.
+    if (store.remoteThreads[lida.threadId] !== undefined || store.createdThreads[lida.threadId] !== undefined) continue;
+    novas[lida.threadId] = {
+      id: lida.threadId,
+      rootMessageId: lida.dto.root.id,
+      channelId: lida.dto.root.channelId,
+      replyIds: [],
+      participantIds: [],
+      unreadCount: lida.dto.unread.count,
+    };
+  }
+  if (Object.keys(novas).length === 0) return;
+  const atual = useMessageStore.getState();
+  atual.aplicarRemoto({ remoteThreads: { ...atual.remoteThreads, ...novas } });
 }
 
 /** `query.messages` → histórico do canal. */
@@ -250,10 +288,11 @@ export async function sincronizarMensagens(communityId: string, channelId: strin
     // "N respostas" não renderiza e o painel não abre para quem não criou a thread.
     const conhecidas = new Set([...Object.keys(store.remoteThreads), ...Object.keys(store.createdThreads)]);
     const novas = threadsDaPagina(pagina.messages, conhecidas);
-    store.aplicarRemoto({
-      remoteMessages: { ...store.remoteMessages, [channelId]: mensagens },
-      ...(novas.length > 0 ? { remoteThreads: { ...store.remoteThreads, ...Object.fromEntries(novas.map((t) => [t.id, t])) } } : {}),
-    });
+    store.aplicarRemoto({ remoteMessages: { ...store.remoteMessages, [channelId]: mensagens } });
+    // A raiz vem de `query.thread`, não de palpite sobre a página: a janela de 50
+    // de §23.3 pode não conter a raiz, e ancorar o chip numa resposta o deixaria no
+    // lugar errado para sempre (`conhecidas` não reabre o caso).
+    if (novas.length > 0) void resolverRaizesDeThreads(communityId, novas);
     // A raiz projetou o `threadId` real? Assenta a criação otimista (§8.x R-24).
     for (const m of mensagens) {
       if (m.threadId !== undefined) store.assentarThreadReal(m.id, m.threadId);
@@ -392,6 +431,19 @@ function configurarEscritaDeMensagem(): void {
           if (cheia.attachment !== undefined) {
             store.aplicarAnexoRemoto(messageId, anexo(cheia.attachment, communityId));
           }
+        })
+        .catch(() => {});
+    },
+    /** §15.6 `query.reactors` (DR-47) — quem reagiu; o chip só conhece o total. */
+    observarReatores(channelId, messageId, emoji) {
+      const communityId = comunidadeDoCanal(channelId);
+      void api
+        .reactors({ communityId, messageId, emoji })
+        .then((dto) => {
+          useMessageStore.getState().aplicarReatores(messageId, emoji, {
+            total: dto.total,
+            identityIds: dto.users.map((u) => u.key),
+          });
         })
         .catch(() => {});
     },

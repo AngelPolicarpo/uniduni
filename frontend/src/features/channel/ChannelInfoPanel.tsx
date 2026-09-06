@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { PinOff } from "lucide-react";
 import { cn } from "../../lib/cn";
+import { analisarMarkdown, type No } from "../../live/markdown";
 import { Avatar } from "../../components/ui/Avatar";
 import { SlidePanel } from "../../components/ui/SlidePanel";
 import { StatusBanner } from "../../components/ui/StatusBanner";
@@ -8,7 +9,7 @@ import { Tabs } from "../../components/ui/Tabs";
 import { formatFileSize, formatMessageTimestamp } from "../../lib/format";
 import { useCommunityStore, useFindMember, useHasPermission } from "../../store/communityStore";
 import { useHostStatus } from "../../store/connectionStore";
-import { useChannelMessages, useMessageStore } from "../../store/messageStore";
+import { anexosDaMensagem, useAnexosRemotos, useChannelMessages, useMessageStore } from "../../store/messageStore";
 import { useUiStore } from "../../store/uiStore";
 import type {
   Attachment,
@@ -17,8 +18,26 @@ import type {
   Message,
 } from "../../domain/types";
 
-/** URLs dentro do corpo da mensagem — a aba Links sai daqui. */
-const URL_PATTERN = /https?:\/\/[^\s<>"')]+/g;
+/**
+ * As URLs de uma mensagem, na ordem em que aparecem — a aba Links sai daqui.
+ *
+ * Quem decide o que é link é o MESMO analisador que desenha a mensagem
+ * (`live/markdown.ts`), e não uma regex sobre o texto cru. A regex não sabia o que
+ * é bloco de código: um `https://api.exemplo.com/v1` dentro de um snippet virava
+ * "link compartilhado" que a conversa nem renderiza como tal; e ela levava junto a
+ * pontuação colada ("veja https://x.com." dava um link terminado em ponto).
+ */
+function urlsDaMensagem(content: string): string[] {
+  const achadas: string[] = [];
+  const visitar = (nos: readonly No[]): void => {
+    for (const no of nos) {
+      if (no.t === "link") achadas.push(no.href);
+      else if (no.t === "negrito" || no.t === "italico") visitar(no.filhos);
+    }
+  };
+  visitar(analisarMarkdown(content));
+  return achadas;
+}
 
 interface LinkEntry {
   /** `<id da mensagem>-<posição da URL nela>` — estável por ocorrência. */
@@ -77,6 +96,7 @@ export function ChannelInfoPanel({
 }: ChannelInfoPanelProps) {
   const [tab, setTab] = useState("pinned");
   const messages = useChannelMessages(channel.id);
+  const anexosRemotos = useAnexosRemotos();
   const setPinned = useMessageStore((state) => state.setPinned);
   const highlightMessage = useUiStore((state) => state.highlightMessage);
   const canPin = useHasPermission(community.id, "pin_messages");
@@ -91,27 +111,34 @@ export function ChannelInfoPanel({
   const attachments = useMemo(() => {
     const found: { attachment: Attachment; message: Message }[] = [];
     for (const message of messages)
-      for (const attachment of message.attachments)
+      // `message.attachments` só tem conteúdo na bolha PRÓPRIA: §15.6.1 não põe
+      // anexo na lista do canal, e o adaptador zera o campo em toda mensagem
+      // projetada. O anexo real vem da hidratação de `query.message` — sem
+      // juntá-la aqui, a aba anunciava "nenhum arquivo" com o card do arquivo
+      // desenhado na conversa logo atrás do painel.
+      for (const attachment of anexosDaMensagem(message, anexosRemotos[message.id]))
         found.push({ attachment, message });
     return found.reverse();
-  }, [messages]);
+  }, [messages, anexosRemotos]);
 
   const links = useMemo(() => {
     const found: LinkEntry[] = [];
-    for (const message of messages)
-      for (const achado of message.content.matchAll(URL_PATTERN)) {
-        const url = achado[0];
+    for (const message of messages) {
+      const urls = urlsDaMensagem(message.content);
+      for (let i = 0; i < urls.length; i += 1) {
+        const url = urls[i]!;
         let host = url;
         try {
           host = new URL(url).host;
         } catch {
           // URL malformada continua sendo mostrada crua, sem quebrar a aba.
         }
-        // A posição na mensagem identifica a ocorrência: a mesma URL pode
+        // A ordem dentro da mensagem identifica a ocorrência: a mesma URL pode
         // aparecer duas vezes na mesma mensagem, e o índice da lista muda
         // quando uma mensagem anterior é apagada.
-        found.push({ id: `${message.id}-${achado.index}`, url, host, message });
+        found.push({ id: `${message.id}-${i}`, url, host, message });
       }
+    }
     return found.reverse();
   }, [messages]);
 

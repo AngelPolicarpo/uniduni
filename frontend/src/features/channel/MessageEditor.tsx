@@ -17,6 +17,15 @@ export interface MessageEditorProps {
  */
 export function MessageEditor({ message, onCancel, onSave }: MessageEditorProps) {
   const [value, setValue] = useState(message.content);
+  /**
+   * O texto sobre o qual esta edição começou. O editor NÃO se sincroniza sozinho
+   * com a prop — apagar o que a pessoa está digitando seria pior —, mas também não
+   * pode fingir que nada mudou: salvar por cima de uma versão mais nova apaga a
+   * edição alheia sem ninguém ver (§13, U-19: editar não some com o anterior, mas
+   * a interface não pode esconder que houve outro).
+   */
+  const [base, setBase] = useState(message.content);
+  const desatualizado = message.content !== base;
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -27,6 +36,16 @@ export function MessageEditor({ message, onCancel, onSave }: MessageEditorProps)
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
   }, []);
+
+  function adotarTextoNovo() {
+    setValue(message.content);
+    setBase(message.content);
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }
 
   const valid = value.trim() !== "";
 
@@ -63,6 +82,18 @@ export function MessageEditor({ message, onCancel, onSave }: MessageEditorProps)
           "focus:border-border-strong",
         )}
       />
+      {desatualizado && (
+        <p className="mt-1 flex flex-wrap items-center gap-1 text-meta text-feedback-warning">
+          Esta mensagem mudou enquanto você editava.
+          <button
+            type="button"
+            onClick={adotarTextoNovo}
+            className="underline underline-offset-2 hover:text-text-primary"
+          >
+            Ver o texto novo
+          </button>
+        </p>
+      )}
       <p className="mt-1 text-meta text-text-tertiary">
         <button
           type="button"

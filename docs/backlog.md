@@ -168,6 +168,7 @@ Sintomas com repro possível nesta máquina: o próximo passo é investigar, nã
 |---|---|---|
 | B48 | Fila de karaokê pós-respawn do host: a fila é efêmera (§6.16) e ninguém a re-anuncia — quem estava no turno fica "todos mudos" sem evento nomeado explicando. Repro: respawn do núcleo host com canal em modo fila. **A metade que era do roster fechou em 2026-09-05** (§16.4, emenda): quem sai da chamada sai da fila, então o "todos mudos" por titular fantasma não acontece mais. O que resta aqui é o caso do respawn, em que a fila inteira some junto com o host | §97.4, §6.16, §16.4 |
 | B18 | Chips de reação otimistas através de respawn de epoch | §61.4 |
+| B66 | Apagar a PRÓPRIA mensagem esconde a linha inteira (`deletedIds`), enquanto o tombstone projetado que os outros veem é uma linha com o texto de U-20. Quem apagou vê a conversa fechar o buraco; quem não apagou vê o buraco marcado — e um reload troca uma coisa pela outra para a mesma pessoa. §15.6.1 devolve a linha tombstonada e U-20 diz "some da interface": as duas leituras cabem, e nenhuma está escrita. Repro: apagar a própria mensagem, reabrir o app | §15.6.1, `deltas-ux-v2.md` U-20 |
 | B65 | `E_STORAGE_FULL` **durante o append do log** (não do blob) só está definido para a criação da comunidade (§11.1). Sem a cota de anexos (§122), encher o disco deixou de ser caso raro, e o append sem desfecho nomeado é a próxima parada silenciosa. Repro: `blob.stage` + `message.send` com o volume do `dataDir` quase cheio | §122.5, `threat-model-seguranca.md` T-09 item 12, §11.1 |
 
 ### Qualidade

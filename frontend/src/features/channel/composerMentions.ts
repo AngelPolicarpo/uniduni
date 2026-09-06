@@ -13,6 +13,33 @@ interface ActiveMention {
   id: string;
 }
 
+/**
+ * Um token só é menção onde ele é a PALAVRA inteira: `@Dan` dentro de `@Danilo`
+ * não é o Dan. Sem esta borda, escolher `@Dan` e continuar digitando `ilo`
+ * mandava o id do Dan no `mentions` da op — e o Dan recebia uma notificação de
+ * uma mensagem que não fala dele (§9, 2.1.1: quem é mencionado é dado, não
+ * adivinhação).
+ */
+const DEPOIS_DA_MENCAO = /[\p{L}\p{N}_]/u;
+
+function ehMencaoEm(content: string, inicio: number, token: string): boolean {
+  const antes = inicio === 0 ? "" : content[inicio - 1]!;
+  if (antes !== "" && !/\s/.test(antes)) return false;
+  const depois = content[inicio + token.length];
+  return depois === undefined || !DEPOIS_DA_MENCAO.test(depois);
+}
+
+/** Quantas vezes o token aparece como menção inteira — não como pedaço de palavra. */
+export function ocorrenciasDe(content: string, token: string): number {
+  let n = 0;
+  let i = content.indexOf(token);
+  while (i !== -1) {
+    if (ehMencaoEm(content, i, token)) n += 1;
+    i = content.indexOf(token, i + token.length);
+  }
+  return n;
+}
+
 /** Um pedaço do texto no espelho do composer: menção confirmada ou não. */
 export interface MentionSegment {
   text: string;
@@ -86,12 +113,17 @@ export function useComposerMentions({
 
   /** Trechos do texto que já são menção confirmada — pintados no espelho. */
   const segments = useMemo<MentionSegment[]>(() => {
-    const tokens = mentions
-      .map((mention) => mention.token)
-      .filter((token) => value.includes(token));
+    const tokens = [...new Set(mentions.map((mention) => mention.token))].filter(
+      (token) => ocorrenciasDe(value, token) > 0,
+    );
     if (tokens.length === 0) return [{ text: value, isMention: false }];
 
-    const pattern = new RegExp(`(${tokens.map(escapeRegExp).join("|")})`, "g");
+    // As MESMAS bordas de `ocorrenciasDe`: o espelho não pode pintar `@Dan`
+    // dentro de `@Danilo`, senão ele promete uma menção que não será enviada.
+    const pattern = new RegExp(
+      `(?<![^\\s])(${tokens.map(escapeRegExp).join("|")})(?![\\p{L}\\p{N}_])`,
+      "gu",
+    );
     // Conjunto: o texto quebrado pode ter muitos pedaços, e cada um pergunta
     // pela mesma lista de tokens.
     const confirmados = new Set(tokens);
@@ -122,23 +154,44 @@ export function useComposerMentions({
 
     pendingCaret.current = nextCaret;
     setValue(next);
-    setMentions((prev) => [
-      ...prev.filter((mention) => mention.token !== token),
-      { token, id: candidate.id },
-    ]);
+    // Não se descarta a confirmação anterior do MESMO token: dois membros
+    // homônimos produzem o mesmo `@Fulano`, e filtrar por token fazia a segunda
+    // escolha apagar a primeira — só uma das duas pessoas era notificada. Cada
+    // confirmação vira uma entrada, e o envio casa por ocorrência.
+    setMentions((prev) => [...prev, { token, id: candidate.id }]);
     setQuery(null);
   }
 
-  /** Ids das menções que sobreviveram até o texto enviado (§9, 2.1.1). */
+  /**
+   * Ids das menções que sobreviveram até o texto enviado (§9, 2.1.1).
+   *
+   * Casa por OCORRÊNCIA, não por "o texto contém": o token precisa aparecer como
+   * palavra inteira, e um token confirmado duas vezes (dois homônimos) leva os
+   * dois ids só se aparecer duas vezes no texto.
+   */
   function mentionIdsIn(content: string): string[] {
-    return mentions
-      .filter((mention) => content.includes(mention.token))
-      .map((mention) => mention.id);
+    const restantes = new Map<string, number>();
+    for (const mention of mentions) {
+      if (restantes.has(mention.token)) continue;
+      restantes.set(mention.token, ocorrenciasDe(content, mention.token));
+    }
+    const ids: string[] = [];
+    for (const mention of mentions) {
+      const sobrando = restantes.get(mention.token) ?? 0;
+      if (sobrando <= 0) continue;
+      restantes.set(mention.token, sobrando - 1);
+      if (!ids.includes(mention.id)) ids.push(mention.id);
+    }
+    return ids;
   }
 
   function reset() {
     setMentions([]);
     setQuery(null);
+    // O Esc de uma mensagem não pode calar o autocomplete da SEGUINTE: o índice
+    // memorizado é do texto que acabou de ir embora, e um `@` na mesma posição
+    // do composer vazio nascia bloqueado.
+    setDismissedStart(null);
   }
 
   /**
@@ -182,15 +235,23 @@ export function useComposerMentions({
       const el = event.currentTarget;
       if (el.selectionStart === el.selectionEnd) {
         const before = value.slice(0, el.selectionStart);
-        const hit = mentions.find((mention) => before.endsWith(mention.token));
+        // `applyMention` deixa o cursor DEPOIS do espaço que segue o token; sem
+        // contar esse espaço, o primeiro Backspace só apagava o espaço e a
+        // menção só sumia no segundo toque.
+        const comEspaco = before.endsWith(" ") ? 1 : 0;
+        const semEspaco = comEspaco === 1 ? before.slice(0, -1) : before;
+        const hit = mentions.find((mention) => semEspaco.endsWith(mention.token));
         if (hit) {
           event.preventDefault();
-          const start = el.selectionStart - hit.token.length;
+          const start = el.selectionStart - hit.token.length - comEspaco;
           pendingCaret.current = start;
           setValue(value.slice(0, start) + value.slice(el.selectionStart));
-          setMentions((prev) =>
-            prev.filter((mention) => mention.token !== hit.token),
-          );
+          setMentions((prev) => {
+            // Só UMA confirmação daquele token sai — homônimos são entradas
+            // distintas, e apagar todas notificaria de menos.
+            const indice = prev.findLastIndex((mention) => mention.token === hit.token);
+            return indice === -1 ? prev : [...prev.slice(0, indice), ...prev.slice(indice + 1)];
+          });
           return true;
         }
       }

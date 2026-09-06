@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { Hash } from "lucide-react";
 import { MessageRow } from "./MessageRow";
@@ -9,6 +9,7 @@ import {
 } from "../../lib/format";
 import { useChannelMessages, useNaoLidasPorThread, useThreadRoots } from "../../store/messageStore";
 import { useBans } from "../../store/moderationStore";
+import { useToastStore } from "../../store/toastStore";
 import { useUiStore } from "../../store/uiStore";
 import type { Channel, Message } from "../../domain/types";
 
@@ -98,23 +99,64 @@ export function MessageList({ channel, readOnly, onReply }: MessageListProps) {
     return allMessages.filter((message) => !banned.has(message.authorId));
   }, [allMessages, bans]);
   const threadRoots = useThreadRoots();
-  const naoLidasPorThread = useNaoLidasPorThread();
+  const naoLidasPorThread = useNaoLidasPorThread(channel.id);
   const highlightedId = useUiStore((state) => state.highlightedMessageId);
+  const showToast = useToastStore((state) => state.showToast);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Ao entrar no canal e a cada mensagem nova, a leitura vai para o fim.
-  useEffect(() => {
+  /**
+   * Quantos pixels do fim ainda contam como "estou no fim". Uma linha e pouco:
+   * o suficiente para o arredondamento do scroll e para quem parou de rolar em
+   * cima da última mensagem.
+   */
+  const PERTO_DO_FIM = 80;
+  /**
+   * Se a leitura está no fim. Medido no gesto de ROLAR, não depois do render: um
+   * efeito de layout já roda com a lista nova no DOM, e mediria a posição de
+   * depois — sempre "não está no fim" — em vez da intenção de quem rolou.
+   */
+  const noFim = useRef(true);
+  function aoRolar(event: React.UIEvent<HTMLDivElement>) {
+    const node = event.currentTarget;
+    noFim.current = node.scrollHeight - node.scrollTop - node.clientHeight <= PERTO_DO_FIM;
+  }
+
+  // Trocar de canal sempre leva ao fim; dentro do canal, só quem já estava lá.
+  const canalAnterior = useRef(channel.id);
+  useLayoutEffect(() => {
     const node = scrollRef.current;
-    if (node) node.scrollTop = node.scrollHeight;
+    if (!node) return;
+    const trocouDeCanal = canalAnterior.current !== channel.id;
+    canalAnterior.current = channel.id;
+    // O efeito dispara a QUALQUER variação de tamanho — inclusive uma mensagem
+    // apagada ou o redesenho da fila. Rolar incondicionalmente arrancava quem
+    // estava lendo o histórico e o jogava no rodapé sem ter pedido nada.
+    if (trocouDeCanal) noFim.current = true;
+    if (noFim.current) node.scrollTop = node.scrollHeight;
   }, [channel.id, messages.length]);
 
-  // Chegando por busca, a mensagem alvo entra em vista (§11, C10 passo 4).
+  // Chegando por busca ou por link, a mensagem alvo entra em vista (§11, C10 passo 4).
+  //
+  // O canal carrega a janela de 50 de §23.3; um resultado de busca ou um `/m/:code`
+  // pode apontar para fora dela. Antes, o `?.` engolia esse caso: a pessoa caía no
+  // canal certo, sem destaque e sem explicação, achando que o link estava quebrado.
+  const avisadoFora = useRef<string | null>(null);
   useEffect(() => {
     if (!highlightedId) return;
-    document
-      .getElementById(`msg-${highlightedId}`)
-      ?.scrollIntoView({ block: "center" });
-  }, [highlightedId, channel.id]);
+    const alvo = document.getElementById(`msg-${highlightedId}`);
+    if (alvo !== null) {
+      alvo.scrollIntoView({ block: "center" });
+      avisadoFora.current = null;
+      return;
+    }
+    // Enquanto a página não chegou não há o que afirmar; só depois dela.
+    if (messages.length === 0) return;
+    if (avisadoFora.current === highlightedId) return;
+    avisadoFora.current = highlightedId;
+    showToast(
+      "Esta mensagem está fora do trecho carregado deste canal — role para cima para chegar nela",
+    );
+  }, [highlightedId, channel.id, messages, showToast]);
 
   const byId = new Map(messages.map((message) => [message.id, message]));
   // Quantas mensagens cada thread tem; a raiz é uma delas (§9, 2.2).
@@ -173,7 +215,7 @@ export function MessageList({ channel, readOnly, onReply }: MessageListProps) {
   }
 
   return (
-    <div ref={scrollRef} className="flex flex-1 flex-col overflow-y-auto pb-4">
+    <div ref={scrollRef} onScroll={aoRolar} className="flex flex-1 flex-col overflow-y-auto pb-4">
       {messages.length === 0 ? (
         <ChannelEmptyState channel={channel} />
       ) : (

@@ -8,8 +8,8 @@ import {
   LISTAS_IDS,
   RESULTS_PER_GROUP,
   hasFilters,
+  destacarCasamentos,
   opcaoId,
-  splitOnMatch,
 } from "./searchIndex";
 import type { BuscaResults, SearchFilters } from "./searchIndex";
 import type { Community, Member } from "../../domain/types";
@@ -20,15 +20,21 @@ export type Selectable =
   | { type: "member"; member: Member };
 
 function Highlighted({ text, query }: { text: string; query: string }) {
-  const parts = splitOnMatch(text, query);
-  if (!parts) return <>{text}</>;
+  const trechos = destacarCasamentos(text, query);
   return (
     <>
-      {parts.before}
-      <mark className="rounded-sm bg-accent-muted-bg text-accent-default">
-        {parts.match}
-      </mark>
-      {parts.after}
+      {trechos.map((trecho, i) =>
+        trecho.match ? (
+          <mark
+            key={i}
+            className="rounded-sm bg-accent-muted-bg text-accent-default"
+          >
+            {trecho.text}
+          </mark>
+        ) : (
+          <span key={i}>{trecho.text}</span>
+        ),
+      )}
     </>
   );
 }
@@ -150,7 +156,12 @@ export function SearchResults({
       {visibleMessages.length > 0 && (
         <section className="mb-2">
           <h3 className="px-2 py-1 text-caption text-text-tertiary uppercase">
-            Mensagens — {results.messages.length}
+            {/* Sem expansão o núcleo devolve 21 (20 + a sonda que revela "há mais"),
+                e imprimir esse número anunciava um resultado a mais do que a lista
+                mostra. O rótulo conta o que está na tela; "Ver todos" é quem diz
+                que existe mais. */}
+            Mensagens — {visibleMessages.length}
+            {results.messages.length > RESULTS_PER_GROUP && !expandMessages ? "+" : ""}
           </h3>
           <ul id={LISTAS_IDS[0]} role="listbox" aria-label="Mensagens">
             {visibleMessages.map((message, index) => {

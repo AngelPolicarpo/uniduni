@@ -31,7 +31,6 @@ import type {
   Reaction,
   Role,
   RoleColor,
-  Thread,
   HostStatus as HostStatusMock,
 } from "../domain/types";
 import type {
@@ -262,6 +261,8 @@ export interface BolhaDaFila {
   opId: string;
   channelId: string;
   content: string;
+  /** ISO do `enqueuedAt` de §15.6 — o instante do enfileiramento, não o do log. */
+  timestamp: string;
   deliveryState: Message["deliveryState"];
 }
 
@@ -300,7 +301,14 @@ export function bolhaDaFila(item: OutboxItem): BolhaDaFila | null {
   if (content === undefined) return null;
   const deliveryState = estadoDeEntrega(item.state);
   if (deliveryState === null) return null;
-  return { ref: item.clientRef, opId: item.opId, channelId: item.channelId, content, deliveryState };
+  return {
+    ref: item.clientRef,
+    opId: item.opId,
+    channelId: item.channelId,
+    content,
+    timestamp: iso(item.enqueuedAt),
+    deliveryState,
+  };
 }
 
 export function reacoes(lista: ReadonlyArray<{ emoji: string; count: number; mine: boolean }>, euId: string | null): Reaction[] {
@@ -316,31 +324,30 @@ export function reacoes(lista: ReadonlyArray<{ emoji: string; count: number; min
 
 /**
  * Threads que a página do canal revela e a store ainda não conhece — as criadas em
- * OUTRAS instalações (§61.4). A raiz é o registro de MENOR `seq` entre os que carregam
- * o `threadId`: o fold só aceita resposta em thread existente (R-24), então todo o resto
- * do grupo veio depois dela. Conhecidas não são reemitidas — quem assenta a temporária
- * local é `assentarThreadReal`, e sobrescrevê-la aqui a reverteria.
+ * OUTRAS instalações (§61.4). Devolve só os **ids**: a raiz NÃO é dedutível daqui.
+ *
+ * Deduzi-la como o registro de menor `seq` da página parece seguro por R-24 (o fold
+ * só aceita resposta em thread existente), mas a página é a janela de 50 de §23.3 —
+ * uma thread aberta há tempo tem a raiz FORA dela, e o palpite elegia uma resposta
+ * como âncora. Pior: `conhecidas` então a dava por resolvida, e o indicador "N
+ * respostas" ficava para sempre sob a mensagem errada. Quem sabe a raiz é
+ * `query.thread` (`threads.root_message_id`); quem a pergunta é o sincronizador.
+ *
+ * Conhecidas não entram — quem assenta a temporária local é `assentarThreadReal`, e
+ * sobrescrevê-la aqui a reverteria.
  */
 export function threadsDaPagina(
   dtos: ReadonlyArray<{ id: string; seq: number; threadId?: string; channelId: string }>,
   conhecidas: ReadonlySet<string>,
-): Thread[] {
-  const raizes = new Map<string, { id: string; seq: number; channelId: string }>();
+): string[] {
+  const ids: string[] = [];
+  const vistas = new Set<string>();
   for (const dto of dtos) {
-    if (dto.threadId === undefined || conhecidas.has(dto.threadId)) continue;
-    const atual = raizes.get(dto.threadId);
-    if (atual === undefined || dto.seq < atual.seq) {
-      raizes.set(dto.threadId, { id: dto.id, seq: dto.seq, channelId: dto.channelId });
-    }
+    if (dto.threadId === undefined || conhecidas.has(dto.threadId) || vistas.has(dto.threadId)) continue;
+    vistas.add(dto.threadId);
+    ids.push(dto.threadId);
   }
-  return [...raizes].map(([threadId, raiz]) => ({
-    id: threadId,
-    rootMessageId: raiz.id,
-    channelId: raiz.channelId,
-    replyIds: [],
-    participantIds: [],
-    unreadCount: 0,
-  }));
+  return ids;
 }
 
 /** Número do fio (§7.4.1 `u8 kind`) → token do domínio. A ordem É a de §13.6. */

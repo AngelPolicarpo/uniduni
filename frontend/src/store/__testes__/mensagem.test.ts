@@ -39,6 +39,7 @@ function canalFalso(resposta?: Partial<{ opId: string; falha: Error }>) {
     reagir: vi.fn(falha),
     abrirThread: vi.fn(falha),
     observarReacoes: vi.fn(),
+    observarReatores: vi.fn(),
     observarThread: vi.fn(),
     marcarThreadLida: vi.fn(),
   } satisfies CanalDeEscrita & { enviar: ReturnType<typeof vi.fn>; reenviar: ReturnType<typeof vi.fn> };
@@ -227,15 +228,52 @@ describe("retrySend — §11.3 reenvia o MESMO envelope", () => {
     useMessageStore.getState().retrySend("b-inexistente");
     expect(canal.reenviar).not.toHaveBeenCalled();
   });
+
+  it("bolha que nunca chegou à outbox tenta de novo ENVIANDO, não reenviando", async () => {
+    // Sem núcleo: a op não foi enfileirada, então não existe envelope (§11.3).
+    useMessageStore.getState().configurarEscrita(null);
+    await useMessageStore.getState().send({
+      communityId: COMUNIDADE,
+      channelId: CANAL,
+      content: "olá",
+      mentions: [],
+    });
+    const ref = (useMessageStore.getState().sentByChannel[CANAL] ?? [])[0].id;
+    expect(useMessageStore.getState().overrides[ref]?.deliveryState).toBe("failed");
+    expect(useMessageStore.getState().opIdPorRef[ref]).toBeUndefined();
+
+    // O núcleo volta e o botão da linha é clicado: o pedido guardado é despachado.
+    const canal = canalFalso({ opId: "op-novo" });
+    useMessageStore.getState().configurarEscrita(canal);
+    useMessageStore.getState().retrySend(ref);
+    expect(canal.reenviar).not.toHaveBeenCalled();
+    expect(canal.enviar).toHaveBeenCalledWith(
+      expect.objectContaining({ channelId: CANAL, content: "olá", clientRef: ref }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(useMessageStore.getState().opIdPorRef[ref]).toBe("op-novo");
+    // Com envelope na fila, o próximo retry volta a ser o de §11.3.
+    expect(useMessageStore.getState().envioPorRef[ref]).toBeUndefined();
+  });
 });
 
 const item = (
-  sobre?: Partial<{ ref: string; opId: string; channelId: string; content: string; deliveryState: "queued" | "sending" | "failed" }>,
+  sobre?: Partial<{
+    ref: string;
+    opId: string;
+    channelId: string;
+    content: string;
+    timestamp: string;
+    deliveryState: "queued" | "sending" | "failed";
+  }>,
 ) => ({
   ref: "b-a",
   opId: "op-a",
   channelId: CANAL,
   content: "pendente",
+  // §15.6 `enqueuedAt` — a bolha redesenhada carrega o instante do enfileiramento.
+  timestamp: "2026-09-05T12:00:00.000Z",
   deliveryState: "queued" as const,
   ...sobre,
 });
@@ -313,6 +351,50 @@ function mensagemReal(sobre?: Partial<Message>): Message {
   };
 }
 
+describe("compose — a fila e a bolha do MESMO clientRef são uma linha só", () => {
+  it("não duplica a mensagem enquanto o item está enfileirado", () => {
+    const bolha: Message = {
+      id: "b-1",
+      channelId: CANAL,
+      authorId: "eu",
+      content: "pendente",
+      timestamp: "2026-09-05T12:00:00.000Z",
+      edited: false,
+      pinned: false,
+      reactions: [],
+      attachments: [],
+      mentions: [],
+      deliveryState: "sending",
+    };
+    const daFila: Message = { ...bolha, deliveryState: "queued", timestamp: "2026-09-05T11:59:59.000Z" };
+
+    const vis = compose([CANAL], { [CANAL]: [bolha] }, { [CANAL]: [daFila] }, {}, [], {}, {}, {});
+
+    expect(vis).toHaveLength(1);
+    // O instante e o corpo são os da bolha viva; o estado de entrega é o da fila.
+    expect(vis[0]).toMatchObject({ id: "b-1", timestamp: bolha.timestamp, deliveryState: "queued" });
+  });
+
+  it("item da fila sem bolha viva (app reaberto) continua aparecendo", () => {
+    const daFila: Message = {
+      id: "b-2",
+      channelId: CANAL,
+      authorId: "eu",
+      content: "de ontem",
+      timestamp: "2026-09-04T09:00:00.000Z",
+      edited: false,
+      pinned: false,
+      reactions: [],
+      attachments: [],
+      mentions: [],
+      deliveryState: "queued",
+    };
+    const vis = compose([CANAL], {}, { [CANAL]: [daFila] }, {}, [], {}, {}, {});
+    expect(vis).toHaveLength(1);
+    expect(vis[0].id).toBe("b-2");
+  });
+});
+
 describe("escritas sobre mensagem real — otimismo com rollback (§11.1)", () => {
   it("editar aplica já e despacha message.edit pelo canal da mensagem", async () => {
     const canal = canalFalso({ opId: "op-e" });
@@ -340,14 +422,73 @@ describe("escritas sobre mensagem real — otimismo com rollback (§11.1)", () =
     expect(state.undoPorRef).toEqual({});
   });
 
-  it("aceite descarta o rollback — observado não se desfaz", async () => {
+  it("aceite descarta o rollback E aposenta o override — daí em diante manda a projeção", async () => {
     const canal = canalFalso({ opId: "op-p" });
     useMessageStore.getState().configurarEscrita(canal);
     useMessageStore.getState().setPinned(mensagemReal(), true);
     const ref = Object.keys(useMessageStore.getState().undoPorRef)[0];
+    expect(useMessageStore.getState().overrides["msg-9"]?.pinned).toBe(true);
+
     useMessageStore.getState().assentarAceita(ref, "msg-9");
     expect(useMessageStore.getState().undoPorRef).toEqual({});
-    expect(useMessageStore.getState().overrides["msg-9"]?.pinned).toBe(true);
+    expect(useMessageStore.getState().alvoPorRef).toEqual({});
+    // Observado na réplica: o otimismo sai de cena. Segurá-lo mascararia para
+    // sempre a fixação — ou o tombstone — que outra pessoa fizesse depois.
+    expect(useMessageStore.getState().overrides["msg-9"]).toBeUndefined();
+  });
+
+  it("edição aceita para de mascarar o que a réplica passar a dizer da mensagem", () => {
+    const canal = canalFalso({ opId: "op-e2" });
+    useMessageStore.getState().configurarEscrita(canal);
+    useMessageStore.getState().editMessage(mensagemReal(), "editado");
+    const ref = Object.keys(useMessageStore.getState().undoPorRef)[0];
+    useMessageStore.getState().assentarAceita(ref, "msg-9");
+
+    // A moderação tombstona a mesma mensagem: a projeção nova aparece inteira.
+    const tombstone = mensagemReal({ content: "_Mensagem removida da interface_" });
+    const vis = compose(
+      [CANAL],
+      {},
+      {},
+      useMessageStore.getState().overrides,
+      [],
+      { [CANAL]: [tombstone] },
+      {},
+      {},
+    );
+    expect(vis[0].content).toBe("_Mensagem removida da interface_");
+  });
+
+  it("reação aceita relê o estado projetado, e a releitura aposenta o otimismo", () => {
+    const canal = canalFalso({ opId: "op-r2" });
+    useMessageStore.getState().configurarEscrita(canal);
+    // Cinco reações de terceiros: o fio só diz `count`/`mine` (§15.6.1).
+    useMessageStore.getState().aplicarReacoesRemotas("msg-9", [{ emoji: "🎉", count: 5, userIds: [] }]);
+    useMessageStore.getState().toggleReaction(mensagemReal({ reactions: [] }), "🎉", "key-eu");
+
+    // O otimismo SOMA: 5 de outros mais a minha. Derivar de `userIds` daria 1.
+    expect(useMessageStore.getState().overrides["msg-9"]?.reactions).toEqual([
+      { emoji: "🎉", count: 6, userIds: ["key-eu"] },
+    ]);
+
+    const ref = Object.keys(useMessageStore.getState().undoPorRef)[0];
+    useMessageStore.getState().assentarAceita(ref, "msg-9");
+    expect(canal.observarReacoes).toHaveBeenLastCalledWith(CANAL, "msg-9");
+
+    // Chega a releitura: o override sai e o chip passa a ser o do fio.
+    useMessageStore.getState().aplicarReacoesRemotas("msg-9", [{ emoji: "🎉", count: 6, userIds: ["key-eu"] }]);
+    expect(useMessageStore.getState().overrides["msg-9"]).toBeUndefined();
+  });
+
+  it("reação em voo não é atropelada por hidratação que chegue no meio", () => {
+    const canal = canalFalso({ opId: "op-r3" });
+    useMessageStore.getState().configurarEscrita(canal);
+    useMessageStore.getState().toggleReaction(mensagemReal({ reactions: [] }), "👍", "key-eu");
+    // Hidratação antiga (sem a minha reação) chega antes do aceite: não recolhe.
+    useMessageStore.getState().aplicarReacoesRemotas("msg-9", [{ emoji: "👍", count: 0, userIds: [] }]);
+    expect(useMessageStore.getState().overrides["msg-9"]?.reactions).toEqual([
+      { emoji: "👍", count: 1, userIds: ["key-eu"] },
+    ]);
   });
 
   it("reagir computa `present` do que já existe (mesclando hidratação) e despacha", () => {

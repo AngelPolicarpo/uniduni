@@ -15,6 +15,7 @@ const item = (sobre?: Partial<OutboxItem>): OutboxItem => ({
   kindLabel: "Mensagem",
   state: "queued",
   attempts: 0,
+  enqueuedAt: 1_757_030_400_000,
   nextAttemptAt: 0,
   preview: { content: "olá" },
   ...sobre,
@@ -42,8 +43,15 @@ describe("bolhaDaFila — o recorte de F-16", () => {
       opId: "op-1",
       channelId: "ch-1",
       content: "olá",
+      // §15.6 `enqueuedAt` — o instante do enfileiramento, não a época zero.
+      timestamp: new Date(1_757_030_400_000).toISOString(),
       deliveryState: "queued",
     });
+  });
+
+  it("o carimbo da bolha é o do enfileiramento — nunca 1970", () => {
+    const b = bolhaDaFila(item({ clientRef: "b-9", channelId: "ch-1", enqueuedAt: 1_700_000_000_000 }));
+    expect(b?.timestamp).toBe(new Date(1_700_000_000_000).toISOString());
   });
 
   it("sem clientRef não há bolha — correlação é a razão dela existir", () =>

@@ -44,6 +44,11 @@ export function ThreadPanel({
   const doCanal = useThreadReplies(channel.id, thread);
   const leitura = useThreadLeitura(thread?.id);
   const hidratarThread = useMessageStore((state) => state.hidratarThread);
+  // A leitura de `query.thread` NÃO passa por `compose`: ela vem direto do núcleo.
+  // Sem estes dois, a resposta antiga que a pessoa acabou de apagar reaparecia
+  // inteira ao abrir a thread, e a editada voltava com o texto anterior.
+  const overrides = useMessageStore((state) => state.overrides);
+  const deletedIds = useMessageStore((state) => state.deletedIds);
 
   const threadIdReal = thread && !thread.id.startsWith(THREAD_TEMPORARIA_PREFIXO) ? thread.id : undefined;
   useEffect(() => {
@@ -52,7 +57,7 @@ export function ThreadPanel({
 
   if (!root) return null;
 
-  const respostas = mesclarRespostas(doCanal, leitura?.respostas);
+  const respostas = mesclarRespostas(doCanal, leitura?.respostas, overrides, deletedIds);
 
   return (
     <SlidePanel title="Thread" onClose={onClose} width={320}>
@@ -122,10 +127,25 @@ export function ThreadPanel({
  * As duas fontes de respostas — a página do canal (ao vivo por
  * `messages.appended`) e a leitura de `query.thread` (janela completa) —
  * mescladas sem duplicar, na ordem em que o log as aplicou.
+ *
+ * O que vem de `query.thread` recebe aqui o MESMO tratamento que `compose` dá à
+ * página do canal: o apagado sai e o override de sessão manda. Ele não passa por
+ * `compose` (é outra consulta, e as respostas antigas não estão na janela de 50),
+ * então sem esta reconciliação a thread contradizia o canal.
  */
-function mesclarRespostas(doCanal: Message[], daLeitura: Message[] | undefined): Message[] {
+function mesclarRespostas(
+  doCanal: Message[],
+  daLeitura: Message[] | undefined,
+  overrides: Record<string, Partial<Message>>,
+  deletedIds: string[],
+): Message[] {
   if (daLeitura === undefined || daLeitura.length === 0) return doCanal;
+  const apagadas = new Set(deletedIds);
   const porId = new Map(doCanal.map((m) => [m.id, m]));
-  for (const m of daLeitura) if (!porId.has(m.id)) porId.set(m.id, m);
+  for (const m of daLeitura) {
+    if (porId.has(m.id) || apagadas.has(m.id)) continue;
+    const override = overrides[m.id];
+    porId.set(m.id, override ? { ...m, ...override } : m);
+  }
   return [...porId.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }

@@ -21,20 +21,10 @@ import {
 import { ROLE_TEXT_CLASS } from "../../lib/role";
 import { selectCommunity, selectHighestRole, useCommunityStore, useFindMember, useHasPermission, useLocalMemberId } from "../../store/communityStore";
 import { useIdentityStore } from "../../store/identityStore";
-import { useMessageStore, useAnexoRemoto } from "../../store/messageStore";
+import { anexosDaMensagem, useMessageStore, useAnexoRemoto } from "../../store/messageStore";
 import { useUiStore } from "../../store/uiStore";
 import { ProfilePopover } from "../members/ProfilePopover";
-import type { Attachment, Message } from "../../domain/types";
-
-/**
- * As duas fontes de anexo — a bolha própria (staging local, §13.2) e a hidratação de
- * `query.message` (§15.6.1, no máximo um anexo por mensagem) — sem duplicar por id.
- */
-function anexosDaMensagem(message: Message, remoto: Attachment | undefined): Attachment[] {
-  if (remoto === undefined) return message.attachments;
-  if (message.attachments.some((a) => a.id === remoto.id)) return message.attachments;
-  return [...message.attachments, remoto];
-}
+import type { Message } from "../../domain/types";
 
 /** §9, 2.1 responsividade — no toque a barra de ações vem por long-press. */
 const LONG_PRESS_MS = 500;

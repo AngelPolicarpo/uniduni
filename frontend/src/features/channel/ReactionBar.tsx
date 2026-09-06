@@ -4,6 +4,7 @@ import { cn } from "../../lib/cn";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { EmojiPicker } from "./EmojiPicker";
 import { useCommunityStore, selectMemberLabel } from "../../store/communityStore";
+import { useMessageStore, useReatores } from "../../store/messageStore";
 import { useShallow } from "zustand/react/shallow";
 import type { Message, Reaction } from "../../domain/types";
 
@@ -12,6 +13,8 @@ const NAMES_SHOWN = 6;
 
 interface ReactionChipProps {
   reaction: Reaction;
+  messageId: string;
+  channelId: string;
   communityId: string;
   mine: boolean;
   canReact: boolean;
@@ -19,32 +22,47 @@ interface ReactionChipProps {
 }
 
 /**
- * Chip de uma reação. O tooltip com quem reagiu é a única superfície de
- * `Reaction.usuários[]` (§2) — sem ele o campo não aparece em lugar nenhum
- * da interface.
+ * Chip de uma reação. O tooltip diz QUEM reagiu — e quem reagiu é resposta de
+ * `query.reactors` (§15.6, DR-47), pedida quando o ponteiro chega ao chip.
+ *
+ * `Reaction.userIds` não serve: §15.6.1 põe no fio só `{emoji, count, mine}`, e o
+ * adaptador preenche a lista no máximo com a própria chave. O tooltip que lia
+ * essa lista anunciava " reagiu com 👍" — sem nome nenhum — sempre que a reação
+ * era de outra pessoa.
  */
 function ReactionChip({
   reaction,
+  messageId,
+  channelId,
   communityId,
   mine,
   canReact,
   onToggle,
 }: ReactionChipProps) {
+  const hidratarReatores = useMessageStore((state) => state.hidratarReatores);
+  const reatores = useReatores(messageId, reaction.emoji);
   const names = useCommunityStore(
     useShallow((state) =>
-      reaction.userIds.map((id) => selectMemberLabel(state, communityId, id)),
+      (reatores?.identityIds ?? []).map((id) => selectMemberLabel(state, communityId, id)),
     ),
   );
 
   const shown = names.slice(0, NAMES_SHOWN).join(", ");
-  const rest = names.length - NAMES_SHOWN;
-  const who = rest > 0 ? `${shown} e mais ${rest}` : shown;
+  const restantes = (reatores?.total ?? 0) - Math.min(names.length, NAMES_SHOWN);
+  const who = restantes > 0 ? `${shown} e mais ${restantes}` : shown;
+  // Enquanto a consulta não voltou, o tooltip diz o que se sabe: a contagem.
+  const rotulo =
+    reatores === undefined || names.length === 0
+      ? `${reaction.count} ${reaction.count === 1 ? "pessoa reagiu" : "pessoas reagiram"} com ${reaction.emoji}`
+      : `${who} reagiu com ${reaction.emoji}`;
 
   return (
-    <Tooltip label={`${who} reagiu com ${reaction.emoji}`} side="top">
+    <Tooltip label={rotulo} side="top">
       <button
         type="button"
         disabled={!canReact}
+        onPointerEnter={() => hidratarReatores(channelId, messageId, reaction.emoji)}
+        onFocus={() => hidratarReatores(channelId, messageId, reaction.emoji)}
         onClick={onToggle}
         aria-pressed={mine}
         className={cn(
@@ -61,7 +79,7 @@ function ReactionChip({
           {reaction.emoji}
         </span>
         {reaction.count}
-        <span className="sr-only">{`— ${who}`}</span>
+        <span className="sr-only">{`— ${rotulo}`}</span>
       </button>
     </Tooltip>
   );
@@ -99,6 +117,8 @@ export function ReactionBar({
         <ReactionChip
           key={reaction.emoji}
           reaction={reaction}
+          messageId={message.id}
+          channelId={message.channelId}
           communityId={communityId}
           mine={reaction.userIds.includes(localMemberId)}
           canReact={canReact}

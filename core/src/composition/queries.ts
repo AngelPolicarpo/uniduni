@@ -1103,6 +1103,10 @@ export function queryReadPorts(deps: QueryReadDeps) {
           ...(nome !== null ? { kindLabel: ROTULO_KIND[nome] ?? nome } : {}),
           state: r.state,
           attempts: r.attempts,
+          // §15.6 (emenda de 2026-09-05) — o instante do ENFILEIRAMENTO local. É o
+          // único carimbo que existe antes de a op ser observada na réplica, e sem
+          // ele a bolha redesenhada de F-16 nascia sem data.
+          enqueuedAt: r.created_at,
           nextAttemptAt: r.next_attempt_at,
           ...(r.last_error !== null ? { lastError: r.last_error } : {}),
           ...(r.dropped_reason !== null ? { droppedReason: r.dropped_reason } : {}),
