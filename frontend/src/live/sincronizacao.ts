@@ -31,7 +31,7 @@ import type {
 } from "../ipc/dto";
 import { useCommunityStore } from "../store/communityStore";
 import { useIdentityStore } from "../store/identityStore";
-import { useVoiceStore } from "../store/voiceStore";
+import { useVoiceStore, cancelarTimeoutDeInicio, limparTodosTimeoutsDeTela } from "../store/voiceStore";
 import { MalhaDeVoz, motivoDoErroDeMicrofone } from "./voz";
 import { acharMonitorDeSistema } from "./dispositivos";
 import { EstrelaDeTela } from "./tela";
@@ -41,6 +41,7 @@ import {
   esquecerTodasAsTelas,
   guardarTelaDoApresentador,
   guardarTelaRecebida,
+  telaRecebida,
 } from "./telaStreams";
 import {
   esquecerCameraRecebida,
@@ -1027,20 +1028,18 @@ function configurarVoz(): void {
       aoChegarVideo: (peerHex, stream, _track, origem) => {
         const de = peerHex.toLowerCase();
         if (origem === "tela") {
-          // §17.5 (2026-08-26) — o canal pode ter várias transmissões vivas. A trilha é da
-          // sessão de QUEM a mandou; sem esta busca por apresentador, a segunda tela do
-          // canal seria descartada como "não é de quem apresenta".
+          // §17.5 — Salva sempre no cache de tela recebida, para garantir que não seja descartada
+          // caso a trilha chegue antes do evento share.started do host.
+          guardarTelaRecebida(peerHex, stream);
           const daquele = useVoiceStore
             .getState()
             .shares.find((s) => s.presenterId.toLowerCase() === de);
           if (daquele === undefined) {
-            // Chegou tela de quem não tem sessão anunciada. O m-line não mente sobre o que a
-            // trilha é, mas a sessão é do host: sem ela não há a que ligar a imagem.
-            console.log("[tela] trilha sem sessão anunciada de", peerHex.slice(0, 8));
+            console.log("[tela] trilha antes da sessão anunciada de", peerHex.slice(0, 8));
             return;
           }
           console.log("[tela] vídeo recebido de", peerHex.slice(0, 8));
-          guardarTelaRecebida(peerHex, stream);
+          cancelarTimeoutDeInicio(daquele.sessionId);
           // A tela chegou: quem assiste sai de "Preparando compartilhamento…".
           useVoiceStore.setState((st) => ({
             shares: st.shares.map((s) =>
@@ -1169,7 +1168,10 @@ function configurarVoz(): void {
       const agora = estaFalando(nivel, threshold, falando);
       if (agora !== falando) {
         falando = agora;
-        void api.voiceSetSelf({ speaking: agora }).catch(() => undefined);
+        api.voiceSetSelf({ speaking: agora }).catch(() => {
+          // Reverte 'falando' em caso de erro no envio para retentar no próximo tick
+          falando = !agora;
+        });
       }
     }, 250);
   };
@@ -1186,6 +1188,7 @@ function configurarVoz(): void {
    */
   const encerrarMalha = (): Promise<void> => {
     desligarVad();
+    limparTodosTimeoutsDeTela();
     return malha.sair();
   };
 
@@ -1213,6 +1216,9 @@ function configurarVoz(): void {
     },
     sair: () => encerrarMalha(),
     mudarSelf: (patch) => void api.voiceSetSelf(patch).catch(() => undefined),
+    responderConsentimento: async (a) => {
+      await api.relayRespondConsent(a).catch(() => undefined);
+    },
     // §17.4 L-12 — o mudo do PRÓPRIO microfone é efetivo, não conselho: quem controla o
     // microfone é quem o possui. Contar ao host acende o ícone do outro lado; o que
     // interrompe o áudio é a trilha.
@@ -1472,6 +1478,17 @@ function configurarVoz(): void {
     );
   });
 
+  // §15.5 `relay.consentRequested` — requisição de consentimento voluntário de relay (§17.7).
+  cliente.subscribe("relay.consentRequested", (d) => {
+    const dado = d as { communityId?: string; reason?: string };
+    console.log("[voz] relay.consentRequested:", dado.communityId, dado.reason);
+    if (typeof dado.communityId !== "string" || typeof dado.reason !== "string") return;
+    useVoiceStore.getState().pedirConsentimento({
+      communityId: dado.communityId,
+      reason: dado.reason,
+    });
+  });
+
   // §15.5 — a ocupação do CANAL, para quem está de fora da chamada. É o que faz a sidebar
   // mostrar quem já está na sala antes de entrar (RT-05).
   cliente.subscribe("voice.occupancyChanged", (d) => {
@@ -1529,6 +1546,39 @@ function configurarVoz(): void {
       aplicarSaidaDeAudioATodos();
     }
   });
+
+  // Monitoramento global de hot-plug de dispositivos de áudio (fone Bluetooth/USB desconectado em chamada).
+  if (typeof navigator !== "undefined" && navigator.mediaDevices?.addEventListener) {
+    const aoMudarDispositivos = async () => {
+      try {
+        const lista = await navigator.mediaDevices.enumerateDevices();
+        const settings = useSettingsStore.getState();
+
+        if (settings.outputId !== "default") {
+          const saidaExiste = lista.some(
+            (d) => d.kind === "audiooutput" && d.deviceId === settings.outputId,
+          );
+          if (!saidaExiste) {
+            console.log("[dispositivos] saída desconectada:", settings.outputId, "-> fallback para default");
+            settings.setDevice("output", "default");
+          }
+        }
+
+        if (settings.microphoneId !== "default") {
+          const micExiste = lista.some(
+            (d) => d.kind === "audioinput" && d.deviceId === settings.microphoneId,
+          );
+          if (!micExiste) {
+            console.log("[dispositivos] microfone desconectado:", settings.microphoneId, "-> fallback para default");
+            settings.setDevice("microphone", "default");
+          }
+        }
+      } catch (e) {
+        console.warn("[dispositivos] erro no devicechange:", e);
+      }
+    };
+    navigator.mediaDevices.addEventListener("devicechange", aoMudarDispositivos);
+  }
 }
 
 /** §20.1 — a recusa do `share.join`, em português. Vale para a primeira tentativa e para o retry. */
@@ -1770,6 +1820,15 @@ function configurarTela(malha: MalhaDeVoz): void {
       presenterKey: dado.presenterKey,
       channelId: dado.channelId,
     });
+    // Se a trilha de tela já tiver chegado antes do evento share.started:
+    if (telaRecebida(dado.presenterKey) !== null) {
+      cancelarTimeoutDeInicio(dado.sessionId);
+      useVoiceStore.setState((st) => ({
+        shares: st.shares.map((s) =>
+          s.sessionId === dado.sessionId ? { ...s, phase: "live" as const } : s,
+        ),
+      }));
+    }
     // Espectador: pedir entrada ao host. É ele que emite o ticket da sessão de tela e que
     // confere que quem pede está na chamada (§17.5, F-18).
     const eu = useIdentityStore.getState().identity?.id?.toLowerCase();

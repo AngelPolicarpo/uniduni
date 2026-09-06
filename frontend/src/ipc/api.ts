@@ -636,6 +636,9 @@ export const api = {
       TIMEOUT_HOST_MS,
     ),
 
+  relayRespondConsent: (a: { communityId: string; accept: boolean; remember?: boolean }) =>
+    req<Record<string, never>>("relay.respondConsent", a),
+
   coreShutdown: () => req<{ drainedMs: number; pendingOps: number; replicatedTo: number }>("core.shutdown", {}, TIMEOUT_HOST_MS),
 
   /* ── Conversa direta (§31.16) ───────────────────────────────────────────────

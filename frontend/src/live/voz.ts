@@ -119,7 +119,7 @@ export interface PortaDeVoz {
      */
     autorizacaoPorTransporte?: boolean;
   }>;
-  leave(): Promise<unknown>;
+  leave(a?: { sessionId?: string }): Promise<unknown>;
   signal(a: { peerKey: string; ticketId: string; sdp?: string; ice?: string }): Promise<unknown>;
 }
 
@@ -609,6 +609,15 @@ export class MalhaDeVoz {
   #sessionId: string | null = null;
   /** Verdadeiro entre o início de `entrar` e o assentamento (ou falha) dele. */
   #entrando = false;
+  #fila: Promise<unknown> = Promise.resolve();
+  #geracao = 0;
+
+  /** Serializa operações concorrentes de entrar/sair na malha. */
+  #enfileirar<T>(op: () => Promise<T>): Promise<T> {
+    const proxima = this.#fila.then(op, op);
+    this.#fila = proxima.catch(() => undefined);
+    return proxima;
+  }
   /** Tipos de candidato ICE vistos — é o que diz POR QUE não conectou. */
   readonly #tiposDeCandidato = new Set<string>();
   /**
@@ -698,7 +707,7 @@ export class MalhaDeVoz {
     return this.#local;
   }
 
-  async entrar(a: {
+  entrar(a: {
     communityId: string;
     channelId: string;
     euHex: string;
@@ -707,9 +716,25 @@ export class MalhaDeVoz {
     /** §10, 3.1 — o `inputVolume` da tela de ajustes, aplicado ao que SAI (B47). */
     volumeEntrada?: number;
   }): Promise<{ sessionId: string; microfoneAusente: string | null }> {
+    const geracao = ++this.#geracao;
+    return this.#enfileirar(() => this.#entrar(a, geracao));
+  }
+
+  async #entrar(
+    a: {
+      communityId: string;
+      channelId: string;
+      euHex: string;
+      microfoneId: string;
+      agora: number;
+      /** §10, 3.1 — o `inputVolume` da tela de ajustes, aplicado ao que SAI (B47). */
+      volumeEntrada?: number;
+    },
+    geracao: number,
+  ): Promise<{ sessionId: string; microfoneAusente: string | null }> {
     // A ordem importa: o host decide ANTES de qualquer captura. Ligar o microfone para
     // depois descobrir que a permissão de §9.1 não deixa entrar acende a luz à toa.
-    log(`entrando em ${a.channelId}`);
+    log(`entrando em ${a.channelId} (geração ${geracao})`);
     // A reentrada nasce LIMPA. Entrar de novo — trocar de canal, o "Tentar novamente" de
     // §80, o join depois de uma falha parcial — sem limpar deixava as RTCPeerConnection(s)
     // do join anterior negociando pelo MESMO `voice.signal`: ofertas cruzadas, candidates
@@ -722,6 +747,10 @@ export class MalhaDeVoz {
     try {
       this.#limparEstado();
       const r = await this.#porta.join({ communityId: a.communityId, channelId: a.channelId });
+      if (geracao !== this.#geracao) {
+        log(`join cancelado por operação subsequente (geração ${geracao} vs ${this.#geracao})`);
+        return { sessionId: r.sessionId, microfoneAusente: null };
+      }
       // O que o host serve. Lista VAZIA aqui significa que a chamada só fecha em rede local:
       // sem STUN o WebRTC junta apenas candidato de host (§17.3, L-11).
       log(`join ok · sessão ${r.sessionId} · roster ${r.roster.length} · iceServers`, r.iceServers);
@@ -1365,6 +1394,9 @@ export class MalhaDeVoz {
      * está transmitindo para mim". A autorização continua sendo a de §17.4/§17.5.
      */
     if (par.tx === null) {
+      await par.prontas;
+    }
+    if (par.tx === null) {
       log(`trilha para ${parHex.slice(0, 8)} IGNORADA — os m-lines ainda não negociaram`);
       return null;
     }
@@ -1548,11 +1580,17 @@ export class MalhaDeVoz {
     this.#autorizados.clear();
   }
 
-  async sair(): Promise<void> {
+  sair(): Promise<void> {
+    this.#geracao++;
+    return this.#enfileirar(() => this.#sair());
+  }
+
+  async #sair(): Promise<void> {
+    const sessaoAtual = this.#sessionId;
     // `aoSair` sai de dentro de `#limparEstado` desde 2026-09-06 — repeti-lo aqui faria a
     // câmera ser desligada duas vezes por saída.
     this.#limparEstado();
-    await this.#porta.leave().catch(() => undefined);
+    await this.#porta.leave(sessaoAtual ? { sessionId: sessaoAtual } : undefined).catch(() => undefined);
   }
 
   #abrir(parHex: string, iniciar: boolean): Par {

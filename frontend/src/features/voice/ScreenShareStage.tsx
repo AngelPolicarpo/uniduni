@@ -83,6 +83,7 @@ export function ScreenShareStage({
     volume,
     outputId,
     outputVolume,
+    surdo,
   });
 
   const aoVivo = share.phase === "live";

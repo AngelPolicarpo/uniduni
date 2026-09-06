@@ -34,8 +34,8 @@ export type VoiceStage = "connecting" | "connected" | "failed";
 export interface PortaDeMalha {
   entrar: (a: { communityId: string; channelId: string; localId: string }) => Promise<void>;
   sair: () => Promise<void>;
-  /** §15.4 `voice.setSelf` — mudo/ensurdecido/câmera vão ao host, que publica no roster. */
-  mudarSelf: (patch: { muted?: boolean; deafened?: boolean; cameraOn?: boolean }) => void;
+  /** §15.4 `voice.setSelf` — mudo/ensurdecido/câmera/fala vão ao host, que publica no roster. */
+  mudarSelf: (patch: { muted?: boolean; deafened?: boolean; cameraOn?: boolean; speaking?: boolean }) => void;
   /**
    * §17.4 L-12 — o efeito REAL das três decisões locais de áudio. `mudarSelf` conta ao host
    * e acende o ícone dos outros; nada disso interrompe som. Quem interrompe é isto:
@@ -95,6 +95,8 @@ export interface PortaDeMalha {
    * Opcional pelas mesmas razões das vizinhas: uma ponte anterior não a conhece.
    */
   mutarParticipante?: (identityKey: string, muted: boolean) => Promise<void>;
+  /** §15.4 `relay.respondConsent` — envia a resposta de consentimento ao núcleo. */
+  responderConsentimento?: (a: { communityId: string; accept: boolean; remember: boolean }) => Promise<void>;
   /** Épico 4 — os streams que a gravação local mistura (pares + mic). */
   fluxosParaGravacao: () => MediaStream[];
 }
@@ -466,6 +468,8 @@ interface VoiceState {
    */
   telaFalhou: (motivo: string, sessionId?: string) => void;
 
+  /** §15.5 `relay.consentRequested` — requisição de consentimento voluntário recebida do núcleo. */
+  pedirConsentimento: (request: ConsentRequest) => void;
   /** §15.4 `relay.respondConsent` — a decisão de §17.7, com "lembrar nesta comunidade". */
   respondConsent: (accept: boolean, remember: boolean) => void;
 
@@ -483,6 +487,40 @@ interface VoiceState {
  * otimização e reparo — não há o que simular quando existe rede de verdade (B26).
  */
 let portaDeTela: PortaDeTelaStore | null = null;
+
+const timeoutsDeInicioDeTela = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * §17.5 / Lacuna 1 — timeout de início de transmissão de tela (10 s).
+ * Impede que quem assiste fique preso em "Preparando compartilhamento…" indefinidamente.
+ */
+export function agendarTimeoutDeInicio(sessionId: string): void {
+  cancelarTimeoutDeInicio(sessionId);
+  const timer = setTimeout(() => {
+    timeoutsDeInicioDeTela.delete(sessionId);
+    const state = useVoiceStore.getState();
+    const tela = state.shares.find((s) => s.sessionId === sessionId);
+    if (tela && tela.phase === "starting") {
+      useVoiceStore.getState().telaFalhou("A transmissão demorou muito para responder.", sessionId);
+    }
+  }, 10_000);
+  timeoutsDeInicioDeTela.set(sessionId, timer);
+}
+
+export function cancelarTimeoutDeInicio(sessionId: string): void {
+  const timer = timeoutsDeInicioDeTela.get(sessionId);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    timeoutsDeInicioDeTela.delete(sessionId);
+  }
+}
+
+export function limparTodosTimeoutsDeTela(): void {
+  for (const timer of timeoutsDeInicioDeTela.values()) {
+    clearTimeout(timer);
+  }
+  timeoutsDeInicioDeTela.clear();
+}
 
 /**
  * O último pedido de transmissão desta máquina — o que "Tentar novamente" repete.
@@ -749,6 +787,7 @@ export const useVoiceStore = create<VoiceState>()(
       },
 
       leave: () => {
+        limparTodosTimeoutsDeTela();
         // A luz da câmera não sobrevive à chamada. `sair()` derruba a malha, mas quem possui
         // o dispositivo é a captura — e ela não fica sabendo pelo estado ir para IDLE.
         void portaDeCamera?.desligar().catch(() => undefined);
@@ -767,21 +806,6 @@ export const useVoiceStore = create<VoiceState>()(
       aplicarRoster: (participantes) => {
         set((state) => {
           const local = state.localId;
-          // Sozinho na chamada é um estado NORMAL e **terminal**, não uma etapa a caminho
-          // de outro: não há par com quem conectar, e é por isso que a malha nem arma o
-          // prazo de L-11 nesse caso ("entrar sozinho num canal de voz é normal —
-          // espera-se alguém", `live/voz.ts`). A tela discordava do núcleo e ficava em
-          // "Conectando…" para sempre, porque quem tirava de `connecting` era o par
-          // conectando de verdade e não havia par nenhum. É a mentira que §80 tirou da
-          // conexão, reaparecida por outra causa.
-          //
-          // O custo não era só a frase errada: `connecting` também mantinha o PRÓPRIO tile
-          // como esqueleto. Quem entrava primeiro — o caso mais comum de todos — nunca se
-          // via na grade da chamada em que já estava.
-          //
-          // Roster VAZIO não entra aqui: isso não é "sozinho", é "sem chamada" — é o que
-          // sobra depois de `encerradaPeloHost`, e ressuscitá-lo apagaria o motivo que
-          // aquele caminho existe para preservar.
           const euHex = local?.toLowerCase() ?? null;
           const sozinho =
             participantes.length === 1 && participantes[0]?.keyHex.toLowerCase() === euHex;
@@ -862,7 +886,12 @@ export const useVoiceStore = create<VoiceState>()(
       /** §15.5 `voice.deviceError` — nomeia e mostra; quem limpa é a chamada nova. */
       registrarErroDeDispositivo: (motivo) => set({ erroDeDispositivo: motivo }),
 
-      encerradaPeloHost: (motivo) =>
+      encerradaPeloHost: (motivo) => {
+        // §VOZ-12 — o hardware de câmera e tela não pode continuar ligado após encerramento
+        // pelo host (kick, ban, canal apagado, community-ended).
+        void portaDeCamera?.desligar().catch(() => undefined);
+        void portaDeTela?.parar().catch(() => undefined);
+        limparTodosTimeoutsDeTela();
         set((state) => {
           const razao = motivo ?? state.motivoDaFalha;
           // Sem motivo é o encerramento limpo de sempre: a chamada some da tela.
@@ -881,7 +910,8 @@ export const useVoiceStore = create<VoiceState>()(
             motivoDaFalha: razao,
             terminadaPeloHost: true,
           };
-        }),
+        });
+      },
 
       /**
        * §17.4 L-12 — silenciar a si mesmo é **efetivo**, não conselho. São três coisas, e
@@ -914,7 +944,11 @@ export const useVoiceStore = create<VoiceState>()(
           ),
         }));
 
-        portaDeMalha?.mudarSelf({ muted: mudo, ...(saiDoSurdo ? { deafened: false } : {}) });
+        portaDeMalha?.mudarSelf({
+          muted: mudo,
+          ...(mudo ? { speaking: false } : {}),
+          ...(saiDoSurdo ? { deafened: false } : {}),
+        });
         // O mudo de verdade: sem esta linha a trilha continuava transmitindo e o ícone do
         // outro lado mentia.
         portaDeMalha?.definirMudo(mudo);
@@ -1343,6 +1377,7 @@ export const useVoiceStore = create<VoiceState>()(
         // Espectador: o que falhou foi o meu `share.join`. Repetir a captura de outra
         // pessoa não é algo que este botão possa — nem deva — fazer.
         const id = alvo.sessionId;
+        agendarTimeoutDeInicio(id);
         set((s) => ({
           shares: comTela(s.shares, id, (t) => ({
             ...t,
@@ -1377,6 +1412,7 @@ export const useVoiceStore = create<VoiceState>()(
           // Reentrega do mesmo `share.started` (§16.3 é at-most-once, mas nada proíbe
           // repetir) não pode duplicar a transmissão na lista.
           if (state.shares.some((s) => s.sessionId === sessionId)) return {};
+          agendarTimeoutDeInicio(sessionId);
           return {
             shares: [
               ...state.shares,
@@ -1403,6 +1439,7 @@ export const useVoiceStore = create<VoiceState>()(
         }),
 
       telaParou: (sessionId) => {
+        cancelarTimeoutDeInicio(sessionId);
         const state = get();
         const encerrada = state.shares.find((s) => s.sessionId === sessionId);
         if (encerrada === undefined) return;
@@ -1446,6 +1483,7 @@ export const useVoiceStore = create<VoiceState>()(
           // conseguiu, que acontece antes de o host devolver um id.
           const alvo = sessionId ?? minhaTela(state.shares, state.localId)?.sessionId;
           if (alvo === undefined) return {};
+          cancelarTimeoutDeInicio(alvo);
           if (!state.shares.some((s) => s.sessionId === alvo)) return {};
           return {
             shares: comTela(state.shares, alvo, (s) => ({
@@ -1456,17 +1494,24 @@ export const useVoiceStore = create<VoiceState>()(
           };
         }),
 
-      respondConsent: (accept, remember) =>
-        set((state) => {
-          const communityId = state.consentRequest?.communityId ?? state.communityId;
+      pedirConsentimento: (request) => set({ consentRequest: request }),
+
+      respondConsent: (accept, remember) => {
+        const state = get();
+        const communityId = state.consentRequest?.communityId ?? state.communityId;
+        if (communityId !== null) {
+          void portaDeMalha?.responderConsentimento?.({ communityId, accept, remember }).catch(() => undefined);
+        }
+        set((s) => {
           if (communityId === null) return { consentRequest: null };
           return {
             consentRequest: null,
             relayDecisionByCommunity: remember
-              ? { ...state.relayDecisionByCommunity, [communityId]: accept }
-              : state.relayDecisionByCommunity,
+              ? { ...s.relayDecisionByCommunity, [communityId]: accept }
+              : s.relayDecisionByCommunity,
           };
-        }),
+        });
+      },
 
       /* ─── Afinadores de desenvolvimento (§19.1) ─────────────────── */
 

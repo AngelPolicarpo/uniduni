@@ -402,10 +402,13 @@ class MediaRouter implements MediaDispatcher {
     return r;
   }
 
-  async voiceLeave(): Promise<MediaAck> {
+  async voiceLeave(arg?: { sessionId?: string }): Promise<MediaAck> {
     const d = this.#current();
     if (d === null) return { ok: false, code: 'E_NOT_IN_CALL' };
-    const r = await d.voiceLeave();
+    const r = await d.voiceLeave(arg);
+    if (arg?.sessionId !== undefined && this.currentSessionId() !== null && arg.sessionId !== this.currentSessionId()) {
+      return r;
+    }
     this.#currentVoice = null;
     return r;
   }

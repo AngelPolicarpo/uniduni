@@ -193,3 +193,41 @@ describe("silenciar outro participante sai da máquina (§17.4 L-12, 2026-09-06)
     expect(mutarParticipante).toHaveBeenCalledWith(outro, true);
   });
 });
+
+describe("consentimento de relay voluntário (§15.4 / §15.5 / §17.7)", () => {
+  it("pedirConsentimento popula consentRequest e respondConsent notifica portaDeMalha", () => {
+    const responderConsentimento = vi.fn(async () => undefined);
+    useVoiceStore.getState().configurarVoz({
+      entrar: vi.fn(async () => undefined),
+      sair: vi.fn(async () => undefined),
+      mudarSelf: vi.fn(),
+      definirMudo: vi.fn(),
+      definirSurdo: vi.fn(),
+      definirVolume: vi.fn(),
+      definirMusica: vi.fn(async () => ({ erro: null })),
+      definirVolumeMusica: vi.fn(),
+      fluxosParaGravacao: vi.fn(() => []),
+      responderConsentimento,
+    } as unknown as PortaDeMalha);
+
+    useVoiceStore.getState().pedirConsentimento({
+      communityId: "c1",
+      reason: "NAT simétrico exige mediação voluntária.",
+    });
+
+    expect(useVoiceStore.getState().consentRequest).toEqual({
+      communityId: "c1",
+      reason: "NAT simétrico exige mediação voluntária.",
+    });
+
+    useVoiceStore.getState().respondConsent(true, true);
+
+    expect(responderConsentimento).toHaveBeenCalledWith({
+      communityId: "c1",
+      accept: true,
+      remember: true,
+    });
+    expect(useVoiceStore.getState().consentRequest).toBeNull();
+    expect(useVoiceStore.getState().relayDecisionByCommunity["c1"]).toBe(true);
+  });
+});

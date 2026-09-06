@@ -1602,8 +1602,10 @@ export function registerCoreCommands(server: IpcServer, deps: CoreCommandDeps): 
     );
   });
 
-  server.register('voice.leave', 'standard', async () => {
-    okOrThrow(await midia().voiceLeave());
+  server.register('voice.leave', 'standard', async (rawArg) => {
+    const arg = (rawArg ?? {}) as Arg;
+    const sessionId = typeof arg['sessionId'] === 'string' ? arg['sessionId'] : undefined;
+    okOrThrow(await midia().voiceLeave(sessionId !== undefined ? { sessionId } : undefined));
     return {};
   });
 

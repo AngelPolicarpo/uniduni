@@ -103,7 +103,7 @@ export interface MediaDispatcher {
   /** Sessão de voz corrente desta instalação — `null` fora de chamada. */
   currentSessionId(): string | null;
   voiceJoin(a: { communityId: string; channelId: string }): Promise<VoiceJoinOk | MediaFail>;
-  voiceLeave(): Promise<MediaAck>;
+  voiceLeave(arg?: { sessionId?: string }): Promise<MediaAck>;
   voiceSetSelf(patch: SetSelfPatch): Promise<MediaAck>;
   voiceMuteParticipant(a: { communityId: string; identityKey: string; muted: boolean }): Promise<MediaAck>;
   /**
@@ -307,10 +307,15 @@ export function localMediaDispatcher(
       return r;
     },
 
-    async voiceLeave() {
+    async voiceLeave(arg?: { sessionId?: string }) {
       const key = deps.selfKeyHex();
-      const sessionId = deps.currentSessionId();
-      // Sem sessão ativa é no-op nomeado (§15.4: `voice.leave` não tem argumento).
+      const current = deps.currentSessionId();
+      // §15.4 / Lacuna 2 — se um sessionId específico foi passado e a sessão corrente já mudou
+      // (ex.: troca rápida de canal), a saída da chamada anterior não pode derrubar a nova.
+      if (arg?.sessionId !== undefined && current !== null && arg.sessionId !== current) {
+        return { ok: true };
+      }
+      const sessionId = arg?.sessionId ?? current;
       if (key === null || sessionId === null) return { ok: true };
       comunidadeEmChamada = null;
       seguranca = null;
@@ -721,8 +726,9 @@ export function remoteMediaDispatcher(
       return joined;
     },
 
-    async voiceLeave() {
+    async voiceLeave(arg?: { sessionId?: string }) {
       if (sessionId === null) return { ok: true }; // mesmo no-op nomeado do modo host
+      if (arg?.sessionId !== undefined && arg.sessionId !== sessionId) return { ok: true };
       const r = await call('voiceLeave', { sessionId });
       sessionId = null;
       seguranca = null;

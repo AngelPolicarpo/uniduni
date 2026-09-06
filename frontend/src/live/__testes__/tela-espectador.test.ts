@@ -132,4 +132,19 @@ describe("§94.3 — a falha de quem assiste é da transmissão que ele assiste"
     );
     expect(porta.assistir).not.toHaveBeenCalled();
   });
+
+  it("timeout de 10s transiciona transmissão em 'starting' para 'failed' (§17.5 / Lacuna 1)", async () => {
+    vi.useFakeTimers();
+    try {
+      telaDeOutro();
+      expect(tela("dele")?.phase).toBe("starting");
+
+      vi.advanceTimersByTime(10_000);
+
+      expect(tela("dele")?.phase).toBe("failed");
+      expect(tela("dele")?.motivoDaFalha).toBe("A transmissão demorou muito para responder.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -24,6 +24,8 @@ export interface ShareVideoParams {
   /** §10, 3.1 (B47) — saída e volume GERAIS desta máquina. */
   outputId: string;
   outputVolume: number;
+  /** §9 (2.3) — ensurdecimento local cala todo áudio entrante, incluindo tela alheia. */
+  surdo?: boolean;
 }
 
 /**
@@ -39,6 +41,7 @@ export function useShareVideoElement({
   volume,
   outputId,
   outputVolume,
+  surdo,
 }: ShareVideoParams) {
   /**
    * O `MediaStream` mora fora do React (`live/telaStreams`): ele precisa sobreviver a
@@ -68,11 +71,14 @@ export function useShareVideoElement({
   // um `srcObject` novo não a reaplica. O volume GERAL de saída (§10, 3.1, B47) multiplica
   // o volume por participante — é o que faz o slider de ajustes valer também para o som da
   // tela, que toca no `<video>` e não nos `<audio>` da voz.
+  // Ensurdecer (§9, 2.3) ou ser o próprio apresentador zera o volume e ativa o muted imperativamente.
   useEffect(() => {
     const el = videoRef.current;
     if (el === null) return;
-    el.volume = Math.max(0, Math.min(100, volume * (outputVolume / 100))) / 100;
-  }, [videoRef, volume, outputVolume, phase]);
+    const mutado = isPresenter || Boolean(surdo);
+    el.muted = mutado;
+    el.volume = mutado ? 0 : Math.max(0, Math.min(100, volume * (outputVolume / 100))) / 100;
+  }, [videoRef, isPresenter, surdo, volume, outputVolume, phase]);
 
   // §10, 3.1 (B47) — a SAÍDA de áudio escolhida em ajustes vale para o som da tela também:
   // sem o `setSinkId`, o `<video>` tocava sempre no dispositivo padrão do sistema.

@@ -10,7 +10,7 @@
  * último caso — que é exatamente o defeito de a chamada evaporar sem explicação.
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useVoiceStore } from "../../store/voiceStore";
 
@@ -69,5 +69,25 @@ describe("encerradaPeloHost — o motivo é o que não pode se perder", () => {
 
     expect(useVoiceStore.getState().stage).toBe("failed");
     expect(useVoiceStore.getState().motivoDaFalha).toBe("Esta comunidade foi encerrada.");
+  });
+
+  it("desliga câmera e tela ao ser encerrada pelo host (§VOZ-12)", () => {
+    const desligarCam = vi.fn().mockResolvedValue(undefined);
+    const pararTela = vi.fn().mockResolvedValue(undefined);
+    useVoiceStore.getState().configurarCamera({ ligar: vi.fn(), desligar: desligarCam });
+    useVoiceStore.getState().configurarTela({
+      apresentar: vi.fn(),
+      parar: pararTela,
+      assistir: vi.fn(),
+      definirQualidade: vi.fn(),
+      definirCaptura: vi.fn(),
+      perfilDeCaptura: vi.fn(),
+    } as never);
+
+    entrar();
+    useVoiceStore.getState().encerradaPeloHost("Canal apagado");
+
+    expect(desligarCam).toHaveBeenCalled();
+    expect(pararTela).toHaveBeenCalled();
   });
 });

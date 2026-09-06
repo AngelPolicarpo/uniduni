@@ -1259,6 +1259,44 @@ describe("Microfone ausente — a chamada segue em somente-escuta", () => {
     expect(eventos.aoMicrofoneAusente).not.toHaveBeenCalled();
     expect(reservados(criadas[0]!).voz.sender.track).toBe(micNovo as unknown as MediaStreamTrack);
   });
+
+  it("sair() repassa o sessionId para porta.leave({ sessionId }) (§15.4 / Lacuna 2)", async () => {
+    const { malha, porta } = montar([ticket(EU, PAR)], [EU, PAR]);
+    await malha.entrar({ communityId: "c", channelId: "ch", euHex: EU, microfoneId: "default", agora: 0 });
+    await malha.sair();
+    expect(porta.leave).toHaveBeenCalledWith({ sessionId: "s1" });
+  });
+
+  it("concorrência entre entrar e sair cancela continuação de entrar superado", async () => {
+    let resolverJoin!: (val: unknown) => void;
+    const porta = {
+      join: vi.fn(() => new Promise((resolve) => { resolverJoin = resolve; })),
+      leave: vi.fn(async () => undefined),
+      signal: vi.fn(async () => undefined),
+    };
+    const midia = {
+      capturar: vi.fn(async () => ({ getTracks: () => [], getAudioTracks: () => [] })),
+      conexao: vi.fn(),
+    };
+    const malha = new MalhaDeVoz(porta as unknown as PortaDeVoz, midia as never, { aoFalhar: vi.fn(), aoMudarPar: vi.fn(), aoChegarAudio: vi.fn(), aoSair: vi.fn() });
+
+    const pEntrar = malha.entrar({ communityId: "c", channelId: "ch1", euHex: EU, microfoneId: "default", agora: 0 });
+    const pSair = malha.sair();
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    resolverJoin({
+      sessionId: "sess-antiga",
+      roster: [{ keyHex: EU }, { keyHex: PAR }],
+      iceServers: [],
+      tickets: [ticket(EU, PAR)],
+    });
+
+    await pEntrar;
+    await pSair;
+
+    expect(malha.streamLocal).toBeNull();
+  });
 });
 
 
