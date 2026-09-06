@@ -174,6 +174,13 @@ const GRACA_DE_DESCONECTADO_MS = 5_000;
 const REPETIR_OFERTA_MS = 3_000;
 
 /**
+ * A cadência do vigia de vídeo de §17.2. Um segundo é o intervalo em que "a imagem voltou"
+ * ainda parece imediato e em que um `getStats` por par não pesa — o apresentador já paga um
+ * por espectador a cada 2 s no laço de saúde de §17.6.
+ */
+const VIGIA_DE_VIDEO_MS = 1_000;
+
+/**
  * Quanto tempo a coleta fica **só com os servidores do host** antes de admitir o terceiro.
  *
  * §17.2 prometeu, na guarda 1 da emenda de 2026-08-25, que "quando o do host resolve, o de
@@ -445,9 +452,14 @@ export interface EventosDaMalha {
    * fecha **B41** — antes quem escutava tinha de adivinhar cruzando `msid` com o `share.join`
    * que conseguira, e numa conversa direta não havia `share.join` de que partir.
    *
-   * Dispara no `unmute`, não no `ontrack`. Com os m-lines reservados, `ontrack` acontece na
-   * primeira negociação para os quatro, com trilhas **mudas**: "chegou" deixaria de
-   * significar "há imagem". Quem tem imagem é quem está `unmuted`.
+   * Não dispara no `ontrack`: com os m-lines reservados ele acontece na primeira negociação
+   * para os quatro, com trilhas **mudas**, e "chegou" deixaria de significar "há imagem".
+   *
+   * **Nem só no `unmute`** (correção de 2026-09-06). Medido em Chromium real: aquela borda
+   * sai UMA vez por conexão — o `replaceTrack(null)` de quem para de apresentar não produz
+   * `mute`, e o `replaceTrack` da transmissão seguinte não produz `unmute`. Quem responde
+   * por "há imagem" nas transmissões seguintes é a medida de `inbound-rtp`
+   * (`#armarVigiaDeVideo`); o `unmute` fica como o caminho rápido da primeira.
    */
   aoChegarVideo?: (
     peerHex: string,
@@ -566,6 +578,11 @@ interface Par {
    */
   recebidos: Map<OrigemDaTrilha | "voz", MediaStream>;
   /**
+   * A última leitura de `inbound-rtp` por origem de vídeo, e se ela estava crescendo.
+   * É o que `#armarVigiaDeVideo` compara — o estado morre com o par, como o resto daqui.
+   */
+  video: Map<OrigemDaTrilha, { bytes: number; fluindo: boolean }>;
+  /**
    * As trilhas locais entrando nos m-lines reservados.
    *
    * `replaceTrack` é assíncrono e `addTrack` era síncrono: **nem a oferta nem a resposta
@@ -643,6 +660,8 @@ export class MalhaDeVoz {
   #prazoDaFaseUm: ReturnType<typeof setTimeout> | null = null;
   #prazo: ReturnType<typeof setTimeout> | null = null;
   #retentativa: ReturnType<typeof setInterval> | null = null;
+  /** O vigia de §17.2 — ver `#armarVigiaDeVideo`. */
+  #vigiaDeVideo: ReturnType<typeof setInterval> | null = null;
 
   /**
    * §17.5 (emenda de 2026-08-28) — o Modo Música. `#mistura` existe enquanto a música está
@@ -848,6 +867,8 @@ export class MalhaDeVoz {
         this.#armarPrazo();
         this.#armarRetentativa();
       }
+      // O vigia de §17.2 é da CHAMADA, não do par: ele varre os que existirem a cada volta.
+      this.#armarVigiaDeVideo();
       return { sessionId: r.sessionId, microfoneAusente };
     } finally {
       this.#entrando = false;
@@ -863,6 +884,7 @@ export class MalhaDeVoz {
         this.#abrir(par, souOIniciador(this.#euHex, par));
         this.#armarPrazo();
         this.#armarRetentativa();
+        this.#armarVigiaDeVideo();
       }
     }
     for (const par of [...this.#pares.keys()]) {
@@ -1564,6 +1586,7 @@ export class MalhaDeVoz {
     this.#eventos.aoSair();
     this.#desarmarPrazo();
     this.#desarmarRetentativa();
+    this.#desarmarVigiaDeVideo();
     this.#tiposDeCandidato.clear();
     this.#familiasDeCandidato.clear();
     this.#prazoEsticado = false;
@@ -1661,6 +1684,7 @@ export class MalhaDeVoz {
       candidatosLocais: [],
       candidatosRemotos: [],
       recebidos: new Map(),
+      video: new Map(),
       tentativasDeRestart: 0,
       reinicioAgendado: null,
     };
@@ -1875,6 +1899,85 @@ export class MalhaDeVoz {
   #desarmarRetentativa(): void {
     if (this.#retentativa !== null) clearInterval(this.#retentativa);
     this.#retentativa = null;
+  }
+
+  /**
+   * §17.2 (correção de 2026-09-06) — **"chegou imagem" é medido, não deduzido de `unmute`.**
+   *
+   * `aoChegarVideo` disparava só no `unmute` da trilha do receptor, e a suposição por trás
+   * disso é falsa. Medido em Chromium real (`smoke:tela`), com os quatro m-lines deste
+   * produto: `unmute` sai **uma vez na vida da conexão**, na primeira vez que chega RTP
+   * naquele m-line. Depois disso o `replaceTrack(null)` de quem apresenta **não** produz
+   * `mute` — nem 12 s depois, com a trilha de origem já parada — e o `replaceTrack` da
+   * transmissão seguinte, portanto, não produz `unmute` nenhum. Os bytes voltam a chegar e
+   * o produto não fica sabendo.
+   *
+   * O efeito era o defeito relatado: quem apresenta para, volta a apresentar, e os
+   * espectadores ficam em "Preparando compartilhamento…" até o prazo de §17.5 estourar —
+   * com os pixels chegando na placa de rede o tempo todo. Só reentrar na chamada resolvia,
+   * porque a conexão nova traz um `ontrack` novo e a primeira borda volta a existir.
+   *
+   * A câmera escapava por acidente: o cache dela só é esvaziado por `aoSumirVideo`, que
+   * também nunca dispara — então o stream nunca se perdia. O da tela é esvaziado pelo
+   * `share.stopped` do HOST, que chega de qualquer jeito.
+   *
+   * Este vigia lê `inbound-rtp` por `mid` (a mesma posição normativa que `ontrack` usa) e
+   * anuncia a origem que **voltou a crescer**. Só a chegada: o sumiço continua sendo do
+   * `mute`/`ended` e, para a tela, do `share.stopped`, que é a palavra do host. Anunciar
+   * de novo é inócuo — o consumidor guarda o mesmo `MediaStream` e conta um tique.
+   */
+  #armarVigiaDeVideo(): void {
+    if (this.#vigiaDeVideo !== null) return;
+    this.#vigiaDeVideo = setInterval(() => {
+      if (this.#sessionId === null) {
+        this.#desarmarVigiaDeVideo();
+        return;
+      }
+      for (const [parHex, par] of this.#pares) void this.#conferirVideo(parHex, par);
+    }, VIGIA_DE_VIDEO_MS);
+  }
+
+  #desarmarVigiaDeVideo(): void {
+    if (this.#vigiaDeVideo !== null) clearInterval(this.#vigiaDeVideo);
+    this.#vigiaDeVideo = null;
+  }
+
+  /** Uma volta do vigia para UM par: quem cresceu desde a última leitura está vivo. */
+  async #conferirVideo(parHex: string, par: Par): Promise<void> {
+    let relatorio: RTCStatsReport;
+    try {
+      relatorio = await par.pc.getStats();
+    } catch {
+      return;
+    }
+    const lidos = new Map<OrigemDaTrilha, number>();
+    relatorio.forEach((entrada) => {
+      const e = entrada as RTCStats & Record<string, unknown>;
+      if (e.type !== "inbound-rtp" || e["kind"] !== "video") return;
+      // A POSIÇÃO, como em todo o resto de §17.2: `mid` 1 é câmera, 2 é tela.
+      const mid = e["mid"];
+      const slot: OrigemDaTrilha | null = mid === "1" ? "camera" : mid === "2" ? "tela" : null;
+      if (slot === null) return;
+      const bytes = e["bytesReceived"];
+      if (typeof bytes !== "number") return;
+      lidos.set(slot, Math.max(lidos.get(slot) ?? 0, bytes));
+    });
+
+    for (const slot of ["camera", "tela"] as const) {
+      const bytes = lidos.get(slot);
+      if (bytes === undefined) continue;
+      const antes = par.video.get(slot);
+      const cresceu = antes !== undefined && bytes > antes.bytes;
+      par.video.set(slot, { bytes, fluindo: cresceu });
+      // Só a BORDA de subida: anunciar a cada volta faria o consumidor contar um tique por
+      // segundo, com re-render a reboque.
+      if (!cresceu || antes?.fluindo === true) continue;
+      const stream = par.recebidos.get(slot);
+      const track = (slot === "camera" ? par.tx?.camera : par.tx?.tela)?.receiver.track;
+      if (stream === undefined || track === undefined || track === null) continue;
+      log(`par ${parHex.slice(0, 8)} · ${slot} VIVA (medida — ${bytes} B)`);
+      this.#eventos.aoChegarVideo?.(parHex, stream, track, slot);
+    }
   }
 
   #armarPrazo(): void {

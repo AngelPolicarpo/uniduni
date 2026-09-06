@@ -1,0 +1,112 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>smoke da tela — o ciclo parar/recomeçar</title>
+<canvas id="c1" width="160" height="120"></canvas>
+<canvas id="c2" width="160" height="120"></canvas>
+<script>
+/*
+ * Duas `RTCPeerConnection` reais na mesma página, com os QUATRO m-lines de §17.2 montados
+ * do mesmo jeito que `live/voz.ts` os monta: quem oferta cria os quatro `sendrecv`, quem
+ * responde adota os que a oferta trouxe. Sem DHT, sem núcleo e sem sinalização de §16.2 —
+ * o que se mede aqui é o comportamento do CHROMIUM, não o do produto.
+ */
+const diz = (m) => console.log('TELA:' + m);
+const espera = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Uma fonte de vídeo que existe sem dispositivo e sem `getDisplayMedia`. */
+function fonte(id, cor) {
+  const cv = document.getElementById(id);
+  const ctx = cv.getContext('2d');
+  let n = 0;
+  const relogio = setInterval(() => {
+    n++;
+    ctx.fillStyle = cor;
+    ctx.fillRect(0, 0, 160, 120);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect((n * 7) % 150, 10, 10, 10);
+  }, 33);
+  const s = cv.captureStream(30);
+  return { stream: s, track: s.getVideoTracks()[0], parar: () => { clearInterval(relogio); s.getVideoTracks().forEach((t) => t.stop()); } };
+}
+
+async function main() {
+  const A = new RTCPeerConnection();
+  const B = new RTCPeerConnection();
+  A.onicecandidate = (e) => e.candidate && B.addIceCandidate(e.candidate);
+  B.onicecandidate = (e) => e.candidate && A.addIceCandidate(e.candidate);
+
+  // §17.2 — 0 voz, 1 câmera, 2 tela, 3 som da tela. Só de quem oferta.
+  const tx = {
+    voz: A.addTransceiver('audio', { direction: 'sendrecv' }),
+    camera: A.addTransceiver('video', { direction: 'sendrecv' }),
+    tela: A.addTransceiver('video', { direction: 'sendrecv' }),
+    telaAudio: A.addTransceiver('audio', { direction: 'sendrecv' }),
+  };
+
+  let receptor = null;
+  const bordas = [];
+  B.ontrack = (ev) => {
+    if (Number(ev.transceiver.mid) !== 2) return;
+    receptor = ev.track;
+    diz(`ontrack m-line 2 · muted=${ev.track.muted}`);
+    ev.track.onunmute = () => { bordas.push('unmute'); diz('borda UNMUTE'); };
+    ev.track.onmute = () => { bordas.push('mute'); diz('borda MUTE'); };
+    ev.track.onended = () => { bordas.push('ended'); diz('borda ENDED'); };
+  };
+
+  const oferta = await A.createOffer();
+  await A.setLocalDescription(oferta);
+  await B.setRemoteDescription(oferta);
+  // `#adotarMLines`: o que o `setRemoteDescription` criou nasce `recvonly`.
+  for (const t of B.getTransceivers()) if (t.direction !== 'sendrecv') t.direction = 'sendrecv';
+  const resposta = await B.createAnswer();
+  await B.setLocalDescription(resposta);
+  await A.setRemoteDescription(resposta);
+  await new Promise((r) => { const f = () => A.connectionState === 'connected' && r(); A.onconnectionstatechange = f; f(); });
+  diz('conectado');
+
+  /** Bytes e `mid` do `inbound-rtp` de vídeo — a leitura que o vigia de §17.2 faz. */
+  async function entrada() {
+    let achado = null;
+    (await B.getStats()).forEach((s) => {
+      if (s.type === 'inbound-rtp' && s.kind === 'video') achado = { mid: s.mid, bytes: s.bytesReceived || 0 };
+    });
+    return achado;
+  }
+
+  // ── 1ª apresentação ──────────────────────────────────────────────────────────
+  const s1 = fonte('c1', '#c00');
+  await tx.tela.sender.replaceTrack(s1.track);
+  diz('1a apresentacao · replaceTrack(trilha 1)');
+  await espera(4000);
+  const e1 = await entrada();
+  diz(`RESULTADO:MID=${e1 && e1.mid}`);
+  diz(`1a: bytes=${e1 && e1.bytes} · muted=${receptor && receptor.muted}`);
+  diz(`RESULTADO:PRIMEIRA_FLUIU=${e1 && e1.bytes > 5000 ? 'SIM' : 'NAO'}`);
+  diz(`RESULTADO:UNMUTE_NA_PRIMEIRA=${bordas.includes('unmute') ? 'SIM' : 'NAO'}`);
+
+  // ── parar (o `encerrar` de tela.ts + o `t.stop()` de #parar) ─────────────────
+  await tx.tela.sender.replaceTrack(null);
+  s1.parar();
+  diz('parar · replaceTrack(null) + track.stop()');
+  await espera(12000);
+  const e2 = await entrada();
+  diz(`parado: bytes=${e2 && e2.bytes} · muted=${receptor && receptor.muted}`);
+  diz(`RESULTADO:MUTE_AO_PARAR=${bordas.includes('mute') ? 'SIM' : 'NAO'}`);
+
+  // ── 2ª apresentação, trilha NOVA (o `getDisplayMedia` seguinte) ──────────────
+  const antes = bordas.length;
+  const s2 = fonte('c2', '#06c');
+  await tx.tela.sender.replaceTrack(s2.track);
+  diz('2a apresentacao · replaceTrack(trilha 2)');
+  await espera(6000);
+  const e3 = await entrada();
+  const delta = (e3 ? e3.bytes : 0) - (e2 ? e2.bytes : 0);
+  diz(`2a: bytes=${e3 && e3.bytes} (delta ${delta}) · muted=${receptor && receptor.muted}`);
+  diz(`RESULTADO:SEGUNDA_FLUIU=${delta > 5000 ? 'SIM' : 'NAO'}`);
+  diz(`RESULTADO:BORDA_NA_SEGUNDA=${bordas.length > antes ? 'SIM' : 'NAO'}`);
+  diz('FIM');
+}
+
+main().catch((e) => { diz('ERRO ' + (e && e.message)); diz('FIM'); });
+</script>

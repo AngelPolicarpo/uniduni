@@ -95,6 +95,7 @@ xvfb-run -a npm run smoke:captura
 xvfb-run -a npm run smoke:clipboard
 xvfb-run -a npm run smoke:deeplink
 xvfb-run -a npm run smoke:voz
+xvfb-run -a npm run smoke:tela
 ```
 
 `smoke:fechamento` exercita o ciclo de fechamento de U-06/§18.7 contra o preload real
@@ -120,6 +121,15 @@ de permissão ou em `frontend/src/lib/copiar.ts`.
 entrega um link a um renderer real, conferindo que ele produziu efeito. Só a primeira metade
 existia, e ela passava com o produto inteiro surdo — `assinarDeepLinks` nunca era chamada.
 Rode-o ao encostar no parse do main, no preload ou em `frontend/src/live/deeplink.ts`.
+
+`smoke:tela` (§17.2) sobe UMA janela com duas `RTCPeerConnection` reais e os quatro
+m-lines de §17.2, e mede o ciclo **parar → recomeçar** de uma apresentação. Não há produto
+nesta página: o que ela fixa é o comportamento do Chromium de que `live/voz.ts` depende —
+`inbound-rtp` traz `mid`, a primeira apresentação produz `unmute`, **parar não produz
+`mute`** e a segunda apresentação volta a fluir **sem borda nenhuma**. Foi por acreditar no
+contrário que o produto ficou surdo à segunda transmissão, com os pixels chegando o tempo
+todo. Rode-o ao encostar em `aoChegarVideo`, no vigia de vídeo ou no ciclo de apresentação
+de `frontend/src/live/tela.ts`.
 
 `smoke:voz` (§98) sobe uma DHT local, DOIS núcleos reais (`utilityProcess` do produto) e
 duas janelas com a `MalhaDeVoz` real, e mede bytes de `inbound-rtp` nos dois sentidos — a

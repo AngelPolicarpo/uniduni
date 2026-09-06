@@ -1489,3 +1489,108 @@ describe("§17.2 (emenda de 2026-09-03) — quem RESPONDE adota os m-lines da of
     expect(pc.getTransceivers()[0]!.sender.track).toBeNull();
   });
 });
+
+/**
+ * §17.2 (correção de 2026-09-06) — **"há imagem" é medido, não deduzido do `unmute`.**
+ *
+ * O que `smoke:tela` mediu em Chromium real, com os quatro m-lines deste produto: a borda
+ * de `unmute` sai UMA vez na vida da conexão, na primeira vez que chega RTP naquele
+ * m-line. O `replaceTrack(null)` de quem para de apresentar **não** produz `mute` — nem
+ * 12 s depois, com a trilha de origem parada — e o `replaceTrack` da transmissão seguinte,
+ * portanto, não produz `unmute`. Os bytes voltam a chegar em silêncio.
+ *
+ * Era o defeito relatado: apresentar, parar, apresentar de novo, e os espectadores ficam
+ * em "Preparando compartilhamento…" até o prazo de §17.5 estourar, com os pixels chegando
+ * o tempo todo. Reentrar na chamada resolvia porque a conexão nova traz um `ontrack` novo,
+ * e com ele a primeira borda.
+ *
+ * Verificado por mutação: sem o vigia, a segunda apresentação não anuncia nada.
+ */
+describe("§17.2 — a imagem que volta é medida (2026-09-06)", () => {
+  /** Uma trilha do outro lado, como o receptor a entrega: muda até chegar RTP. */
+  function recebida(kind: "audio" | "video", muted = false): MediaStreamTrack {
+    return { kind, muted, onmute: null, onunmute: null, onended: null } as unknown as MediaStreamTrack;
+  }
+
+  /** Um `RTCStatsReport` com um `inbound-rtp` de vídeo naquele m-line. */
+  function comBytes(mid: string, bytesReceived: number): RTCStatsReport {
+    return new Map([["i0", { id: "i0", type: "inbound-rtp", kind: "video", mid, bytesReceived }]]) as unknown as RTCStatsReport;
+  }
+
+  async function comTelaNegociada() {
+    const r = montar([ticket(EU, PAR)], [EU, PAR]);
+    await r.malha.entrar({ communityId: "c", channelId: "ch", euHex: EU, microfoneId: "default", agora: 0 });
+    const pc = r.criadas[0]!;
+    const tx = reservados(pc);
+    const tela = recebida("video", true);
+    (tx.tela as unknown as { receiver: { track: MediaStreamTrack } }).receiver.track = tela;
+    // A primeira negociação entrega os quatro m-lines com as trilhas mudas.
+    pc.ontrack?.({ track: tela, streams: [streamFalso("t")], transceiver: tx.tela } as unknown as RTCTrackEvent);
+    return { ...r, pc, tx, tela };
+  }
+
+  it("parar e voltar a apresentar é anunciado sem `unmute` nenhum", async () => {
+    vi.useFakeTimers();
+    try {
+      const { pc, eventos, tela } = await comTelaNegociada();
+      const stats = pc.getStats as ReturnType<typeof vi.fn>;
+      const volta = async (bytes: number) => {
+        stats.mockResolvedValue(comBytes("2", bytes));
+        await vi.advanceTimersByTimeAsync(1_000);
+      };
+
+      // A primeira leitura é só referência: não há "cresceu" contra nada.
+      await volta(1_000);
+      expect(eventos.aoChegarVideo).not.toHaveBeenCalled();
+
+      // 1ª apresentação — os bytes crescem e a tela é anunciada.
+      await volta(2_000);
+      expect(eventos.aoChegarVideo).toHaveBeenCalledTimes(1);
+      expect(eventos.aoChegarVideo).toHaveBeenCalledWith(PAR, expect.anything(), tela, "tela");
+
+      // Enquanto flui, não se anuncia a cada volta: seria um tique por segundo na UI.
+      await volta(3_000);
+      expect(eventos.aoChegarVideo).toHaveBeenCalledTimes(1);
+
+      // Parar: os bytes param de crescer. **Nenhum `mute` chega** — é o que a medição diz.
+      await volta(3_000);
+      await volta(3_000);
+      expect(eventos.aoChegarVideo).toHaveBeenCalledTimes(1);
+      expect(eventos.aoSumirVideo).not.toHaveBeenCalled();
+
+      // 2ª apresentação: `replaceTrack` do outro lado, sem borda nenhuma. É aqui que o
+      // produto ficava surdo, e o espectador via "Preparando…" até o prazo estourar.
+      await volta(4_000);
+      expect(eventos.aoChegarVideo).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("o m-line diz o que é: bytes no 1 são câmera, e um m-line fora da tabela é ignorado", async () => {
+    vi.useFakeTimers();
+    try {
+      const { pc, tx, eventos } = await comTelaNegociada();
+      const cam = recebida("video", true);
+      (tx.camera as unknown as { receiver: { track: MediaStreamTrack } }).receiver.track = cam;
+      pc.ontrack?.({ track: cam, streams: [streamFalso("c")], transceiver: tx.camera } as unknown as RTCTrackEvent);
+
+      const stats = pc.getStats as ReturnType<typeof vi.fn>;
+      stats.mockResolvedValue(comBytes("1", 1_000));
+      await vi.advanceTimersByTimeAsync(1_000);
+      stats.mockResolvedValue(comBytes("1", 2_000));
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(eventos.aoChegarVideo).toHaveBeenCalledWith(PAR, expect.anything(), cam, "camera");
+
+      // O m-line 0 é voz e o 3 é som da tela: nenhum dos dois é "imagem chegando".
+      eventos.aoChegarVideo.mockClear();
+      stats.mockResolvedValue(comBytes("0", 9_000));
+      await vi.advanceTimersByTimeAsync(1_000);
+      stats.mockResolvedValue(comBytes("0", 99_000));
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(eventos.aoChegarVideo).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

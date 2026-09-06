@@ -18,7 +18,8 @@
     "dist": "npm run montar && electron-builder --config electron-builder.json --publish never",
     "dist:win": "npm run montar && electron-builder --config electron-builder.json --win --publish never",
     "dist:linux": "npm run montar && electron-builder --config electron-builder.json --linux --publish never",
-    "smoke:voz": "node scripts/smoke-voz.mjs"
+    "smoke:voz": "node scripts/smoke-voz.mjs",
+    "smoke:tela": "node scripts/smoke-tela.mjs"
   },
   "dependencies": {
     "b4a": "^1.8.1",
