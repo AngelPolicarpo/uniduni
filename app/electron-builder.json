@@ -7,7 +7,17 @@
     "output": "release"
   },
   "files": [
-    "dist/**"
+    "dist/**",
+    "!**/node_modules/*/{prebuilds,build}/**/android*",
+    "!**/node_modules/*/{prebuilds,build}/**/ios*",
+    "!**/node_modules/*/{prebuilds,build}/**/darwin*",
+    "!**/node_modules/*/{prebuilds,build}/**/win32-arm64*",
+    "!**/node_modules/*/{prebuilds,build}/**/linux-arm*",
+    "!**/node_modules/*/{prebuilds,build}/**/linuxmusl*",
+    "!**/node_modules/better-sqlite3/prebuilds/darwin*",
+    "!**/node_modules/better-sqlite3/prebuilds/*arm64*",
+    "!**/node_modules/better-sqlite3/prebuilds/linuxmusl*",
+    "!**/node_modules/better-sqlite3/deps/**"
   ],
   "asar": true,
   "asarUnpack": [

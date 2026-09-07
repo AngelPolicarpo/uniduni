@@ -5,6 +5,7 @@
 import { cpSync, existsSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { podarPrebuilds } from "./podar-prebuilds.mjs";
 
 const raizApp = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -33,3 +34,7 @@ copiar("../core/dist", "dist/core", "core");
 const marcador = path.resolve(raizApp, "dist/core/package.json");
 writeFileSync(marcador, `${JSON.stringify({ type: "module" }, null, 2)}\n`);
 console.log("[montar] core: dist/core/package.json (type: module)");
+
+// Poda prebuilds fora da matriz (mobile, macOS, arm64) antes do empacotamento
+podarPrebuilds();
+

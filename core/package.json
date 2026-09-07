@@ -14,13 +14,12 @@
     "test": "npm run build && node --test \"dist/test/**/*.test.js\""
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.15.3",
     "hyperdht": "^6.33.2",
     "typescript": "^5.8.3"
   },
   "dependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "b4a": "^1.8.1",
     "better-sqlite3": "^13.0.3",
     "compact-encoding": "^2.16.1",
     "fs-native-extensions": "1.5.0",

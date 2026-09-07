@@ -9,6 +9,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "dev": "electron .",
+    "podar": "node scripts/podar-prebuilds.mjs",
     "montar": "node scripts/montar.mjs",
     "smoke:fechamento": "node scripts/smoke-fechamento.mjs",
     "smoke:captura": "node scripts/smoke-captura.mjs",
@@ -22,7 +23,6 @@
     "smoke:tela": "node scripts/smoke-tela.mjs"
   },
   "dependencies": {
-    "b4a": "^1.8.1",
     "better-sqlite3": "13.0.3",
     "compact-encoding": "^2.16.1",
     "corestore": "7.12.0",
