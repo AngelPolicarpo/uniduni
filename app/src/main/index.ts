@@ -12,11 +12,17 @@
  * G6 §15.2: crash do utilityProcess → epoch+1, E_CORE_RESTARTED, resync
  */
 
-import { app, BrowserWindow, MessageChannelMain, desktopCapturer, dialog, session, shell, safeStorage, utilityProcess, ipcMain, powerSaveBlocker, type UtilityProcess } from 'electron';
+import { app, BrowserWindow, Menu, MessageChannelMain, desktopCapturer, dialog, nativeTheme, session, shell, safeStorage, utilityProcess, ipcMain, powerSaveBlocker, type UtilityProcess } from 'electron';
 import { atenderPedidoDeCaptura, seletorDoSistema, suporteDeCaptura } from './captura';
 import type { DeclaracaoDeCaptura } from './captura';
 import path from 'node:path';
 import fs from 'node:fs';
+
+// Dark-only na v1 (§5): sem tema claro nem toggle
+nativeTheme.themeSource = 'dark';
+
+// Remove a barra de menus nativa padrão (File, Edit, View, Window)
+Menu.setApplicationMenu(null);
 
 // §17.2 — Impede o Chromium de suspender timers, WebAudio e WebRTC em segundo plano
 // ou quando a janela do app fica totalmente ocluída por um jogo em tela cheia.
@@ -782,6 +788,12 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    minWidth: 800,
+    minHeight: 600,
+    frame: false,
+    transparent: true,
+    autoHideMenuBar: true,
+    backgroundColor: '#0E0F14',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -790,6 +802,13 @@ function createWindow(): void {
     },
   });
   definirJanelaAtualizacao(mainWindow);
+
+  mainWindow.on('maximize', () => {
+    mainWindow?.webContents.send('window-maximized-change', true);
+  });
+  mainWindow.on('unmaximize', () => {
+    mainWindow?.webContents.send('window-maximized-change', false);
+  });
 
   // Carrega o renderer (build do Vite em `frontend/dist`).
   //
@@ -1224,3 +1243,56 @@ ipcMain.handle('requestAuthToken', async (_e, cmd: unknown, arg: unknown) => {
   if (utility === null || ipcM === null) return { ok: false, code: 'E_NO_PORT' };
   return await pedirTokenAoNucleo(cmd as string, escopoBruto);
 });
+
+// --- Controles de janela para titlebar customizada ----------------------------------
+ipcMain.handle('windowMinimize', () => {
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    mainWindow.minimize();
+  }
+});
+
+ipcMain.handle('windowMaximize', () => {
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
+  }
+});
+
+ipcMain.handle('windowClose', () => {
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    mainWindow.close();
+  }
+});
+
+ipcMain.handle('windowIsMaximized', () => {
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    return mainWindow.isMaximized();
+  }
+  return false;
+});
+
+ipcMain.handle('windowGetBounds', () => {
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    return mainWindow.getBounds();
+  }
+  return null;
+});
+
+ipcMain.handle('windowSetBounds', (_e, bounds: { x: number; y: number; width: number; height: number }) => {
+  if (mainWindow !== null && !mainWindow.isDestroyed() && !mainWindow.isMaximized()) {
+    const minWidth = 800;
+    const minHeight = 600;
+    const width = Math.max(minWidth, Math.round(bounds.width));
+    const height = Math.max(minHeight, Math.round(bounds.height));
+    mainWindow.setBounds({
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      width,
+      height,
+    });
+  }
+});
+

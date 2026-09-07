@@ -96,3 +96,13 @@
     }
   }
 }
+
+/* Áreas de arrasto da janela sem moldura nativa (frameless Electron) */
+.app-drag-region {
+  -webkit-app-region: drag;
+}
+
+.app-no-drag {
+  -webkit-app-region: no-drag;
+}
+

@@ -96,6 +96,13 @@ export interface PonteElectron {
   downloadUpdate?(): Promise<void>;
   applyUpdate?(): Promise<void>;
   getAppVersion?(): Promise<string>;
+  /** Controles de janela para titlebar customizada */
+  windowMinimize?(): Promise<void>;
+  windowMaximize?(): Promise<void>;
+  windowClose?(): Promise<void>;
+  windowIsMaximized?(): Promise<boolean>;
+  windowGetBounds?(): Promise<{ x: number; y: number; width: number; height: number } | null>;
+  windowSetBounds?(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
   on(channel: string, listener: (...args: unknown[]) => void): void;
   off(channel: string, listener: (...args: unknown[]) => void): void;
 }

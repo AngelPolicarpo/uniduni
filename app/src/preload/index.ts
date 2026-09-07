@@ -140,6 +140,24 @@ contextBridge.exposeInMainWorld('electron', {
   getAppVersion: async (): Promise<string> => {
     return ipcRenderer.invoke('getAppVersion') as Promise<string>;
   },
+  windowMinimize: async (): Promise<void> => {
+    await ipcRenderer.invoke('windowMinimize');
+  },
+  windowMaximize: async (): Promise<void> => {
+    await ipcRenderer.invoke('windowMaximize');
+  },
+  windowClose: async (): Promise<void> => {
+    await ipcRenderer.invoke('windowClose');
+  },
+  windowIsMaximized: async (): Promise<boolean> => {
+    return (await ipcRenderer.invoke('windowIsMaximized')) as boolean;
+  },
+  windowGetBounds: async (): Promise<{ x: number; y: number; width: number; height: number } | null> => {
+    return (await ipcRenderer.invoke('windowGetBounds')) as { x: number; y: number; width: number; height: number } | null;
+  },
+  windowSetBounds: async (bounds: { x: number; y: number; width: number; height: number }): Promise<void> => {
+    await ipcRenderer.invoke('windowSetBounds', bounds);
+  },
   on: (channel: string, listener: (...args: unknown[]) => void): void => {
     // O `ipcRenderer` entrega `(event, ...args)` e o renderer não pode receber o `event`
     // (ele carrega `sender`, que atravessaria o contextIsolation). Daí o embrulho — e daí
@@ -188,6 +206,12 @@ declare global {
       downloadUpdate(): Promise<void>;
       applyUpdate(): Promise<void>;
       getAppVersion(): Promise<string>;
+      windowMinimize(): Promise<void>;
+      windowMaximize(): Promise<void>;
+      windowClose(): Promise<void>;
+      windowIsMaximized(): Promise<boolean>;
+      windowGetBounds(): Promise<{ x: number; y: number; width: number; height: number } | null>;
+      windowSetBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
       on(channel: string, listener: (...args: unknown[]) => void): void;
       off(channel: string, listener: (...args: unknown[]) => void): void;
     };

@@ -9,6 +9,8 @@ import { assinarDeepLinks } from "./live/deeplink";
 import { DeepLinkMensagem } from "./features/channel/DeepLinkMensagem";
 import { HostExitListener } from "./features/host/HostExitGuard";
 import { UpdateNotificationBanner } from "./components/shell/UpdateNotificationBanner";
+import { TitleBar } from "./components/shell/TitleBar";
+import { WindowResizeHandles } from "./components/shell/WindowResizeHandles";
 
 /**
  * Três rotas reais, resto é estado (§4).
@@ -37,29 +39,36 @@ function App() {
 
   return (
     <MemoryRouter>
-      {/*
-        Fora do `Sincronizador`, de propósito: ele não renderiza os filhos nos estados
-        `inicial`/`conectando`/`falhou`/`sem-shell`, e o que precisa sobreviver a esses
-        estados não pode depender deles.
+      <div className="flex h-full w-full flex-col overflow-hidden bg-surface-app text-text-primary">
+        <WindowResizeHandles />
+        <TitleBar />
+        <UpdateNotificationBanner />
 
-        - U-06: o main segura o fechamento e espera resposta. Sem ouvinte montado, fechar
-          a janela durante a conexão inicial custava os 10 s de prazo do main (§92) —
-          exatamente o defeito que mover o listener para a raiz devia ter fechado, e não
-          fechou enquanto ele continuou **dentro** do guarda de conexão.
-        - §3.5: um deep link que chega durante a conexão precisa de tela para esperar.
-      */}
-      <HostExitListener />
-      <DeepLinkMensagem />
-      <UpdateNotificationBanner />
+        <div className="relative flex-1 min-h-0 min-w-0 overflow-hidden">
+          {/*
+            Fora do `Sincronizador`, de propósito: ele não renderiza os filhos nos estados
+            `inicial`/`conectando`/`falhou`/`sem-shell`, e o que precisa sobreviver a esses
+            estados não pode depender deles.
 
-      <Sincronizador>
-        <Routes>
-          <Route path="/" element={<RootRoute />} />
-          <Route path="/invite/:code" element={<InviteRoute />} />
-          <Route path="/m/:code" element={<MessageRoute />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Sincronizador>
+            - U-06: o main segura o fechamento e espera resposta. Sem ouvinte montado, fechar
+              a janela durante a conexão inicial custava os 10 s de prazo do main (§92) —
+              exatamente o defeito que mover o listener para a raiz devia ter fechado, e não
+              fechou enquanto ele continuou **dentro** do guarda de conexão.
+            - §3.5: um deep link que chega durante a conexão precisa de tela para esperar.
+          */}
+          <HostExitListener />
+          <DeepLinkMensagem />
+
+          <Sincronizador>
+            <Routes>
+              <Route path="/" element={<RootRoute />} />
+              <Route path="/invite/:code" element={<InviteRoute />} />
+              <Route path="/m/:code" element={<MessageRoute />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Sincronizador>
+        </div>
+      </div>
 
       {/* Fora das rotas e do guarda: os toasts sobrevivem à navegação e à reconexão. */}
       <ToastViewport />
