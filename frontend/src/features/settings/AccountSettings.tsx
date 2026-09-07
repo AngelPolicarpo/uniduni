@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Bell, Headphones, Palette, User, Wifi } from "lucide-react";
+import { Bell, Headphones, Info, Palette, User, Wifi } from "lucide-react";
 import { SettingsLayout, SettingsSection } from "./SettingsLayout";
+import { AccountAboutTab } from "./AccountAboutTab";
 import { AccountDevicesTab } from "./AccountDevicesTab";
 import { AccountIdentityTab } from "./AccountIdentityTab";
 import { AccountNetworkTab } from "./AccountNetworkTab";
@@ -13,6 +14,7 @@ const TABS = [
   { id: "appearance", label: "Aparência", icon: <Palette size={16} strokeWidth={2} /> },
   { id: "notifications", label: "Notificações", icon: <Bell size={16} strokeWidth={2} /> },
   { id: "network", label: "Rede", icon: <Wifi size={16} strokeWidth={2} /> },
+  { id: "about", label: "Sobre & Atualizações", icon: <Info size={16} strokeWidth={2} /> },
 ];
 
 export interface AccountSettingsProps {
@@ -58,6 +60,7 @@ export function AccountSettings({ onClose }: AccountSettingsProps) {
 
       {tab === "notifications" && <AccountNotificationsTab />}
       {tab === "network" && <AccountNetworkTab />}
+      {tab === "about" && <AccountAboutTab />}
     </SettingsLayout>
   );
 }

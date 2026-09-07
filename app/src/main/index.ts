@@ -28,6 +28,7 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding');
 // implementação só, e é esta que o `smoke:deeplink` exercita.
 import { parseDeepLink, type DeepLink } from './deeplink';
 import { permissaoConcedida } from './permissoes';
+import { inicializarAtualizacao, definirJanelaAtualizacao } from './atualizacao';
 
 // §10.8 etapa 1 — instância única; deep link com app aberto via second-instance
 /**
@@ -788,6 +789,7 @@ function createWindow(): void {
       backgroundThrottling: false,
     },
   });
+  definirJanelaAtualizacao(mainWindow);
 
   // Carrega o renderer (build do Vite em `frontend/dist`).
   //
@@ -944,6 +946,7 @@ function createWindow(): void {
   // referência, todo `mainWindow !== null` adiante virava acesso a objeto destruído.
   mainWindow.on('closed', () => {
     mainWindow = null;
+    definirJanelaAtualizacao(null);
   });
 }
 
@@ -970,6 +973,9 @@ app.whenReady().then(() => {
 
   spawnUtility();
   createWindow();
+  if (mainWindow !== null) {
+    inicializarAtualizacao(mainWindow, iniciarEncerramento);
+  }
 
   // Linux deep link via xdg-open entrega argv no second-instance; já tratado.
   app.on('open-url', (event, url) => {
@@ -996,7 +1002,7 @@ app.whenReady().then(() => {
  * perguntar "tem certeza?" a um `SIGTERM` só gasta o prazo que o SO deu antes do `SIGKILL`.
  */
 let encerramentoIniciado = false;
-function iniciarEncerramento(motivo: string): void {
+function iniciarEncerramento(motivo: string, aoTerminar?: () => void): void {
   if (encerramentoIniciado) return;
   encerramentoIniciado = true;
   encerrando = true;
@@ -1015,7 +1021,11 @@ function iniciarEncerramento(motivo: string): void {
   const sairUmaVez = (): void => {
     if (!saiu) {
       saiu = true;
-      app.quit();
+      if (aoTerminar !== undefined) {
+        aoTerminar();
+      } else {
+        app.quit();
+      }
     }
   };
   aoDrained = sairUmaVez;

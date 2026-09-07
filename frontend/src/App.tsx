@@ -8,6 +8,7 @@ import { Sincronizador } from "./live/Sincronizador";
 import { assinarDeepLinks } from "./live/deeplink";
 import { DeepLinkMensagem } from "./features/channel/DeepLinkMensagem";
 import { HostExitListener } from "./features/host/HostExitGuard";
+import { UpdateNotificationBanner } from "./components/shell/UpdateNotificationBanner";
 
 /**
  * Três rotas reais, resto é estado (§4).
@@ -49,6 +50,7 @@ function App() {
       */}
       <HostExitListener />
       <DeepLinkMensagem />
+      <UpdateNotificationBanner />
 
       <Sincronizador>
         <Routes>

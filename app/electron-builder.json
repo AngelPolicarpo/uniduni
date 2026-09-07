@@ -33,6 +33,12 @@
       "schemes": ["comunidadep2p"]
     }
   ],
+  "publish": {
+    "provider": "github",
+    "owner": "AngelPolicarpo",
+    "repo": "uniduni",
+    "releaseType": "release"
+  },
   "win": {
     "target": [
       { "target": "nsis", "arch": ["x64"] },

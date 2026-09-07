@@ -94,6 +94,7 @@ xvfb-run -a npm run smoke:fechamento
 xvfb-run -a npm run smoke:captura
 xvfb-run -a npm run smoke:clipboard
 xvfb-run -a npm run smoke:deeplink
+xvfb-run -a npm run smoke:atualizacao
 xvfb-run -a npm run smoke:voz
 xvfb-run -a npm run smoke:tela
 ```
@@ -121,6 +122,10 @@ de permissão ou em `frontend/src/lib/copiar.ts`.
 entrega um link a um renderer real, conferindo que ele produziu efeito. Só a primeira metade
 existia, e ela passava com o produto inteiro surdo — `assinarDeepLinks` nunca era chamada.
 Rode-o ao encostar no parse do main, no preload ou em `frontend/src/live/deeplink.ts`.
+
+`smoke:atualizacao` (§25.7, T-42) exercita a ponte de IPC e o ciclo de vida do `autoUpdater`
+contra o preload real: versão, status, verificação e a integração do `aplicarAtualizacao` com o
+draining gracioso de §3.3. Rode-o ao encostar em `app/src/main/atualizacao.ts` ou nos canais de update.
 
 `smoke:tela` (§17.2) sobe UMA janela com duas `RTCPeerConnection` reais e os quatro
 m-lines de §17.2, e mede o ciclo **parar → recomeçar** de uma apresentação. Não há produto

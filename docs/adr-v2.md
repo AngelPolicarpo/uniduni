@@ -985,6 +985,40 @@ posicionada no fim porque reusa anexos e mídia, com o gate podendo rodar desde 
 
 ---
 
+### A30 — Distribuição de atualizações por releases públicas e electron-updater sem telemetria (fecha `T-42`)
+
+**Contexto.** A limitação declarada `L-19` (§25.7) e o laudo de segurança `T-42` registraram que
+a recusa de infraestrutura central havia deixado o produto sem canal de distribuição de correções:
+vulnerabilidades descobertas tinham meia-vida infinita no campo, e clientes desatualizados
+permaneciam no protocolo como risco coletivo. `T-42` pontuou expressamente que a distribuição
+por releases públicas estáticas e assinadas, sem servidor proprietário e sem telemetria, é
+compatível com o princípio 1 mas exigia ADR formal.
+
+**Decisão.** O shell Electron integra o `electron-updater` configurado para consultar os
+metadados de release no repositório público do GitHub (`AngelPolicarpo/uniduni`), com:
+1. **Zero telemetria:** checagens puramente estáticas via HTTP GET nos artefatos imutáveis de release
+   (`latest.yml`, `latest-linux.yml`), sem cadastro, cookies ou transmissão de identidade.
+2. **Controle de banda:** `autoDownload = false` por padrão, dando ao usuário o controle de
+   quando baixar os blocos diferenciais (.blockmap), evitando contenção de upload/download
+   durante chamadas de voz e transmissões de tela.
+3. **Respeito estrito ao draining (§3.3):** `autoInstallOnAppQuit = false`. A aplicação da
+   atualização (`aplicarAtualizacao`) aciona obrigatoriamente `iniciarEncerramento('auto-update')`,
+   aguardando o desligamento ordenado do núcleo (flush de SQLite/RocksDB, snapshot de Hypercore e
+   evento `drained`) antes de executar `quitAndInstall`.
+
+**Consequências.**
+- **Fecha `T-42`** e substitui a limitação `L-19`: atualizações de segurança e evoluções de
+  `opVersion` passam a ter caminho automatizado de entrega.
+- Mantém preservado o Princípio 1: nenhum servidor proprietário ativo nem coleta de dados.
+- Garante a integridade dos dados locais ao impedir o instalador de substituir arquivos com os
+  processos e bancos travados.
+- Verificável por teste de regressão em `npm run smoke:atualizacao`.
+
+**Status.** Aceita, implementada e verificada.
+**Achados que fecha:** `T-42`, `L-19`.
+
+---
+
 ## 3. Decisões que **não** viraram ADR, e por quê
 
 | Assunto | Onde está | Por que não é ADR |
@@ -1001,7 +1035,7 @@ posicionada no fim porque reusa anexos e mídia, com o gate podendo rodar desde 
 
 | Status | ADRs |
 |---|---|
-| **Aceita, sem dependência experimental** | A01, A02, A03, A04, A05, A06, A07, A08, A09, A10, A11, A12, A15, A24, A25, A26, A28 |
+| **Aceita, sem dependência experimental** | A01, A02, A03, A04, A05, A06, A07, A08, A09, A10, A11, A12, A15, A24, A25, A26, A28, **A30** |
 | **Aceita, `REQUIRES POC`** | A13 (G10), A14 (G6), A16 (G0), A17 (G7/G8), A19 (G8), A21 (G7), A22 (G7), A23 (G12), **A29 (G14)** |
 | **Aceita, `BENCHMARK REQUIRED`** | A27 (G9) |
 | **Adiada, fora do v1** | A20 (G13) |

@@ -6867,6 +6867,13 @@ multiplexa STUN/TURN quando em modo host) e as sockets do `RTCPeerConnection` no
 **LIMITAÇÃO DECLARADA (L-19):** sem canal de atualização automático, a janela de exposição
 depende do usuário atualizar. É consequência direta do princípio 1 e está aceita.
 
+**Emenda de 2026-09-07 (§25.7, fecha `T-42`, resolve `L-19` via ADR `A30`):**
+O shell Electron integra canal de distribuição semi-automático e diferencial via `electron-updater`
+apontado para releases públicas do GitHub (`AngelPolicarpo/uniduni`), preservando o Princípio 1:
+requisições puramente estáticas HTTP GET sem telemetria, sem contas e sem servidores proprietários.
+O download é diferencial (.blockmap) sob demanda com interface explicativa em *Sobre & Atualizações*,
+e o reinício obedece estritamente ao draining ordenado de §3.3 antes da chamada de `quitAndInstall`.
+
 ### 25.8 Limitações declaradas — lista consolidada
 
 Esta é a lista **completa e fechada** do que a arquitetura **não** entrega. Toda linha aqui
@@ -6896,7 +6903,7 @@ interface**, na superfície indicada.
 | **L-16** | Dois sucessores em janelas próximas produzem duas continuações; cada réplica segue a de maior prioridade | §18.8 | Tela de sucessão |
 | **L-17** | Moderação é **por comunidade**: sem reputação, sem lista compartilhada, sem federação | §18.10 | — (escopo declarado) |
 | **L-18** | `fold.rejected` por assinatura ruim é **alarme, não defesa**: não há pontuação de pares nem banimento automático de peer | §24.5 | 3.1 → Rede |
-| **L-19** | Sem canal de atualização automático, a janela de exposição depende do usuário | §25.7 | Aviso de versão nova |
+| **L-19** | Sem canal de atualização automático, a janela de exposição depende do usuário | §25.7 | Aviso de versão nova (mitigado em 2026-09-07 via A30 / Sobre & Atualizações) |
 | **L-20** | `invisible` **não** entrega anonimato de rede: o endereço é anunciado no DHT e observável por quem participa dos mesmos tópicos. Ele entrega apenas invisibilidade **na interface** | §6.16, §25.1 | Texto no seletor de presença e em 3.1 → Rede |
 | **L-21** | Só material de chave é cifrado em repouso. `view.db`, `manifest.db` (exceto os campos de segredo) e o corestore ficam **em claro** no disco: conteúdo de mensagem, nomes e anexos são legíveis por qualquer processo do mesmo usuário e por quem tiver acesso físico ao disco | §10.1, §10.2 | Texto em 3.1 → Privacidade |
 | **L-22** | Sair de uma comunidade tem efeito **local imediato**, mas o `member.leave` depende do host para chegar aos outros. Com o host permanentemente offline, os demais continuam vendo a pessoa no roster | §11.1 | Texto na confirmação de saída |

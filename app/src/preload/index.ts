@@ -16,6 +16,7 @@
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
+import type { UpdateStatus } from '../main/atualizacao';
 
 type DeepLink = { route: string; code?: string; ref?: string; key?: string };
 
@@ -123,6 +124,22 @@ contextBridge.exposeInMainWorld('electron', {
   cancelExit: async (): Promise<void> => {
     await ipcRenderer.invoke('cancelExit');
   },
+  /** Atualizações automáticas (§25.7, T-42) */
+  getUpdateStatus: async (): Promise<UpdateStatus> => {
+    return ipcRenderer.invoke('getUpdateStatus') as Promise<UpdateStatus>;
+  },
+  checkForUpdates: async (): Promise<UpdateStatus> => {
+    return ipcRenderer.invoke('checkForUpdates') as Promise<UpdateStatus>;
+  },
+  downloadUpdate: async (): Promise<void> => {
+    await ipcRenderer.invoke('downloadUpdate');
+  },
+  applyUpdate: async (): Promise<void> => {
+    await ipcRenderer.invoke('applyUpdate');
+  },
+  getAppVersion: async (): Promise<string> => {
+    return ipcRenderer.invoke('getAppVersion') as Promise<string>;
+  },
   on: (channel: string, listener: (...args: unknown[]) => void): void => {
     // O `ipcRenderer` entrega `(event, ...args)` e o renderer não pode receber o `event`
     // (ele carrega `sender`, que atravessaria o contextIsolation). Daí o embrulho — e daí
@@ -166,6 +183,11 @@ declare global {
       }): Promise<void>;
       listCaptureSources(arg: { kind: 'screen' | 'window' }): Promise<CaptureSource[]>;
       captureSupport(): Promise<CaptureSupport>;
+      getUpdateStatus(): Promise<UpdateStatus>;
+      checkForUpdates(): Promise<UpdateStatus>;
+      downloadUpdate(): Promise<void>;
+      applyUpdate(): Promise<void>;
+      getAppVersion(): Promise<string>;
       on(channel: string, listener: (...args: unknown[]) => void): void;
       off(channel: string, listener: (...args: unknown[]) => void): void;
     };

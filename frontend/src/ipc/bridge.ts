@@ -90,9 +90,24 @@ export interface PonteElectron {
     platform: string;
     systemPicker: boolean;
   }>;
+  /** Atualizações automáticas (§25.7, T-42) */
+  getUpdateStatus?(): Promise<UpdateStatus>;
+  checkForUpdates?(): Promise<UpdateStatus>;
+  downloadUpdate?(): Promise<void>;
+  applyUpdate?(): Promise<void>;
+  getAppVersion?(): Promise<string>;
   on(channel: string, listener: (...args: unknown[]) => void): void;
   off(channel: string, listener: (...args: unknown[]) => void): void;
 }
+
+export type UpdateStatus =
+  | { status: "idle" }
+  | { status: "checking" }
+  | { status: "available"; version: string; releaseDate?: string; releaseNotes?: string }
+  | { status: "not-available"; version: string }
+  | { status: "downloading"; percent: number; transferred: number; total: number; bytesPerSecond: number }
+  | { status: "ready"; version: string }
+  | { status: "error"; message: string };
 
 declare global {
   interface Window {
