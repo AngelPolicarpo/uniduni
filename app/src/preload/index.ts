@@ -115,6 +115,10 @@ contextBridge.exposeInMainWorld('electron', {
   captureSupport: async (): Promise<CaptureSupport> => {
     return (await ipcRenderer.invoke('captureSupport')) as CaptureSupport;
   },
+  /** §17.2 — Previne a suspensão de energia pelo SO durante chamada de voz ativa. */
+  setVoiceActive: async (active: boolean): Promise<void> => {
+    await ipcRenderer.invoke('setVoiceActive', active);
+  },
   /** U-06 — a pessoa desistiu de fechar. O main solta o prazo e volta a segurar o próximo. */
   cancelExit: async (): Promise<void> => {
     await ipcRenderer.invoke('cancelExit');
@@ -151,6 +155,7 @@ declare global {
       getEpoch(): number;
       confirmExit(): Promise<void>;
       cancelExit(): Promise<void>;
+      setVoiceActive(active: boolean): Promise<void>;
       requestAuthToken(cmd: string, arg?: unknown): Promise<{ ok: boolean; token?: string; code?: string }>;
       declareCaptureSession(arg: {
         sessionId: string | null;

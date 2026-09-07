@@ -1071,6 +1071,11 @@ export class MalhaDeVoz {
     if (typeof Ctor !== "function") return;
     try {
       const ctx = new Ctor();
+      ctx.onstatechange = () => {
+        if (ctx.state === "suspended") {
+          void ctx.resume().catch(() => undefined);
+        }
+      };
       void ctx.resume().catch(() => undefined);
       const fonte = ctx.createMediaStreamSource(this.#local);
       const ganho = ctx.createGain();

@@ -60,10 +60,26 @@ import { useToastStore } from "../store/toastStore";
 /** O `<audio>` do par, fora da árvore do React — mesma razão do mapa da comunidade. */
 let audioDoPar: HTMLAudioElement | null = null;
 
+function obterContainerDeAudio(): HTMLElement | null {
+  if (typeof document === "undefined") return null;
+  let el = document.getElementById("p2p-audio-container");
+  if (el === null) {
+    el = document.createElement("div");
+    el.id = "p2p-audio-container";
+    el.style.display = "none";
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
 function tocar(stream: MediaStream): void {
-  const el = audioDoPar ?? new Audio();
-  el.autoplay = true;
-  audioDoPar = el;
+  let el = audioDoPar;
+  if (el === null) {
+    el = new Audio();
+    el.autoplay = true;
+    obterContainerDeAudio()?.appendChild(el);
+    audioDoPar = el;
+  }
   el.srcObject = stream;
   aplicarSaida(el);
   void el.play().catch(() => undefined);
@@ -82,6 +98,14 @@ function aplicarSaida(el: HTMLAudioElement): void {
     void el.setSinkId(saida === "default" ? "" : saida).catch(() => undefined);
   }
   el.volume = Math.max(0, Math.min(100, ajustes.outputVolume)) / 100;
+}
+
+function pararAudio(): void {
+  if (audioDoPar === null) return;
+  audioDoPar.pause();
+  audioDoPar.srcObject = null;
+  audioDoPar.remove();
+  audioDoPar = null;
 }
 
 /**
@@ -114,12 +138,6 @@ function videoDoParSumiu(peerHex: string, origem: OrigemDaTrilha): void {
   }
   esquecerCameraRecebida(peerHex);
   useDmCallStore.getState().cameraDoPar(false);
-}
-
-function pararAudio(): void {
-  if (audioDoPar === null) return;
-  audioDoPar.srcObject = null;
-  audioDoPar = null;
 }
 
 /** A conversa e o par da chamada corrente, para a porta e para o filtro de eventos. */
@@ -219,6 +237,7 @@ async function subirMalha(conversationId: string): Promise<void> {
     // troca, nunca a saída.
     if (r.microfoneAusente !== null) useDmCallStore.getState().microfoneFalhou(r.microfoneAusente);
     useDmCallStore.getState().conectou();
+    void window.electron?.setVoiceActive?.(true);
   } catch {
     // Falha do JOIN (não da captura — essa vira somente-escuta): a malha já desfez
     // o próprio estado; o que falta é não deixar a conversa em "na chamada".
@@ -398,6 +417,7 @@ export async function chamar(conversationId: string): Promise<void> {
 }
 
 export async function desligar(): Promise<void> {
+  void window.electron?.setVoiceActive?.(false);
   const id = corrente?.conversationId ?? useDmCallStore.getState().conversationId;
   corrente = null;
   useDmCallStore.getState().encerrou();

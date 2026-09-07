@@ -1190,6 +1190,7 @@ function configurarVoz(): void {
    * religava.
    */
   const encerrarMalha = (): Promise<void> => {
+    void window.electron?.setVoiceActive?.(false);
     desligarVad();
     limparTodosTimeoutsDeTela();
     return malha.sair();
@@ -1207,6 +1208,7 @@ function configurarVoz(): void {
         // §10, 3.1 (B47) — o volume de entrada nasce aplicado, e reage ao slider ao vivo.
         volumeEntrada: useSettingsStore.getState().inputVolume,
       });
+      void window.electron?.setVoiceActive?.(true);
       // Somente-escuta: sem mic a chamada está de pé do mesmo jeito — o aviso é o
       // que pede a troca de dispositivo, nunca a expulsão.
       if (r.microfoneAusente !== null) useVoiceStore.getState().microfoneCaiu(r.microfoneAusente);
@@ -1912,14 +1914,30 @@ function configurarTela(malha: MalhaDeVoz): void {
 /**
  * O áudio dos outros. Um `<audio>` por par, fora da árvore do React: o elemento precisa
  * sobreviver a re-render, e um par que troca de tile não pode perder o som por causa disso.
+ *
+ * Ancorados a um container no DOM para que o Chromium não suspenda sua reprodução em
+ * segundo plano quando a janela estiver totalmente ocluída por um jogo em tela cheia.
  */
 const audios = new Map<string, HTMLAudioElement>();
+
+function obterContainerDeAudio(): HTMLElement | null {
+  if (typeof document === "undefined") return null;
+  let el = document.getElementById("p2p-audio-container");
+  if (el === null) {
+    el = document.createElement("div");
+    el.id = "p2p-audio-container";
+    el.style.display = "none";
+    document.body.appendChild(el);
+  }
+  return el;
+}
 
 function tocar(peerHex: string, stream: MediaStream): void {
   let el = audios.get(peerHex);
   if (el === undefined) {
     el = new Audio();
     el.autoplay = true;
+    obterContainerDeAudio()?.appendChild(el);
     audios.set(peerHex, el);
   }
   el.srcObject = stream;
@@ -1979,6 +1997,7 @@ function pararTudo(): void {
   for (const el of audios.values()) {
     el.pause();
     el.srcObject = null;
+    el.remove();
   }
   audios.clear();
   // Nenhuma tela sobrevive à chamada: §17.5 põe a sessão de tela DENTRO dela (A19).

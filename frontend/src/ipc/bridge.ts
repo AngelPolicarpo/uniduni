@@ -54,6 +54,8 @@ export interface PonteElectron {
    * ela o pior caso é o comportamento antigo (o prazo fecha a janela), nunca um erro.
    */
   cancelExit?(): Promise<void>;
+  /** §17.2 — Previne a suspensão de energia pelo SO durante chamada ativa. */
+  setVoiceActive?(active: boolean): Promise<void>;
   requestAuthToken(cmd: string, arg?: unknown): Promise<{ ok: boolean; token?: string; code?: string }>;
   /**
    * §17.5/`T-41` — declara ao main a qual sessão de tela a próxima captura se refere, para

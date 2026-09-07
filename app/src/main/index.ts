@@ -12,11 +12,17 @@
  * G6 §15.2: crash do utilityProcess → epoch+1, E_CORE_RESTARTED, resync
  */
 
-import { app, BrowserWindow, MessageChannelMain, desktopCapturer, dialog, session, shell, safeStorage, utilityProcess, ipcMain, type UtilityProcess } from 'electron';
+import { app, BrowserWindow, MessageChannelMain, desktopCapturer, dialog, session, shell, safeStorage, utilityProcess, ipcMain, powerSaveBlocker, type UtilityProcess } from 'electron';
 import { atenderPedidoDeCaptura, seletorDoSistema, suporteDeCaptura } from './captura';
 import type { DeclaracaoDeCaptura } from './captura';
 import path from 'node:path';
 import fs from 'node:fs';
+
+// §17.2 — Impede o Chromium de suspender timers, WebAudio e WebRTC em segundo plano
+// ou quando a janela do app fica totalmente ocluída por um jogo em tela cheia.
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
 
 // Deep link: gramática fechada de §3.5 (emenda B64), em `main/deeplink.ts` — uma
 // implementação só, e é esta que o `smoke:deeplink` exercita.
@@ -779,6 +785,7 @@ function createWindow(): void {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       sandbox: true,
+      backgroundThrottling: false,
     },
   });
 
@@ -994,6 +1001,12 @@ function iniciarEncerramento(motivo: string): void {
   encerramentoIniciado = true;
   encerrando = true;
   console.log(`[main] encerrando (${motivo}) — draining de §3.3`);
+  if (voicePowerSaveBlockerId !== null) {
+    if (powerSaveBlocker.isStarted(voicePowerSaveBlockerId)) {
+      powerSaveBlocker.stop(voicePowerSaveBlockerId);
+    }
+    voicePowerSaveBlockerId = null;
+  }
   if (reinicioAgendado !== null) {
     clearTimeout(reinicioAgendado);
     reinicioAgendado = null;
@@ -1030,6 +1043,28 @@ app.on('before-quit', () => iniciarEncerramento('before-quit'));
 
 /** Chamado quando o núcleo confirma que drenou (mensagem `{e:'drained'}` do utility). */
 let aoDrained: (() => void) | null = null;
+
+/**
+ * §17.2 — Previne a suspensão de energia pelo sistema operacional enquanto houver
+ * chamada de voz ou DM ativa.
+ */
+let voicePowerSaveBlockerId: number | null = null;
+ipcMain.handle('setVoiceActive', (_e, active: unknown) => {
+  if (active === true) {
+    if (voicePowerSaveBlockerId === null) {
+      voicePowerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+      console.log(`[main] powerSaveBlocker ativado para chamada (id=${voicePowerSaveBlockerId})`);
+    }
+  } else {
+    if (voicePowerSaveBlockerId !== null) {
+      if (powerSaveBlocker.isStarted(voicePowerSaveBlockerId)) {
+        powerSaveBlocker.stop(voicePowerSaveBlockerId);
+      }
+      console.log(`[main] powerSaveBlocker desativado (id=${voicePowerSaveBlockerId})`);
+      voicePowerSaveBlockerId = null;
+    }
+  }
+});
 
 /**
  * §17.5 — o renderer diz para qual sessão de tela ele vai pedir captura, logo depois de
