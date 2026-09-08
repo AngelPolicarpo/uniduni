@@ -54,7 +54,7 @@ import { useDownloadStore } from "../store/downloadStore";
 import { useModerationStore } from "../store/moderationStore";
 import { reenviarPreferencias, useSettingsStore } from "../store/settingsStore";
 import { assinarDm, sincronizarConversas, sincronizarPrefsDm } from "./dm";
-import { assinarDmVoz } from "./dmVoz";
+import { assinarDmVoz, desligar as desligarDmVoz } from "./dmVoz";
 import { mensagem as adaptarMensagem, threadsDaPagina } from "./adaptadores";
 import type { Category, Channel, Community, Member, Message, Role, Thread } from "../domain/types";
 
@@ -1198,6 +1198,8 @@ function configurarVoz(): void {
 
   useVoiceStore.getState().configurarVoz({
     entrar: async (a) => {
+      // §15.4 "voz é uma só": entrar em voz comunitária encerra qualquer chamada de DM ativa.
+      await desligarDmVoz().catch(() => undefined);
       const eu = useIdentityStore.getState().identity?.id ?? a.localId;
       const microfoneId = useSettingsStore.getState().microphoneId;
       const r = await malha.entrar({

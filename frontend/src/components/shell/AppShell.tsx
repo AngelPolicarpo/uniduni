@@ -32,6 +32,8 @@ import { useHostStatus } from "../../store/connectionStore";
 import { useToastStore } from "../../store/toastStore";
 import { useUiStore } from "../../store/uiStore";
 import { useVoiceStore } from "../../store/voiceStore";
+import { useDmCallStore } from "../../store/dmCallStore";
+import { desligar as desligarDm } from "../../live/dmVoz";
 
 /**
  * 1.1 Shell principal — chrome persistente que hospeda toda a navegação
@@ -130,7 +132,13 @@ export function AppShell() {
       return;
     }
     const channel = selectChannel(useCommunityStore.getState(), channelId);
-    if (channel) joinVoice(channel, localMemberId);
+    if (channel) {
+      // §15.4 "voz é uma só": entrar em voz comunitária encerra chamada de DM ativa.
+      if (useDmCallStore.getState().conversationId !== null) {
+        void desligarDm();
+      }
+      joinVoice(channel, localMemberId);
+    }
   }
 
   // §16, Mobile: a grade expandida é a tela em foco, como o conteúdo.

@@ -692,6 +692,20 @@ describe('§31.9 — aceite, bloqueio silencioso, teto de pendentes e política 
     assert.equal((a.cores.get(r1.conversationId) as CoreEscrevivel).length, 1, 'uma gênese só');
   });
 
+  it('chamadas concorrentes a abrir criam exatamente uma gênese no core (RD-1)', async () => {
+    const a = criarNo('alice');
+    const b = dmKeypair('bob');
+    const [r1, r2] = await Promise.all([
+      a.dm.abrir(b.publicKey),
+      a.dm.abrir(b.publicKey),
+    ]);
+    assert.equal(r1.ok, true);
+    assert.equal(r2.ok, true);
+    const id = (r1 as { conversationId: string }).conversationId;
+    const core = a.cores.get(id) as CoreEscrevivel;
+    assert.equal(core.length, 1, 'exatamente um dm.hello no índice 0');
+  });
+
   it('abrir com um pedido já pendente aceita, em vez de criar uma segunda conversa', async () => {
     const a = criarNo('alice');
     const b = criarNo('bob');

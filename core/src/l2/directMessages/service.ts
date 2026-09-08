@@ -590,13 +590,17 @@ export class DirectMessages {
 
   /** RD-1 — `dm.hello` no índice 0 do meu core, e só quando o core ainda está vazio. */
   async #genese(conversationId: string, rt: Runtime): Promise<void> {
-    if (rt.core === null || rt.core.length > 0) return;
-    const rec = this.#cripto.hello({
-      conversationKey: rt.conversationKey,
-      peerKey: rt.peerKey,
-      selfCoreKey: rt.core.key,
+    if (rt.core === null) return;
+    await this.append(conversationId, (from) => {
+      if (from > 0 || rt.core === null) return [];
+      return [
+        this.#cripto.hello({
+          conversationKey: rt.conversationKey,
+          peerKey: rt.peerKey,
+          selfCoreKey: rt.core.key,
+        }),
+      ];
     });
-    await this.append(conversationId, [rec]);
   }
 
   /**

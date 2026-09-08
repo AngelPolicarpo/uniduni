@@ -68,6 +68,7 @@ import {
 import { cameraLocal, cameraRecebida } from "../cameraStreams";
 import { telaDoApresentador, telaRecebida } from "../telaStreams";
 import { useDmCallStore } from "../../store/dmCallStore";
+import { useVoiceStore } from "../../store/voiceStore";
 
 type Porta = {
   join(a: { communityId: string; channelId: string }): Promise<{
@@ -280,6 +281,15 @@ describe('§15.4 — "voz é uma só" vale numa DM', () => {
     expect(api.dmCallJoin).not.toHaveBeenCalled();
     expect(toast.showToast).toHaveBeenCalledWith("Você já está numa chamada", "error");
     expect(useDmCallStore.getState().conversationId).toBe(CONVERSA);
+  });
+
+  it("chamar numa DM com chamada de comunidade ativa encerra a chamada de comunidade automaticamente", async () => {
+    useVoiceStore.setState({ channelId: "ch-comunidade" });
+    const leaveSpy = vi.spyOn(useVoiceStore.getState(), "leave");
+    await chamar(CONVERSA);
+    expect(leaveSpy).toHaveBeenCalled();
+    leaveSpy.mockRestore();
+    useVoiceStore.setState({ channelId: null });
   });
 });
 

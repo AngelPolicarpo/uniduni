@@ -370,7 +370,7 @@ describe('RD-7 — edição e deleção são só do próprio', () => {
 });
 
 describe('RD-8 — alvo existente e vivo', () => {
-  it('replyToId inexistente é E_VALIDATION.replyToId', () => {
+  it('replyToId inexistente é E_NOT_FOUND (§31.7.4 emenda 2026-09-05)', () => {
     const w = dmWorld();
     const s = aberta(w);
     const r = dmFoldRecord(
@@ -385,8 +385,34 @@ describe('RD-8 — alvo existente e vivo', () => {
       1,
       w.ctx,
     );
-    assert.equal(r.reason, 'E_VALIDATION');
-    assert.equal(r.field, 'replyToId');
+    assert.equal(r.reason, 'E_NOT_FOUND');
+  });
+
+  it('replyToId sobre mensagem deletada é E_MESSAGE_DELETED', () => {
+    const w = dmWorld();
+    let s = aberta(w);
+    const m = mensagem(w, s, w.lo, 1, 'x');
+    s = dmFoldRecord(
+      m.state,
+      dmRecord(w, w.lo, { kind: 'dm.delete', authorSeq: 3, ack: 1, payload: { messageId: m.id } }),
+      'lo',
+      2,
+      w.ctx,
+    ).next;
+
+    const r = dmFoldRecord(
+      s,
+      dmRecord(w, w.hi, {
+        kind: 'dm.message',
+        authorSeq: 2,
+        ack: 3,
+        payload: { content: 'resposta', replyToId: m.id },
+      }),
+      'hi',
+      1,
+      w.ctx,
+    );
+    assert.equal(r.reason, 'E_MESSAGE_DELETED');
   });
 
   it('edit e react sobre mensagem deletada são E_MESSAGE_DELETED', () => {

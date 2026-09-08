@@ -4721,7 +4721,9 @@ Fica normativo:
    com a câmera; o que faltava era dizer que **esquecer a referência não para a captura**.
 2. **Trocar de canal de voz é sair da anterior**, e a mídia local morre junto. "Voz é uma só"
    (§15.4) vale para a captura também: a chamada nova nasce sem câmera, sem tela e sem
-   música.
+   música. **Emenda de 2026-09-08 (§31.15):** a alternância entre canal comunitário e chamada
+   direta (DM) segue a mesma exclusão mútua por troca automática — atender ou iniciar uma DM
+   encerra a chamada de comunidade ativa, e entrar num canal de comunidade encerra a DM ativa.
 3. **Reentrar é começar de novo, e a interface precisa dizê-lo.** A reentrada por epoch
    (`B43`) ou por "Tentar novamente" limpa o transporte inteiro — conexões fechadas, vídeo
    local zerado, mistura encerrada. Câmera, Modo Música e transmissão de tela **nascem
@@ -7800,7 +7802,7 @@ que escalar.
 | **RD-5** | **`ts` é não decrescente** ao longo do próprio log; clampado para o anterior quando decresceria, contando `dmFold.tsClamped`. `clockSkewed` é marcado quando `ts` é menor que o `ts` do registro mais recente reconhecido por `ack` | todos | — (clamp e flag) |
 | **RD-6** | **Chave de core imutável por lado.** O `coreKey` de um lado é o que RD-1 fixou; nada depois o troca. Um handshake que anuncie chave diferente da já vinculada é recusado no transporte (§31.8), nunca aceito e nunca sobrescrito | `dm.hello`, §31.8 | `E_DM_CORE_MISMATCH` |
 | **RD-7** | **Edição e deleção são só do próprio.** `dm.edit`/`dm.delete` cujo `messageId` não pertença ao autor são `REJECTED`. Não existe moderação numa conversa direta | `dm.edit`, `dm.delete` | `E_CANNOT_EDIT_OTHERS` |
-| **RD-8** | **Alvo existente e vivo.** `dm.edit`, `dm.react{present:true}` e `replyToId` exigem mensagem existente e não deletada **na ordem canônica corrente**. `dm.delete` de já deletada é `APPLIED` idempotente sem efeito; `dm.react{present:false}` nunca é recusada | `dm.edit`, `dm.react`, `dm.message` | `E_MESSAGE_DELETED` / `E_VALIDATION.replyToId` |
+| **RD-8** | **Alvo existente e vivo.** `dm.edit`, `dm.react{present:true}` e `replyToId` exigem mensagem existente e não deletada **na ordem canônica corrente**. `dm.delete` de já deletada é `APPLIED` idempotente sem efeito; `dm.react{present:false}` nunca é recusada | `dm.edit`, `dm.react`, `dm.message` | `E_NOT_FOUND` / `E_MESSAGE_DELETED` |
 | **RD-9** | Máx. `MAX_REACTION_EMOJIS` (20) emojis distintos por mensagem; `present:true` que estoure é recusada | `dm.react` | `E_REACTION_LIMIT` |
 | **RD-10** | **Último a escrever vence, por `ordKey`.** `dm.profile`, `dm.edit` e `dm.react` convergem pelo maior `ordKey`, nunca por `ts`. É a mesma semântica de "maior `seq` vence" de §7.5, com a ordem de §31.6 no lugar do `seq` | `dm.profile`, `dm.edit`, `dm.react` | — (efeito) |
 | **RD-11** | **Anexo é do autor.** O `blobsCoreKey` de um `attachment` precisa ser o core de blobs de DM do **autor daquela mensagem** (§31.14). Apontar para outro core é `REJECTED` — sem isso, uma parte faria a outra buscar bytes num core arbitrário | `dm.message` | `E_VALIDATION.attachment` |

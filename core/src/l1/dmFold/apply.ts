@@ -196,9 +196,11 @@ const dmMessage: Handler<'dm.message'> = (ctx, p) => {
   }
 
   // Estágio 11 — RD-8 sobre `replyToId`: existente e **não deletada na ordem corrente**.
+  // §31.7.4 (emenda de 2026-09-05) — alvo que a ordem ainda não contém é `E_NOT_FOUND`; tombstonado é `E_MESSAGE_DELETED`.
   if (p.replyToId !== undefined) {
     const alvo = ctx.draft.state.messages.get(p.replyToId);
-    if (alvo === undefined || alvo.deletedAt !== undefined) return VAL('replyToId');
+    if (alvo === undefined) return rj('E_NOT_FOUND');
+    if (alvo.deletedAt !== undefined) return rj('E_MESSAGE_DELETED');
   }
 
   // Estágio 11 — RD-11. Ver `DmSideState.blobsCoreKey`: o que é verificável sem mudar o fio

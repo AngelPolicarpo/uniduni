@@ -355,9 +355,14 @@ class MediaRouter implements MediaDispatcher {
   readonly #byCommunity: Map<string, MediaDispatcher>;
   readonly #sessionCommunity = new Map<string, string>();
   #currentVoice: string | null = null;
+  #onBeforeJoin: (() => void | Promise<void>) | null = null;
 
   constructor(byCommunity: Map<string, MediaDispatcher>) {
     this.#byCommunity = byCommunity;
+  }
+
+  setOnBeforeJoin(fn: () => void | Promise<void>): void {
+    this.#onBeforeJoin = fn;
   }
 
   /** Registra o vínculo `sessionId → comunidade` visto num evento de §16.3/§15.5. */
@@ -394,6 +399,9 @@ class MediaRouter implements MediaDispatcher {
   async voiceJoin(a: { communityId: string; channelId: string }): Promise<VoiceJoinOk | MediaFail> {
     const d = this.#of(a.communityId);
     if (d === null) return { ok: false, code: 'E_NOT_FOUND' };
+    if (this.#onBeforeJoin !== null) {
+      await this.#onBeforeJoin();
+    }
     const r = await d.voiceJoin(a);
     if (r.ok) {
       this.#currentVoice = a.communityId;
@@ -2627,6 +2635,12 @@ export async function bootCore(deps: BootDeps): Promise<CoreRuntime> {
     // Não há `close` a registrar aqui: `CoreRuntime.close()` fecha o `MediaHost` do processo
     // antes de qualquer outra coisa (§17.3), e ele já solta todos os escopos registrados —
     // inclusive os das conversas. `dmCall.close()` existe para quem monta o objeto sozinho.
+    router.setOnBeforeJoin(() => {
+      // §15.4 "voz é uma só" — entrar em voz comunitária encerra chamadas de DM ativas.
+      for (const convId of dmCall.ativas()) {
+        dmCall.leave(convId);
+      }
+    });
     const superficieDm: DmSurfaceDeps = {
       open: (peerKey) => dmRuntime.dm.abrir(peerKey),
       accept: (id) => dmRuntime.dm.aceitar(id),
@@ -2660,7 +2674,13 @@ export async function bootCore(deps: BootDeps): Promise<CoreRuntime> {
       activate: (id) => dmRuntime.activate(id),
       setTyping: (id, on) => dmRuntime.transport.setTyping(id, on),
       setContactPolicy: (policy) => dmRuntime.dm.setContactPolicy(policy),
-      callJoin: (id) => dmCall.join(id),
+      callJoin: (id) => {
+        // §15.4 "voz é uma só" — entrar em DM encerra chamada de comunidade ativa.
+        if (router.currentSessionId() !== null) {
+          void router.voiceLeave().catch(() => undefined);
+        }
+        return dmCall.join(id);
+      },
       callLeave: (id) => dmCall.leave(id),
       callSignal: (a) => dmCall.signal(a.conversationId, a),
       queries: dmRuntime.queries,

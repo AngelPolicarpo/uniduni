@@ -18,6 +18,7 @@ import { useDmCallStore } from "../store/dmCallStore";
 import { useIdentityStore } from "../store/identityStore";
 import { useSettingsStore } from "../store/settingsStore";
 import { useToastStore } from "../store/toastStore";
+import { useVoiceStore } from "../store/voiceStore";
 
 /**
  * §31.15 — a chamada de uma conversa direta.
@@ -401,6 +402,10 @@ export async function chamar(conversationId: string): Promise<void> {
     // §15.4 "voz é uma só".
     useToastStore.getState().showToast("Você já está numa chamada", "error");
     return;
+  }
+  // §15.4 "voz é uma só": iniciar ou atender chamada de DM encerra chamada de comunidade ativa.
+  if (useVoiceStore.getState().channelId !== null) {
+    useVoiceStore.getState().leave();
   }
   try {
     const r = await api.dmCallJoin(conversationId);

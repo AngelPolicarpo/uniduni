@@ -732,8 +732,12 @@ export async function criarDmRuntime(deps: DmRuntimeDeps): Promise<DmRuntime> {
       }
       ativa = conversationId;
       for (const [id, vivo] of vivos) {
-        if (id === conversationId) vivo.projetor.start();
-        else vivo.projetor.stop();
+        if (id === conversationId) {
+          vivo.projetor.start();
+          void vivo.projetor.catchUp();
+        } else {
+          vivo.projetor.stop();
+        }
       }
       return { residency: conversationId === null ? ('background' as const) : ('active' as const) };
     },
@@ -753,6 +757,8 @@ export async function criarDmRuntime(deps: DmRuntimeDeps): Promise<DmRuntime> {
       for (const vivo of vivos.values()) {
         vivo.projetor.stop();
         vivo.desregistrarReplicacao?.();
+        // §31.3 regra 5 e §31.23 — higiene criptográfica: zera chave de conteúdo retida
+        vivo.contentKey.fill(0);
       }
       vivos.clear();
       // `cabos` guarda promessas: uma abertura ainda em voo tem de ser esperada antes de

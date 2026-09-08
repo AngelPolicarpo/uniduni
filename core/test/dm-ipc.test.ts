@@ -661,6 +661,42 @@ describe('§31.16.2 — os eventos, e o não-lido que é query e não acumulador
     await a.close();
     await b.close();
   });
+
+  it('`dm.activate` em conversa que esteve em background projeta blocos acumulados', async () => {
+    const a = await no('alice');
+    const b = await no('bob');
+    const id = idEntre(a, b);
+    ok(await a.request('dm.open', { peerKey: b.identity.publicKey.toString('hex') }));
+    a.dm.transport.refresh();
+    b.dm.transport.refresh();
+    await conectar(a, b);
+    await ate(() => b.manifest.getDmConversation(id) !== null, 'o pedido não chegou');
+
+    ok(await b.request('dm.accept', { conversationId: id }));
+    b.dm.transport.refresh();
+    await conectar(a, b);
+    await ate(() => a.manifest.getDmConversation(id)?.peer_core_key !== null, 'alice não vinculou o core');
+
+    // Alice coloca a conversa em background
+    ok(await a.request('dm.activate', { conversationId: null }));
+
+    // Bob envia mensagem enquanto Alice está em background
+    const env = ok(await b.request('dm.send', { conversationId: id, content: 'chegou no background' })) as {
+      messageId: string;
+    };
+
+    // Alice reativa a conversa
+    ok(await a.request('dm.activate', { conversationId: id }));
+
+    // Alice deve projetar e encontrar a mensagem
+    await ate(() => {
+      const q = a.dm.queries.messages({ conversationId: id });
+      return q.messages.some((m) => m.id === env.messageId);
+    }, 'alice projetou após activate');
+
+    await a.close();
+    await b.close();
+  });
 });
 
 /** Atalho: a conversa de um nó, já desembrulhada. */
