@@ -753,7 +753,7 @@ pode `member.leave`: `E_HOST_CANNOT_LEAVE`.
 | `banned` | `bool` | der | Ban ativo não revogado |
 | `timeoutUntil` | `ms \| null` | der | — |
 | `displayNameCollision` | `bool` | der | §6.1, L-5 |
-| `storageUsedBytes` | `int` | der | Soma de `sizeBytes` dos anexos vivos do membro. **Medidor, não fronteira** desde a remoção de `R-14` (§13.8) |
+| `storageUsedBytes` | `int` | der | Acumulador de `sizeBytes` de anexos enviados pelo membro (§6.9, §13.8). **Medidor, não fronteira** desde a remoção de `R-14` |
 
 **Restrições:**
 - `(communityId, identityKey)` é único.
@@ -1897,6 +1897,7 @@ Em v1 uma referência inconsistente lançava e parava a comunidade. Em v2 cada c
 | `reaction.set` sobre mensagem deletada | `REJECTED` (`E_MESSAGE_DELETED`) |
 | `message.delete` de mensagem já deletada | `APPLIED` idempotente, sem efeito e sem auditoria |
 | `mod.ban` de já banido | `APPLIED` idempotente, sem segunda entrada de auditoria |
+| Op idempotente sem alteração de estado (`message.pin` com mesmo valor, `community.end` já encerrada, `invite.revoke` já revogado, `mod.kick` de não-ativo) | `APPLIED` idempotente silencioso, sem efeitos e sem auditoria |
 | `mod.ban` de quem **não é membro** | `APPLIED` — cria a linha em estado `banned` sem passar por `active` (R-28). Não é mais `E_NOT_FOUND` |
 | `mod.kick` / `mod.timeout` / `mod.revokeBan` / `mod.removeTimeout` de quem não é membro | `REJECTED` (`E_NOT_FOUND`) — só o **ban** ganhou a forma sem membresia; expulsar ou silenciar quem não está dentro não tem significado |
 | Colisão de `rank` | Desempate por id ascendente |
@@ -6252,7 +6253,7 @@ Template: **Entrada · Sequência · Regras · Persistência · Resultado · Fal
 
 **Regras:** `founderKey` = autor do `seq` 0, imutável para sempre. O Fundador recebe as 17
 permissões; o cargo base recebe `send_messages`, `attach_files`, `add_reactions`,
-`voice_speak` — e **nunca** pode receber mais que isso além de `pin_messages` (R-11).
+`voice_speak` (R-27b) — e **nunca** pode receber as 11 permissões de gestão, moderação e menção global que R-11 proíbe (§8.3).
 **Falhas:** disco cheio no append → `E_STORAGE_FULL`, os cores e a linha de manifesto são
 descartados. `swarm.join` falhar **não impede** a criação: a comunidade existe e funciona
 localmente, em `hosting-degraded`. **Criar comunidade nunca depende de rede.**

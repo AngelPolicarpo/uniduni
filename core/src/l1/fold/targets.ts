@@ -41,18 +41,28 @@ function alvoMembro(
 ): HierarchyTarget {
   const base = { authorTopRank: authorTop };
 
-  // R-16, passo 2 de §9.3 — vale para todo `mod.*`, independente da coluna `Hier.`.
-  if (isMod) {
-    if (targetHex === state.community.founderKey.toString('hex')) {
-      return { applies: true, ctx: { ...base, targetTopRank: null, targetIsOriginalFounder: true } };
+  // §9.3 passo 2 (HOLE-16):
+  // 1. alvo é o Fundador original → E_FOUNDER_IMMUNE (exceto auto-atribuição fora de mod.*, guardada por R-30)
+  if (targetHex === state.community.founderKey.toString('hex')) {
+    if (!isMod && targetHex === authorHex) {
+      return NAO_SE_APLICA;
     }
-    if (targetHex === state.community.hostKey.toString('hex')) {
-      return { applies: true, ctx: { ...base, targetTopRank: null, targetIsCurrentHost: true } };
+    return { applies: true, ctx: { ...base, targetTopRank: null, targetIsOriginalFounder: true } };
+  }
+
+  // 2. alvo é o host corrente → E_HOST_IMMUNE (exceto auto-atribuição fora de mod.*, guardada por R-30)
+  if (targetHex === state.community.hostKey.toString('hex')) {
+    if (!isMod && targetHex === authorHex) {
+      return NAO_SE_APLICA;
     }
-    if (targetHex === authorHex) {
+    return { applies: true, ctx: { ...base, targetTopRank: null, targetIsCurrentHost: true } };
+  }
+
+  // 3. alvo é o próprio autor em mod.* → E_SELF_TARGET (R-16)
+  if (targetHex === authorHex) {
+    if (isMod) {
       return { applies: true, ctx: { ...base, targetTopRank: null, targetIsSelf: true } };
     }
-  } else if (targetHex === authorHex) {
     // Fora de `mod.*`, agir sobre si mesmo não é o caso de R-16, e o passo 3 de §9.3 aplicado
     // ao próprio autor recusaria **sempre** — inclusive para o Fundador, que passaria a não
     // poder mais tocar nos próprios cargos. Quem guarda este caminho é **R-30** (§9.3, emenda

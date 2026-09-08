@@ -93,8 +93,8 @@ function applyFtsIndex(view: ViewDb, cache: StmtCache, communityId: string, eff:
   prep(
     view,
     cache,
-    'INSERT INTO messages_fts(rowid, content) VALUES ((SELECT rowid FROM messages WHERE community_id=? AND id=?), ?)',
-  ).run(communityId, eff.messageId, eff.content);
+    'INSERT INTO messages_fts(rowid, content) SELECT rowid, ? FROM messages WHERE community_id=? AND id=? AND orphaned=0 AND hidden_by_ban=0 AND deleted_at IS NULL',
+  ).run(eff.content, communityId, eff.messageId);
 }
 
 /**

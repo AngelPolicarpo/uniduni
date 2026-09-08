@@ -44,6 +44,34 @@ export function trimCollapseNFKC(s: string): string {
   return s.trim().replace(/\s+/gu, ' ').normalize('NFKC');
 }
 
+const CASEFOLD_MAP: Record<string, string> = {
+  '\u00DF': 'ss', // ß -> ss
+  '\u1E9E': 'ss', // ẞ -> ss
+  '\u017F': 's',  // ſ -> s
+  '\u1E9B': '\u1E61', // ẛ -> ṡ
+  '\u03C2': '\u03C3', // ς -> σ
+  '\u1FBE': '\u03B9', // ι -> ι
+  '\u03D0': '\u03B2', // ϐ -> β
+  '\u03D1': '\u03B8', // ϑ -> θ
+  '\u03D5': '\u03C6', // ϕ -> φ
+  '\u03D6': '\u03C0', // ϖ -> π
+  '\u03F0': '\u03BA', // ϰ -> κ
+  '\u03F1': '\u03C1', // ϱ -> ρ
+  '\u03F5': '\u03B5', // ϵ -> ε
+};
+const CASEFOLD_RE = /[\u00DF\u1E9E\u017F\u1E9B\u03C2\u1FBE\u03D0\u03D1\u03D5\u03D6\u03F0\u03F1\u03F5]/gu;
+
+/**
+ * §6.1 L-5 — Unicode Full Case Folding determinístico.
+ *
+ * `toLowerCase()` sozinho preserva caracteres como `ß` (U+00DF), `ſ` (U+017F, s longo) e `ς`
+ * (sigma final). O casefold normativo mapeia variantes de caixa e ligaturas simples para que
+ * nomes como 'STRASSE' e 'Straße' ou 'WASSER' e 'Waſſer' colidam como L-5 exige.
+ */
+export function casefold(s: string): string {
+  return s.toLowerCase().replace(CASEFOLD_RE, (c) => CASEFOLD_MAP[c] ?? c);
+}
+
 /** §8.6 — `Message.content`: `trim` no fim, **preservando quebra de linha** interna. */
 export function trimEndOnly(s: string): string {
   return s.replace(/\s+$/u, '');

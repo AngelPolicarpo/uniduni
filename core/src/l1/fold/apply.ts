@@ -58,6 +58,7 @@ import {
 } from './constants.ts';
 import { AUDIT, type AuditType, type Effect, type ModerationEntry, type Primitive } from './effects.ts';
 import {
+  casefold,
   checkCategoryName,
   checkChannelName,
   checkChannelTopic,
@@ -463,7 +464,7 @@ const structureChanged = (ctx: KindCtx): void => {
  * e escreve só via `draft.mutMember`, para não furar o compartilhamento estrutural do DS.
  */
 function normalizarParaColisao(nome: string): string {
-  return trimCollapseNFKC(nome).toLowerCase();
+  return casefold(trimCollapseNFKC(nome));
 }
 
 function recalcularColisoesDeNome(ctx: KindCtx): void {
@@ -691,7 +692,9 @@ const messageEdit: Handler<'message.edit'> = (ctx, p) => {
   // de substituir: sem o `ftsRemove`, o conteúdo antigo continuava casando na busca e a
   // mensagem aparecia por texto que ela não contém mais. A remoção é idempotente (§10.3).
   ctx.effects.push({ t: 'ftsRemove', messageId: p.messageId });
-  ctx.effects.push({ t: 'ftsIndex', messageId: p.messageId, content: content.value });
+  if (!msg.orphaned) {
+    ctx.effects.push({ t: 'ftsIndex', messageId: p.messageId, content: content.value });
+  }
   // O conteúdo mudou: os links do conteúdo ANTIGO deixam de existir (§15.6.1).
   ctx.effects.push({ t: 'delete', table: 'message_links', key: [p.messageId] });
   for (const [idx, link] of extractLinks(content.value).entries()) {
@@ -1188,7 +1191,7 @@ const categoryDelete: Handler<'category.delete'> = (ctx, p) => {
     destino = p.moveChannelsTo as string;
     if (destino === p.categoryId) return VAL('moveChannelsTo');
     const d = ctx.draft.state.categories.get(destino);
-    if (d === undefined || d.deletedAt !== undefined) return rj('E_CATEGORY_NOT_FOUND');
+    if (d === undefined || d.deletedAt !== undefined) return VAL('moveChannelsTo');
   }
 
   const naCategoria: string[] = [];
@@ -1596,7 +1599,7 @@ const memberJoin: Handler<'member.join'> = (ctx, p) => {
   // 15
   const membro: Member = {
     state: 'active',
-    roleIds: new Set(),
+    roleIds: existente !== undefined ? new Set(existente.roleIds) : new Set(),
     displayName: dn.value,
     avatarColor: p.avatarColor,
     blobsCoreKey: p.blobsCoreKey,
@@ -1630,7 +1633,7 @@ const memberJoin: Handler<'member.join'> = (ctx, p) => {
     },
   });
   setMemberRoles(ctx, ctx.authorHex, roleIds);
-  ctx.effects.push({ t: 'recount', what: 'memberCount', key: [ctx.draft.state.communityId] });
+  recontarPopulacaoAtiva(ctx, ctx.authorHex);
   recalcularColisoesDeNome(ctx); // L-5 — a entrada pode colidir com nome existente
   return null;
 };
