@@ -1964,6 +1964,11 @@ const modRemoveTimeout: Handler<'mod.removeTimeout'> = (ctx, p) => {
   const targetHex = p.targetKey.toString('hex');
   const alvo = ctx.draft.state.members.get(targetHex);
   if (alvo === undefined) return rj('E_NOT_FOUND');
+  // §8.4.1 e §21.2: sem timeout ativo ⇒ `APPLIED` idempotente silencioso, sem efeitos e sem auditoria.
+  if (alvo.timeoutUntil === undefined) {
+    ctx.draft.touch();
+    return null;
+  }
 
   const label = labelOf(ctx, targetHex);
   const t = ctx.draft.mutMember(targetHex);
@@ -2296,9 +2301,9 @@ const relayVolunteer: Handler<'relay.volunteer'> = (ctx, p) => {
 
 const relayWithdraw: Handler<'relay.withdraw'> = (ctx) => {
   const r = ctx.draft.state.relays.get(ctx.authorHex);
-  if (r === undefined) return rj('E_NOT_FOUND');
-  if (r.withdrawnAt !== undefined) {
-    ctx.draft.touch(); // idempotente
+  // §21.2: sem voluntariado (nunca voluntariou ou já retirado) ⇒ `APPLIED` idempotente silencioso.
+  if (r === undefined || r.withdrawnAt !== undefined) {
+    ctx.draft.touch();
     return null;
   }
   ctx.draft.relays().set(ctx.authorHex, { ...r, withdrawnAt: ctx.hostTs });

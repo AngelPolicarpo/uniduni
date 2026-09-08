@@ -5,6 +5,8 @@
  * 3. member.setRoles sobre Fundador por terceiros devolve E_FOUNDER_IMMUNE (e E_HOST_IMMUNE para host)
  * 4. message.edit em mensagem órfã não reinsere termos na messages_fts
  * 5. Colisão L-5 com Unicode Full Case Folding (ex: 'straße' vs 'STRASSE', 'waſſer' vs 'WASSER')
+ * 6. mod.removeTimeout sem timeout ativo é APPLIED silencioso sem efeitos nem auditoria (§21.2, §8.4.1)
+ * 7. relay.withdraw sem voluntariado por membro ativo é APPLIED silencioso (§21.2); não-membro segue E_NOT_MEMBER
  */
 
 import assert from 'node:assert/strict';
@@ -334,5 +336,86 @@ describe('Correções de Auditoria e Especificação (Regressão)', () => {
     const mDani = g.world.state.members.get(dani.publicKey.toString('hex'));
     assert.equal(mCarlos?.displayNameCollision, true, 'Carlos deve ter colisão L-5 com WASSER');
     assert.equal(mDani?.displayNameCollision, true, 'Dani deve ter colisão L-5 com waſſer');
+  });
+
+  it('6. mod.removeTimeout sem timeout ativo é APPLIED silencioso, sem efeitos e sem auditoria (§21.2, §8.4.1)', () => {
+    const g = genesis();
+    const ana = joinMember(g, 'ana');
+
+    // 1. Ana é membro ativo e não está em timeout
+    const mAna = g.world.state.members.get(ana.publicKey.toString('hex'));
+    assert.equal(mAna?.timeoutUntil, undefined);
+
+    // 2. Fundador tenta remover timeout que não existe
+    const rSemTimeout = g.world.submit({
+      kind: 'mod.removeTimeout',
+      author: g.founder,
+      hostTs: TS + 1,
+      payload: { targetKey: ana.publicKey },
+    });
+    // Deve ser APPLIED silencioso sem emitir patch, delete, notify ou audit
+    assert.equal(rSemTimeout.decision, 'APPLIED');
+    assert.equal(rSemTimeout.effects.length, 0, 'não deve emitir efeitos nem gravar auditoria');
+
+    // 3. Aplica timeout real
+    const rTimeout = g.world.submit({
+      kind: 'mod.timeout',
+      author: g.founder,
+      hostTs: TS + 2,
+      payload: { targetKey: ana.publicKey, until: TS + 3600_000 },
+    });
+    assert.equal(rTimeout.decision, 'APPLIED');
+    assert.ok(rTimeout.effects.length > 0);
+    assert.equal(g.world.state.members.get(ana.publicKey.toString('hex'))?.timeoutUntil, TS + 3600_000);
+
+    // 4. Remove timeout existente
+    const rRemove = g.world.submit({
+      kind: 'mod.removeTimeout',
+      author: g.founder,
+      hostTs: TS + 3,
+      payload: { targetKey: ana.publicKey },
+    });
+    assert.equal(rRemove.decision, 'APPLIED');
+    assert.ok(rRemove.effects.length > 0, 'remoção com timeout ativo emite efeitos');
+    assert.equal(g.world.state.members.get(ana.publicKey.toString('hex'))?.timeoutUntil, undefined);
+
+    // 5. Segundo removeTimeout sobre o mesmo membro (agora sem timeout) deve ser novamente APPLIED sem efeitos
+    const rRemoveRepetido = g.world.submit({
+      kind: 'mod.removeTimeout',
+      author: g.founder,
+      hostTs: TS + 4,
+      payload: { targetKey: ana.publicKey },
+    });
+    assert.equal(rRemoveRepetido.decision, 'APPLIED');
+    assert.equal(rRemoveRepetido.effects.length, 0, 'reenvio sem timeout é silencioso');
+  });
+
+  it('7. relay.withdraw sem voluntariado por membro ativo é APPLIED silencioso (§21.2); não-membro segue E_NOT_MEMBER', () => {
+    const g = genesis();
+    const ana = joinMember(g, 'ana');
+    const forasteiro = keypairFromSeed('forasteiro');
+
+    // 1. Ana é membro ativo sem nenhum voluntariado registrado
+    assert.equal(g.world.state.relays.get(ana.publicKey.toString('hex')), undefined);
+
+    // 2. Ana submete relay.withdraw sem ter voluntariado
+    const rWithdrawSemVoluntariado = g.world.submit({
+      kind: 'relay.withdraw',
+      author: ana,
+      hostTs: TS + 1,
+      payload: {},
+    });
+    assert.equal(rWithdrawSemVoluntariado.decision, 'APPLIED');
+    assert.equal(rWithdrawSemVoluntariado.effects.length, 0, 'sem voluntariado é sucesso silencioso sem efeitos');
+
+    // 3. Forasteiro (não-membro) submete relay.withdraw -> recusa no estágio 8
+    const rForasteiro = g.world.submit({
+      kind: 'relay.withdraw',
+      author: forasteiro,
+      hostTs: TS + 2,
+      payload: {},
+    });
+    assert.equal(rForasteiro.decision, 'REJECTED');
+    assert.equal(rForasteiro.reason, 'E_NOT_MEMBER', 'não-membro é barrado no estágio 8');
   });
 });
