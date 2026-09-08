@@ -45,4 +45,10 @@ describe("anexo — do DTO de §15.6.1 para o domínio", () => {
     expect(a.availablePeers).toBe(2);
     expect(a.hostAvailable).toBe(true);
   });
+
+  it("revealMode vem do DTO e ausente vira folder", () => {
+    expect(anexo({ ...DTO, revealMode: "open" }, "c").revealMode).toBe("open");
+    expect(anexo({ ...DTO, revealMode: "folder" }, "c").revealMode).toBe("folder");
+    expect(anexo({ ...DTO }, "c").revealMode).toBe("folder");
+  });
 });

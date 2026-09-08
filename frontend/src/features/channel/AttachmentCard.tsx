@@ -67,7 +67,6 @@ export function AttachmentCard({
   const baixando = !uploading && !unavailable && !complete && emCurso;
   const podeBaixar =
     !uploading &&
-    !unavailable &&
     !complete &&
     !emCurso &&
     attachment.origem !== undefined;
@@ -191,24 +190,24 @@ export function AttachmentCard({
               onClick={() => iniciar(daMensagem)}
               className="text-meta text-accent-default underline underline-offset-2 hover:text-text-primary"
             >
-              {cancelado
-                ? "Baixar novamente"
-                : parcial
-                  ? "Retomar download"
-                  : "Baixar"}
+              {indisponivel || corrompido !== undefined
+                ? "Tentar novamente"
+                : cancelado
+                  ? "Baixar novamente"
+                  : parcial
+                    ? "Retomar download"
+                    : "Baixar"}
             </button>
           </div>
         )}
 
         {complete && !uploading && attachment.origem !== undefined && corrompido === undefined && (
           /*
-           * §13.6 regra 1 — **a tela oferece só o que a regra oferece.** "Abrir" entrega o
-           * arquivo ao handler do SO e vale para `image`/`audio`/`video`/`document` e, com
-           * a confirmação nativa de §15.3, para `archive`; o resto tem só "Mostrar na
-           * pasta", que não entrega arquivo a programa nenhum; executável não tem nem isso
-           * (regra 2). Quem classifica é o núcleo (`revealMode`), pela extensão real — a UI
-           * não tem a tabela e não deve ter: o `kind` que vem no log é declarado por quem
-           * enviou, e derivar aqui seria a terceira cópia da lista.
+           * §13.6 regra 1 — "Abrir" entrega o arquivo ao handler do SO e vale para
+           * `image`/`audio`/`video`/`document` e, com a confirmação nativa de §15.3, para
+           * `archive`. "Mostrar na pasta" não entrega o arquivo a programa nenhum (apenas
+           * o localiza no gerenciador de arquivos do SO) e está sempre presente para
+           * qualquer anexo baixado (inclusive executáveis e outros formatos).
            */
           <div className="mt-1 flex gap-3">
             {revelavel === "open" && (
@@ -220,20 +219,13 @@ export function AttachmentCard({
                 Abrir
               </button>
             )}
-            {revelavel !== "none" && (
-              <button
-                type="button"
-                onClick={() => revelar("folder")}
-                className="text-meta text-accent-default underline underline-offset-2 hover:text-text-primary"
-              >
-                Mostrar na pasta
-              </button>
-            )}
-            {revelavel === "none" && (
-              <span className="text-meta text-text-tertiary">
-                Este tipo de arquivo não é aberto nem localizado pelo aplicativo
-              </span>
-            )}
+            <button
+              type="button"
+              onClick={() => revelar("folder")}
+              className="text-meta text-accent-default underline underline-offset-2 hover:text-text-primary"
+            >
+              Mostrar na pasta
+            </button>
           </div>
         )}
 

@@ -474,19 +474,19 @@ describe('download e revelação (§13.4, §13.6, §15.3)', () => {
     }
   });
 
-  it('§13.6 regra 1 — `folder` vale para o que `open` recusa, e executável não tem nem isso', async () => {
+  it('§13.6 regra 1 — `folder` vale para o que `open` recusa, inclusive executáveis', async () => {
     const dir = tempDir('anexos-modo');
     const manifest = new ManifestDb(path.join(dir, 'manifest.db'));
     const blobs = new BlobManager({ manifest, swarm: new Swarm(), dataDir: path.join(dir, 'blobs') });
     const chave = Buffer.alloc(32, 7);
 
-    // "Todo o resto oferece somente 'Mostrar na pasta'" — a metade da regra 1 que a
-    // verificação única recusava junto com o abrir, deixando um `.bin` sem ação nenhuma.
+    // "Todo o resto oferece somente 'Mostrar na pasta'" — executáveis e outros formatos
+    // não abriveis pelo app oferecem sempre "Mostrar na pasta".
     const casos = [
       { nome: 'relatorio.pdf', open: true, folder: true },
       { nome: 'pacote.zip', open: true, folder: true }, // B73 — §15.3 gateia com caixa nativa
       { nome: 'dados.bin', open: false, folder: true }, // `other`
-      { nome: 'instalador.exe', open: false, folder: false }, // regra 2 — nem revelar
+      { nome: 'instalador.exe', open: false, folder: true }, // executável: abrir bloqueado, mas mostrar na pasta permitido
     ];
     for (const [i, caso] of casos.entries()) {
       const conteudo = crypto.randomBytes(16 + i);
@@ -497,18 +497,18 @@ describe('download e revelação (§13.4, §13.6, §15.3)', () => {
       assert.equal(blobs.canReveal(chave, hashHex.slice(0, 32), 'open').allowed, caso.open, `${caso.nome} · open`);
       assert.equal(blobs.canReveal(chave, hashHex.slice(0, 32), 'folder').allowed, caso.folder, `${caso.nome} · folder`);
       // B74 — a mesma decisão, dita à UI pelo nome do log e SEM depender do download.
-      assert.equal(modoDeRevelacao(caso.nome), caso.open ? 'open' : caso.folder ? 'folder' : 'none', `${caso.nome} · modo`);
+      assert.equal(modoDeRevelacao(caso.nome), caso.open ? 'open' : 'folder', `${caso.nome} · modo`);
     }
 
     // §13.6 regra 1: quem delimita é a extensão REAL, não o `kind` de quem enviou (T-48).
-    assert.equal(modoDeRevelacao('foto.png.exe'), 'none');
+    assert.equal(modoDeRevelacao('foto.png.exe'), 'folder');
     assert.equal(modoDeRevelacao('sem-extensao'), 'folder');
 
     manifest.close();
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
-  it('executável não é revelável nem depois de baixado (§13.6 regra 2)', async () => {
+  it('executável não é aberto pelo app (mode=open), mas pode ser mostrado na pasta (mode=folder) (§13.6)', async () => {
     const r = await rig();
     try {
       const dir = tempDir('anexos-exe');
@@ -527,9 +527,14 @@ describe('download e revelação (§13.4, §13.6, §15.3)', () => {
         blobsCoreKeyOf: () => chave,
         pickFile: () => null,
         resolveAttachment: () => ({ name: 'instalador.exe', sizeBytes: conteudo.length, hashHex, blobId: { byteOffset: 0, blockOffset: 0, blockLength: 1, byteLength: conteudo.length } }),
+        onReveal: (a) => r.revelados.push(a),
       });
       const ref = { blobsCoreKey: chave.toString('hex'), blobId: { byteOffset: 0, blockOffset: 0, blockLength: 1, byteLength: conteudo.length } };
       assert.deepEqual(porta.reveal({ ...ref, mode: 'open' }), { ok: false, code: 'E_TYPE_NOT_OPENABLE' });
+      assert.deepEqual(porta.reveal({ ...ref, mode: 'folder' }), { ok: true });
+      assert.equal(r.revelados.length, 1);
+      assert.equal(r.revelados[0]?.mode, 'folder');
+      assert.equal(r.revelados[0]?.path, alvo);
 
       manifest.close();
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });

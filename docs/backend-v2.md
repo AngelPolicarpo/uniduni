@@ -3203,7 +3203,7 @@ o arquivo ao handler do SO, `folder` mostra o item no gerenciador de arquivos. O
 tratava os dois como `open` — então "Mostrar na pasta", que é a ação **menos** invasiva e a
 única que a regra 1 oferece para o que está fora da allowlist, abria o arquivo. Normativo:
 `folder` **nunca** abre, e a allowlist da regra 1 governa `open`; `folder` é permitido para
-o que a regra 2 não bloqueia.
+qualquer arquivo baixado (inclusive executáveis e `other`), pois apenas exibe o item no gerenciador de arquivos do SO sem executá-lo.
 
 **Emenda de 2026-09-05 (`B74`) — quem classifica é o núcleo, e ele passou a dizer.** A regra 1
 manda a UI oferecer **somente** a ação que o tipo permite, e a UI não tinha como saber qual é:
@@ -3214,8 +3214,8 @@ O `AttachmentDto` de §15.6.1 ganha `revealMode`, decidido pelo núcleo pela **e
 | `revealMode` | O que a tela oferece | Quando |
 |---|---|---|
 | `open` | "Abrir" e "Mostrar na pasta" | `image`, `audio`, `video`, `document`, `archive` — regra 1 |
-| `folder` | Só "Mostrar na pasta" | `other`, e qualquer extensão fora da tabela |
-| `none` | Nenhuma das duas | Extensão da regra 2 (executável/roteirável) |
+| `folder` | Só "Mostrar na pasta" | `other`, executáveis e qualquer extensão fora da tabela |
+| `none` | Nenhuma das duas | Reservado (mostrar na pasta está sempre presente pós-download) |
 
 Vale **antes** do download: o nome está no log e o arquivo local é gravado com a extensão
 preservada (regra 2), então a resposta não muda quando os bytes chegam. Continua sendo

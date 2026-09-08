@@ -50,7 +50,7 @@ interface DownloadState {
   reset: () => void;
 }
 
-function omitir(map: Record<string, true>, chave: string): Record<string, true> {
+function omitir<T>(map: Record<string, T>, chave: string): Record<string, T> {
   const { [chave]: _fora, ...resto } = map;
   return resto;
 }
@@ -75,11 +75,13 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
     const origem = attachment.origem;
     if (origem === undefined || get().emCursoById[attachment.id] === true) return;
     if ((attachment.downloadProgress ?? 0) >= 100) return;
-    // Um pedido novo depois de um cancelamento limpa a marca — o card volta ao
-    // estado "baixando" com o que o fio disser por cima.
+    // Um pedido novo limpa marcas anteriores de cancelamento, indisponibilidade ou
+    // corrupção — o card volta ao estado "baixando" com o que o fio disser por cima.
     set((state) => ({
       emCursoById: { ...state.emCursoById, [attachment.id]: true },
       canceladoById: omitir(state.canceladoById, attachment.id),
+      indisponivelById: omitir(state.indisponivelById, attachment.id),
+      corrompidoById: omitir(state.corrompidoById, attachment.id),
     }));
     void api
       .blobDownload({
@@ -140,6 +142,7 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
 
   aplicarIndisponivel: (blobIdHex) =>
     set((state) => ({
+      emCursoById: omitir(state.emCursoById, blobIdHex),
       indisponivelById: { ...state.indisponivelById, [blobIdHex]: true },
       peersById: { ...state.peersById, [blobIdHex]: 0 },
     })),

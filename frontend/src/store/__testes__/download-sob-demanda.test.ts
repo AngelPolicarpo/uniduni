@@ -91,4 +91,31 @@ describe("downloadStore — nada é baixado sem pedido", () => {
     useDownloadStore.getState().iniciar(anexo("pronto", 100));
     expect(api.blobDownload).not.toHaveBeenCalled();
   });
+
+  it("aplicarIndisponivel encerra o pedido em curso e permite tentar novamente", () => {
+    const a = anexo("b3");
+    useDownloadStore.getState().iniciar(a);
+    expect(useDownloadStore.getState().emCursoById["b3"]).toBe(true);
+
+    useDownloadStore.getState().aplicarIndisponivel("b3");
+    expect(useDownloadStore.getState().emCursoById["b3"]).toBeUndefined();
+    expect(useDownloadStore.getState().indisponivelById["b3"]).toBe(true);
+
+    api.blobDownload.mockClear();
+    useDownloadStore.getState().iniciar(a);
+    expect(api.blobDownload).toHaveBeenCalledTimes(1);
+    expect(useDownloadStore.getState().indisponivelById["b3"]).toBeUndefined();
+  });
+
+  it("tentar novamente após corrupção limpa a marca de corrompido e re-dispara o download", () => {
+    const a = anexo("b4");
+    useDownloadStore.getState().iniciar(a);
+    useDownloadStore.getState().aplicarCorrompido("b4", "hash");
+    expect(useDownloadStore.getState().corrompidoById["b4"]).toBe("hash");
+
+    api.blobDownload.mockClear();
+    useDownloadStore.getState().iniciar(a);
+    expect(api.blobDownload).toHaveBeenCalledTimes(1);
+    expect(useDownloadStore.getState().corrompidoById["b4"]).toBeUndefined();
+  });
 });

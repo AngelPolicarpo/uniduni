@@ -125,7 +125,6 @@ export function isRevealAllowed(kind: BlobKindNumber, extOrName: string): boolea
 export type ModoDeRevelacao = 'open' | 'folder' | 'none';
 
 export function modoDeRevelacao(nameOrPath: string): ModoDeRevelacao {
-  if (isExecutableExtension(nameOrPath)) return 'none'; // regra 2 — nem revelar
   return isRevealAllowed(kindFromFilename(nameOrPath), nameOrPath) ? 'open' : 'folder';
 }
 
@@ -1716,10 +1715,10 @@ export class BlobManager {
     const key = typeof blobsCoreKey === 'string' ? Buffer.from(blobsCoreKey, 'hex') : blobsCoreKey;
     const row = this.cache.get(key, blobIdHex);
     if (row === null || row.state !== 'downloaded' || row.path === null) return { allowed: false, reason: 'E_NOT_DOWNLOADED' };
+    if (mode === 'folder') return { allowed: true };
     const ext = extOf(row.path);
     const kind = kindFromExtension(ext);
     if (isExecutableExtension(ext)) return { allowed: false, reason: 'E_TYPE_NOT_OPENABLE' };
-    if (mode === 'folder') return { allowed: true };
     if (!isRevealAllowed(kind, ext)) return { allowed: false, reason: 'E_TYPE_NOT_OPENABLE' };
     return { allowed: true };
   }
