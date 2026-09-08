@@ -1413,6 +1413,7 @@ const roleMove: Handler<'role.move'> = (ctx, p) => {
   const role = ctx.draft.state.roles.get(p.roleId);
   if (role === undefined || role.deletedAt !== undefined) return rj('E_NOT_FOUND');
   if (role.isFounder) return rj('E_FOUNDER_IMMUTABLE');
+  if (role.isDefault) return rj('E_BASE_ROLE_REQUIRED'); // R-12
 
   const escopo = roleScope(ctx).filter((e) => e.id !== p.roleId);
   const renormalizavel = roleScopeRenormalizavel(ctx).filter((e) => e.id !== p.roleId);

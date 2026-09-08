@@ -318,7 +318,13 @@ export function loadSnapshot(view: ViewDb, communityId: string, foldBuildId: str
   if (row.foldBuildId !== foldBuildId) return null;
   try {
     const s = deserializeDs(row.blob);
-    if (s.interpretedSeq !== row.interpretedSeq || s.communityId !== communityId) return null;
+    if (
+      s.interpretedSeq !== row.interpretedSeq ||
+      s.communityId !== communityId ||
+      s.communityKey.toString('hex') !== communityId
+    ) {
+      return null;
+    }
     loadMessagesFromView(view, communityId, s);
     return s;
   } catch {

@@ -160,7 +160,7 @@ function walk(dir: string): string[] {
   });
 }
 
-const SPECIFIER = /(?:^|[\s;(])(?:import|export)\b[^'"]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]/g;
+const SPECIFIER = /(?:^|[\s;(])(?:import|export)\b(?:(?!import|export)[^;])*?from\s*['"]([^'"]+)['"]|import\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]/g;
 
 function violationsIn(file: string): Violation[] {
   const here = locate(file);
@@ -189,33 +189,32 @@ function violationsIn(file: string): Violation[] {
     ];
   }
 
-  const lines = fs.readFileSync(file, 'utf8').split('\n');
-  lines.forEach((line, i) => {
-    for (const m of line.matchAll(SPECIFIER)) {
-      const raw = m[1] ?? m[2];
-      if (raw === undefined || !raw.startsWith('.')) continue; // externo: não é fronteira de §4
+  const content = fs.readFileSync(file, 'utf8');
+  for (const m of content.matchAll(SPECIFIER)) {
+    const raw = m[1] ?? m[2] ?? m[3];
+    if (raw === undefined || !raw.startsWith('.')) continue; // externo: não é fronteira de §4
 
-      const resolvido = path.resolve(path.dirname(file), raw);
-      if (isComposition(resolvido)) {
-        out.push({
-          file,
-          line: i + 1,
-          text: raw,
-          why:
-            'a raiz de composição (`src/composition/`) monta o grafo e injeta as ' +
-            'implementações — nenhum módulo de camada pode importá-la. A direção é sempre ' +
-            'composição → módulo; o contrário transformaria a injeção de §4 em acoplamento',
-        });
-        continue;
-      }
-      const target = locate(resolvido);
-      if (target === null) continue;
-      if (target.layer === here.layer && target.module === here.module) continue; // interno
-
-      const why = check(spec, here, target);
-      if (why !== null) out.push({ file, line: i + 1, text: raw, why });
+    const line = content.slice(0, m.index).split('\n').length;
+    const resolvido = path.resolve(path.dirname(file), raw);
+    if (isComposition(resolvido)) {
+      out.push({
+        file,
+        line,
+        text: raw,
+        why:
+          'a raiz de composição (`src/composition/`) monta o grafo e injeta as ' +
+          'implementações — nenhum módulo de camada pode importá-la. A direção é sempre ' +
+          'composição → módulo; o contrário transformaria a injeção de §4 em acoplamento',
+      });
+      continue;
     }
-  });
+    const target = locate(resolvido);
+    if (target === null) continue;
+    if (target.layer === here.layer && target.module === here.module) continue; // interno
+
+    const why = check(spec, here, target);
+    if (why !== null) out.push({ file, line, text: raw, why });
+  }
   return out;
 }
 

@@ -127,6 +127,17 @@ describe('R-3 e R-12 — o cargo base é obrigatório e indestrutível', () => {
     assert.equal(r.reason, 'E_BASE_ROLE_REQUIRED');
   });
 
+  it('R-12: o cargo base não pode ter seu rank modificado (role.move)', () => {
+    const g = genesis();
+    const r = g.world.submit({
+      kind: 'role.move',
+      author: g.founder,
+      hostTs: TS,
+      payload: { roleId: g.baseRoleId, afterRank: '5' },
+    });
+    assert.equal(r.reason, 'E_BASE_ROLE_REQUIRED');
+  });
+
   it('R-12: as permissões do cargo base continuam editáveis dentro de R-11', () => {
     const g = genesis();
     const r = g.world.submit({

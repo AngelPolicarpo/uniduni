@@ -554,6 +554,27 @@ describe('§10.6 — o snapshot gravado é herdado pelo boot seguinte', () => {
       await h.close();
     }
   });
+
+  it('`loadSnapshot` descarta snapshot com `communityKey` corrompida (evita permanent wedge)', async () => {
+    const g = genesis();
+    const h = await setup([...g.world.log]);
+    try {
+      const p = makeProjector(h, { foldBuildId: BUILD_A });
+      await p.boot();
+      saveSnapshot(h.view, h.communityId, p.ds, BUILD_A, T0);
+
+      // Corrompe 1 caractere de communityKey no JSON do blob
+      const row = h.view.prepare('SELECT blob FROM ds_snapshot WHERE community_id = ?').get(h.communityId) as { blob: Buffer };
+      const parsed = JSON.parse(row.blob.toString('utf8'));
+      parsed.communityKey = 'f'.repeat(64); // chave divergente de communityId
+      h.view.prepare('UPDATE ds_snapshot SET blob = ? WHERE community_id = ?').run(Buffer.from(JSON.stringify(parsed)), h.communityId);
+
+      const s = loadSnapshot(h.view, h.communityId, BUILD_A);
+      assert.equal(s, null, 'snapshot corrompido precisa ser descartado para recomeçar do seq 0');
+    } finally {
+      await h.close();
+    }
+  });
 });
 
 // ─── §18.1 e §8.4 — moderação e os contadores derivados da população ativa ──────────────

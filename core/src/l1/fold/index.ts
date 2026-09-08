@@ -530,6 +530,7 @@ function foldRecordInner(prev: DecisionState, rec: RawRecord, seq: number, probe
       d.setScalar('communityInvalid', true); // absorvente
       d.setScalar('interpretedSeq', seq);
       if (hostTs > prev.lastHostTs) d.setScalar('lastHostTs', hostTs);
+      if (op.v > prev.opVersionSeen) d.setScalar('opVersionSeen', op.v);
       const atual = prev.lastAuthorSeq.get(authorScopeKey) ?? 0;
       if (op.authorSeq > atual) d.lastAuthorSeq().set(authorScopeKey, op.authorSeq);
       d.touch();

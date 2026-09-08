@@ -42,7 +42,7 @@ export type ErrorSpec = {
   readonly message: string;
 };
 
-/** O catálogo fechado de §20.2, na ordem da tabela. 90 códigos. */
+/** O catálogo fechado de §20.2, na ordem da tabela. 92 códigos. */
 export const ERROR_CATALOG = {
   E_MALFORMED:                    { class: 'client', http: 400, retry: 'no', message: "frame or payload does not decode" },
   E_VALIDATION:                   { class: 'client', http: 400, retry: 'no', message: "field outside the limits of §8.6" },
@@ -66,7 +66,7 @@ export const ERROR_CATALOG = {
   E_FOUNDER_IMMUTABLE:            { class: 'authorization', http: 403, retry: 'no', message: "the Founder role is not editable" },
   E_FOUNDER_TOP:                  { class: 'authorization', http: 403, retry: 'no', message: "the Founder is always at the top" },
   E_PERMISSION_ESCALATION:        { class: 'authorization', http: 403, retry: 'no', message: "granting a permission the author does not hold (R-5)" },
-  E_BASE_ROLE_REQUIRED:           { class: 'rule', http: 409, retry: 'no', message: "base role is mandatory and cannot be deleted" },
+  E_BASE_ROLE_REQUIRED:           { class: 'rule', http: 409, retry: 'no', message: "base role is mandatory and cannot be deleted or have its rank modified" },
   E_BASE_ROLE_RESTRICTED:         { class: 'security', http: 403, retry: 'no', message: "permission is forbidden on the base role (R-11)" },
   E_NOT_HOST:                     { class: 'authorization', http: 403, retry: 'no', message: "only the host may do this" },
   E_HOST_CANNOT_LEAVE:            { class: 'rule', http: 409, retry: 'no', message: "the host ends or succeeds, it does not leave" },

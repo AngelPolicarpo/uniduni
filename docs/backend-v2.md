@@ -901,7 +901,7 @@ Regras normativas:
   contrato nenhum.
 
 **Restrições:** Fundador tem sempre o `rank` máximo e é imutável (`E_FOUNDER_IMMUTABLE`,
-`E_FOUNDER_TOP`). Cargo base não é deletável (`E_BASE_ROLE_REQUIRED`) mas suas permissões
+`E_FOUNDER_TOP`). Cargo base não é deletável nem tem seu `rank` modificado (`E_BASE_ROLE_REQUIRED`) mas suas permissões
 são editáveis **dentro dos limites de R-11 e R-12** (§8.3). `role.delete` nunca remove
 membros; o `fold` tira o `roleId` de todos e **limpa toda referência pendurada**, inclusive
 `channel.readOnlyForRoleIds` (fecha `F-31`).
@@ -1745,7 +1745,7 @@ configuração ou banco fora do `MessageLookup` de §8.1.
 | R-9 | `member.join`: `joinProof` verifica com `invitePublicKey` sobre `BLAKE2b('invite-join/1' ‖ communityId ‖ invitePk ‖ author)`; convite existe, não revogado, não expirado (`hostTs`), `uses < maxUses`; `(invitePk, author)` ainda não usado. Incrementa `uses` **no mesmo passo**. A forma zerada fica restrita ao fundador em gênese (R-27). **Vale sem exceção também na continuação de uma sucessão**: o sucessor não reconstrói membros, eles reentram assinando o próprio join (§18.8.1, L-23) | `member.join` | `E_INVITE_INVALID` / `E_INVITE_EXHAUSTED` |
 | R-10 | Ban, kick, saída ou perda de `create_invite` de um membro revogam **todos** os convites que ele criou, no mesmo registro | `mod.ban`, `mod.kick`, `member.leave`, `member.setRoles`, `role.update`, `role.delete` | — (efeito, não recusa) |
 | R-11 | O **cargo base** nunca pode conter nenhuma de: `manage_community`, `manage_channels`, `manage_roles`, `manage_messages`, `ban_members`, `kick_members`, `timeout_members`, `mention_everyone`, `view_audit_log`, `voice_mute_others`, `create_invite` | `role.update` sobre `isDefault` | `E_BASE_ROLE_RESTRICTED` |
-| R-12 | O cargo base nunca é deletado nem tem `isDefault` removido | `role.delete`, `role.update` | `E_BASE_ROLE_REQUIRED` |
+| R-12 | O cargo base nunca é deletado, nunca tem seu rank alterado nem tem `isDefault` removido | `role.delete`, `role.update`, `role.move` | `E_BASE_ROLE_REQUIRED` |
 | R-13 | `everyone` na lista de menções só produz `mentionEveryoneEffective = true` se o autor tiver `mention_everyone` **no momento do registro**. Sem a permissão, a mensagem é `APPLIED` com a flag em `false`; o conteúdo não é alterado | `message.send` | — (efeito) |
 | R-14 | **Removida em `opVersion = 3`** (emenda de 2026-09-04, §13.8). Era a cota de anexos por membro; `member.storageUsedBytes` continua projetado como medidor de uso, sem fronteira. O número da regra não é reaproveitado | — | — |
 | R-15 | **Cotas de escrita determinísticas por autor** (fecha `HOLE-05`, define o `RingCounter` de §8.1). Seja `S` o `seq` do registro corrente e `J = {r : r.author = autor, S − QUOTA_WINDOW_SEQS < seq(r) ≤ S}` a janela **sobre `seq`, não sobre tempo**. Entram em `J` os registros do autor que **alcançaram o estágio 10**, `APPLIED` ou não — recusar num estágio posterior **não** devolve a cota, pela mesma razão de §7.5 ("uma op recusada antes do append queima o número"): sem isso, um autor inunda o log com ops que falham tarde e não paga nada. O registro corrente **conta na própria verificação**: recusa quando `|J| > QUOTA_OPS_PER_WINDOW` ou `Σ len(payload) sobre J > QUOTA_BYTES_PER_WINDOW`. `RingCounter` é **implementação** dessa função, não contrato — qualquer estrutura que compute o mesmo par (ops, bytes) sobre a mesma janela é conforme | todos exceto `member.join` | `E_QUOTA_EXCEEDED` |
@@ -3882,7 +3882,7 @@ recálculo na fronteira — que seria escrever R-12/§8.4.1 uma segunda vez.
 |---|---|---|---|---|
 | `role.create` | `{communityId, name, color, permissions[], mentionable, afterRoleId?}` | `manage_roles` | `{roleId, seq, rank}` | `E_PERMISSION_ESCALATION`, `E_HIERARCHY`, `E_LIMIT_EXCEEDED` |
 | `role.update` | `{communityId, roleId, name?, color?, permissions?, mentionable?}` | `manage_roles` | `{seq}` | `E_FOUNDER_IMMUTABLE`, `E_PERMISSION_ESCALATION`, `E_BASE_ROLE_RESTRICTED` |
-| `role.move` | `{communityId, roleId, afterRoleId?, beforeRoleId?}` | `manage_roles` | `{seq, rank}` — **só o cargo movido muda** (§6.4.1) | `E_FOUNDER_TOP`, `E_HIERARCHY` |
+| `role.move` | `{communityId, roleId, afterRoleId?, beforeRoleId?}` | `manage_roles` | `{seq, rank}` — **só o cargo movido muda** (§6.4.1) | `E_FOUNDER_TOP`, `E_HIERARCHY`, `E_BASE_ROLE_REQUIRED` |
 | `role.delete` | `{communityId, roleId}` | `manage_roles` | `{seq, affectedMembers, clearedChannelRefs}` | `E_BASE_ROLE_REQUIRED`, `E_FOUNDER_IMMUTABLE` |
 | `member.setRoles` | `{communityId, targetKey, roleIds[]}` | `manage_roles` | `{seq, appliedRoleIds[]}` — devolve o conjunto **efetivamente aplicado** após §8.4.1 | `E_HIERARCHY`, `E_BASE_ROLE_REQUIRED` |
 | `member.setNickname` | `{communityId, nickname\|null}` | — | `{seq}` | `E_NICKNAME_SELF_ONLY` |
@@ -6415,7 +6415,7 @@ Coluna **R** = a outbox retenta.
 | `E_FOUNDER_IMMUTABLE` | autorização | 403 | não | Cargo Fundador não é editável |
 | `E_FOUNDER_TOP` | autorização | 403 | não | Fundador é sempre o topo |
 | `E_PERMISSION_ESCALATION` | autorização | 403 | não | Conceder permissão que não tem (R-5) |
-| `E_BASE_ROLE_REQUIRED` | regra | 409 | não | Cargo base obrigatório / indeletável |
+| `E_BASE_ROLE_REQUIRED` | regra | 409 | não | Cargo base obrigatório / indeletável / rank imutável |
 | `E_BASE_ROLE_RESTRICTED` | segurança | 403 | não | Permissão proibida no cargo base (R-11) |
 | `E_NOT_HOST` | autorização | 403 | não | Só o host pode |
 | `E_HOST_CANNOT_LEAVE` | regra | 409 | não | Host encerra ou sucede, não sai |
