@@ -121,6 +121,7 @@ declare module 'hypercore' {
     /** §14.1 — o tópico DHT do log é `discoveryKey(coreKey)`. Pronto depois de `ready()`. */
     readonly discoveryKey: Buffer | null;
     readonly length: number;
+    readonly remoteContiguousLength: number;
     readonly writable: boolean;
     readonly closed: boolean;
 
@@ -131,8 +132,14 @@ declare module 'hypercore' {
      * disponível (replicação em curso) — é o contrato de leitura do projector (§10.5).
      */
     get(seq: number, opts?: { wait?: boolean }): Promise<Buffer | null>;
-    on(event: 'append' | 'download', listener: () => void): this;
-    off(event: 'append' | 'download', listener: () => void): this;
+    on(
+      event: 'append' | 'download' | 'upload' | 'remote-contiguous-length',
+      listener: (...args: any[]) => void,
+    ): this;
+    off(
+      event: 'append' | 'download' | 'upload' | 'remote-contiguous-length',
+      listener: (...args: any[]) => void,
+    ): this;
     /**
      * §14.1 — replica sobre um `Protomux` já montado no stream do Hyperswarm. O hypercore
      * abre o próprio canal no mux; ele não sabe (nem precisa saber) dos canais de §16.

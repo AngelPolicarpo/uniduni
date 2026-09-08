@@ -146,6 +146,9 @@ type Vivo = {
   /** `'lo'` quando a minha chave de identidade é a menor das duas (§31.2). */
   readonly meuLado: DmOrigin;
   readonly contentKey: Buffer;
+  readonly selfCore: CoreHandle | null;
+  desregistrarReplicacao?: () => void;
+  ultimoDeliveredUpTo: number;
 };
 
 export type DmRuntime = {
@@ -289,18 +292,25 @@ export async function criarDmRuntime(deps: DmRuntimeDeps): Promise<DmRuntime> {
 
   // ── §31.16.2 — a saída única dos eventos ───────────────────────────────────────────
 
+  const notificarEntrega = (conversationId: string): void => {
+    const vivo = vivos.get(conversationId);
+    if (vivo === undefined) return;
+    const upTo = entregueAte(vivo);
+    if (upTo > vivo.ultimoDeliveredUpTo) {
+      vivo.ultimoDeliveredUpTo = upTo;
+      deps.onEvent('dm.delivered', {
+        conversationId,
+        deliveredUpTo: upTo,
+      });
+    }
+  };
+
   const eventosDoProjetor = (conversationId: string) => (events: readonly DmProjectedEvent[]): void => {
     for (const ev of events) deps.onEvent(ev.topic, { conversationId, ...ev.data });
     // Depois do commit, e só quando algo chegou: a contagem é derivada do que foi projetado.
     recomputarNaoLidas(conversationId);
-    // §31.11 — a entrega é derivada do `ack` do par, que só muda quando ele escreve.
-    const vivo = vivos.get(conversationId);
-    if (vivo !== undefined) {
-      deps.onEvent('dm.delivered', {
-        conversationId,
-        deliveredUpTo: entregueAte(vivo),
-      });
-    }
+    // §31.11 — a entrega é derivada do `ack` do par ou da confirmação de replicação contígua do core.
+    notificarEntrega(conversationId);
   };
 
   /**
@@ -326,8 +336,17 @@ export async function criarDmRuntime(deps: DmRuntimeDeps): Promise<DmRuntime> {
 
   const outroLado = (o: DmOrigin): DmOrigin => (o === 'lo' ? 'hi' : 'lo');
 
-  /** `entregueAté(meuLado) = max(r.ack : r ∈ log do par)`. `lastAck` é esse máximo (RD-4). */
-  const entregueAte = (vivo: Vivo): number => vivo.projetor.state.sides[outroLado(vivo.meuLado)].lastAck;
+  /**
+   * §31.11 — até onde o par recebeu contiguamente o meu log.
+   * `entregueAté(meuLado) = max(r.ack : r ∈ log do par, selfCore.remoteContiguousLength)`.
+   * Atesta a entrega assim que o par recebe e confirma os blocos por replicação contígua
+   * do Hypercore, sem exigir que ele escreva uma resposta para avançar o `lastAck`.
+   */
+  const entregueAte = (vivo: Vivo): number => {
+    const lastAck = vivo.projetor.state.sides[outroLado(vivo.meuLado)].lastAck;
+    const rcl = vivo.selfCore?.remoteContiguousLength?.() ?? 0;
+    return Math.max(lastAck, rcl);
+  };
 
   const estado = (conversationId: string): DmState | null => vivos.get(conversationId)?.projetor.state ?? null;
 
@@ -394,12 +413,15 @@ export async function criarDmRuntime(deps: DmRuntimeDeps): Promise<DmRuntime> {
     // projetores da MESMA conversa rodando `#run()` sobre a mesma `view.db` disputam a
     // transação, e o segundo morre em `SQLITE_BUSY` — que chega à fronteira como
     // `E_INTERNAL`, intermitente e dependente de carga.
-    vivos.get(a.conversationId)?.projetor.stop();
+    const anterior = vivos.get(a.conversationId);
+    anterior?.projetor.stop();
+    anterior?.desregistrarReplicacao?.();
 
     const identidade = eu();
     const meuLado: DmOrigin = a.loKey.equals(identidade.publicKey) ? 'lo' : 'hi';
     const peerKey = meuLado === 'lo' ? a.hiKey : a.loKey;
     const contentKey = chaveDeConteudo(a.conversationKey, peerKey);
+    const selfCore = meuLado === 'lo' ? a.lo : a.hi;
     const projetor = new DmProjector(
       deps.view,
       { lo: a.lo, hi: a.hi },
@@ -420,7 +442,20 @@ export async function criarDmRuntime(deps: DmRuntimeDeps): Promise<DmRuntime> {
         onPanic: (ordSum, kind) => deps.onEvent('dmFold.panic', { conversationId: a.conversationId, ordSum, kind }),
       },
     );
-    vivos.set(a.conversationId, { projetor, meuLado, contentKey });
+    const vivo: Vivo = {
+      projetor,
+      meuLado,
+      contentKey,
+      selfCore,
+      ultimoDeliveredUpTo: 0,
+    };
+    if (selfCore?.onReplicationProgress !== undefined) {
+      vivo.desregistrarReplicacao = selfCore.onReplicationProgress(() => {
+        notificarEntrega(a.conversationId);
+      });
+    }
+    vivo.ultimoDeliveredUpTo = entregueAte(vivo);
+    vivos.set(a.conversationId, vivo);
     // §31.14 — o core de blobs nasce com a conversa, e não com o primeiro anexo: quem
     // baixa um anexo meu precisa me achar no tópico de §13.4, e o anúncio é do dono do
     // core. Esperar o primeiro `blob.stage` deixaria a janela em que o par pede e ninguém
@@ -475,7 +510,9 @@ export async function criarDmRuntime(deps: DmRuntimeDeps): Promise<DmRuntime> {
     projetor: {
       montar: montarProjetor,
       limpar: (conversationId) => {
-        vivos.get(conversationId)?.projetor.stop();
+        const v = vivos.get(conversationId);
+        v?.projetor.stop();
+        v?.desregistrarReplicacao?.();
         vivos.delete(conversationId);
         // §31.19 — o core de blobs sai junto: os blocos dele são o anexo, e mantê-lo
         // anunciado no tópico de §13.4 depois de esquecer serviria bytes de uma conversa
@@ -713,7 +750,10 @@ export async function criarDmRuntime(deps: DmRuntimeDeps): Promise<DmRuntime> {
 
     async close() {
       await transport.stop();
-      for (const vivo of vivos.values()) vivo.projetor.stop();
+      for (const vivo of vivos.values()) {
+        vivo.projetor.stop();
+        vivo.desregistrarReplicacao?.();
+      }
       vivos.clear();
       // `cabos` guarda promessas: uma abertura ainda em voo tem de ser esperada antes de
       // fechar, ou o core sobrevive ao `close` sem dono. Uma que falhou já se removeu do

@@ -199,19 +199,25 @@ function idEntre(a: No, b: No): string {
  * handshake autenticou (§31.8 camada 1), não uma declarada pelo cabo. É também o que o
  * `hypercore` exige para replicar de fato — ele espera `stream.opened` ao anexar-se ao mux.
  */
-async function conectar(a: No, b: No): Promise<void> {
+async function conectar(a: No, b: No): Promise<{ close(): void }> {
   const [sa, sb] = parDeStreamsNoise(a.identity, b.identity);
   // A `remotePublicKey` só existe depois do handshake: é ele que a autentica.
   await Promise.all([sa.opened, sb.opened]);
-  const conn = (stream: { remotePublicKey: Buffer }): SwarmConnection =>
+  const conn = (stream: { remotePublicKey: Buffer; destroy(): void }): SwarmConnection =>
     ({
       remotePublicKeyHex: stream.remotePublicKey.toString('hex'),
       stream: stream as unknown as SwarmConnection['stream'],
       topicsHex: [],
-      close: () => {},
+      close: () => stream.destroy(),
     }) as SwarmConnection;
   a.backend.entregar(conn(sa));
   b.backend.entregar(conn(sb));
+  return {
+    close() {
+      sa.destroy();
+      sb.destroy();
+    },
+  };
 }
 
 async function ate(cond: () => boolean, msg: string, limiteMs = 5_000): Promise<void> {
@@ -275,8 +281,84 @@ describe('§31.16.1/§31.10 — `dm.send` responde síncrono, com o registro já
     assert.notEqual(msg, undefined, 'a mensagem respondida não apareceu na projeção');
     assert.equal(msg?.['ordSum'], enviada['ordSum'], '§31.6 — o `ordSum` respondido é o projetado');
     assert.equal(msg?.['content'], 'oi');
-    // §31.11 — `delivery` só existe nas **próprias**; `written` até o `ack` do par avançar.
-    assert.equal(msg?.['delivery'], 'written');
+    // §31.11 — `delivery` só existe nas **próprias**; `written` ou `delivered` conforme a replicação
+    assert.ok(msg?.['delivery'] === 'written' || msg?.['delivery'] === 'delivered');
+
+    // Quando Bob replica o log, a mensagem fica garantidamente `delivered` (sem Bob responder)
+    await ate(
+      () => (b.view.prepare('SELECT COUNT(*) AS n FROM dm_messages WHERE conversation_id = ?').get(id) as { n: number }).n > 0,
+      'bob não recebeu a mensagem',
+    );
+    await ate(
+      () => {
+        const q = a.dm.queries.messages({ conversationId: id });
+        const m = q.messages.find((x) => x.id === enviada['messageId']);
+        return m?.delivery === 'delivered';
+      },
+      'não virou delivered após bob receber',
+    );
+
+    await a.close();
+    await b.close();
+  });
+
+  it('§31.11 — mensagem enviada com par offline fica `written`; ao conectar e replicar, vira `delivered` com `dm.delivered`', async () => {
+    const a = await no('alice');
+    const b = await no('bob');
+    const id = idEntre(a, b);
+
+    ok(await a.request('dm.open', { peerKey: b.identity.publicKey.toString('hex') }));
+    a.dm.transport.refresh();
+    b.dm.transport.refresh();
+    const c1 = await conectar(a, b);
+    await ate(() => b.manifest.getDmConversation(id) !== null, 'o pedido não chegou');
+
+    ok(await b.request('dm.accept', { conversationId: id }));
+    b.dm.transport.refresh();
+    const c2 = await conectar(a, b);
+    await ate(() => a.manifest.getDmConversation(id)?.peer_core_key !== null, '`alice` não vinculou o core');
+
+    // Desconecta a ligação atual para simular Bob offline
+    c1.close();
+    c2.close();
+
+    // Alice envia com Bob desconectado
+    const enviada = ok(
+      await a.request('dm.send', { conversationId: id, content: 'oi offline' }),
+    );
+    assert.equal(enviada['state'], 'written');
+
+    await ate(
+      () => (a.view.prepare('SELECT COUNT(*) AS n FROM dm_messages WHERE conversation_id = ?').get(id) as { n: number }).n > 0,
+      'a projeção local não chegou',
+    );
+
+    // Como Bob ainda não recebeu, Alice vê como 'written' e não houve dm.delivered para esta msg
+    const antes = ok(await a.request('query.dmMessages', { conversationId: id }));
+    const msgAntes = (antes['messages'] as Array<Record<string, unknown>>).find((m) => m['id'] === enviada['messageId']);
+    assert.equal(msgAntes?.['delivery'], 'written');
+
+    // Bob volta e conecta
+    a.dm.transport.refresh();
+    b.dm.transport.refresh();
+    await conectar(a, b);
+
+    // Bob recebe e projeta a mensagem (Bob NÃO respondeu nada!)
+    await ate(
+      () => (b.view.prepare('SELECT COUNT(*) AS n FROM dm_messages WHERE conversation_id = ?').get(id) as { n: number }).n > 0,
+      'a replicação para bob não chegou',
+    );
+
+    // Alice recebe evento dm.delivered
+    await ate(
+      () => a.eventos.some((e) => e.topic === 'dm.delivered' && (e.data['deliveredUpTo'] as number) >= 2),
+      'alice não recebeu evento dm.delivered',
+    );
+
+    // Na consulta de Alice, a mensagem agora é 'delivered'
+    const depois = ok(await a.request('query.dmMessages', { conversationId: id }));
+    const msgDepois = (depois['messages'] as Array<Record<string, unknown>>).find((m) => m['id'] === enviada['messageId']);
+    assert.equal(msgDepois?.['delivery'], 'delivered');
 
     await a.close();
     await b.close();

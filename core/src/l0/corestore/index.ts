@@ -57,6 +57,16 @@ export type CoreHandle = {
    */
   replicationConfirmations?(head: number): number;
   /**
+   * O maior comprimento contíguo replicado por pares (ou guardado no cabeçalho do core).
+   * Em DM (§31.11), atesta até onde o par já replicou o meu log de forma contígua.
+   */
+  remoteContiguousLength?(): number;
+  /**
+   * Notifica quando o progresso de replicação avançar (ex: novo bloco contíguo anunciado pelo par ou upload).
+   * Devolve o desregistro.
+   */
+  onReplicationProgress?(listener: () => void): () => void;
+  /**
    * §13.5/§22.4 — libera os blocos LOCAIS da faixa **inclusiva** (`core.clear`). O dado
    * continua na rede para quem o tiver; aqui só o disco deste nó sai. Opcional como as
    * demais: cabo de memória (teste) não tem bitfield para podar.
@@ -129,6 +139,26 @@ class CoreHandleImpl implements WritableCoreHandle {
       if (peer.remoteContiguousLength >= head) n++;
     }
     return n;
+  }
+
+  remoteContiguousLength(): number {
+    let max = this.#core.remoteContiguousLength;
+    for (const peer of this.#core.peers) {
+      if (peer.remotePublicKey === null) continue;
+      if (peer.remoteContiguousLength > max) max = peer.remoteContiguousLength;
+    }
+    return max;
+  }
+
+  onReplicationProgress(listener: () => void): () => void {
+    const onRcl = () => listener();
+    const onUpload = () => listener();
+    this.#core.on('remote-contiguous-length', onRcl);
+    this.#core.on('upload', onUpload);
+    return () => {
+      this.#core.off('remote-contiguous-length', onRcl);
+      this.#core.off('upload', onUpload);
+    };
   }
 
   /**
