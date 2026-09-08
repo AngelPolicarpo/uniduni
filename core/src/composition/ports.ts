@@ -798,7 +798,7 @@ function aeadSealSeed(plain: Buffer, dataKey: Buffer): { enc: Buffer; nonce: Buf
   return { enc, nonce };
 }
 
-function aeadOpenSeed(enc: Buffer, nonce: Buffer, dataKey: Buffer): Buffer | null {
+export function aeadOpenSeed(enc: Buffer, nonce: Buffer, dataKey: Buffer): Buffer | null {
   if (enc.length < sodium.crypto_aead_xchacha20poly1305_ietf_ABYTES) return null;
   const plain = Buffer.alloc(enc.length - sodium.crypto_aead_xchacha20poly1305_ietf_ABYTES);
   try {

@@ -1166,6 +1166,13 @@ export class CoreRuntime {
     this.client.close();
     // §15.1 — solta os prazos de `IPC_STALE_MS` ainda armados nas assinaturas vivas.
     this.ipc.close();
+    // §3.3 draining — wal_checkpoint(TRUNCATE) nos dois bancos
+    try {
+      this.#deps.manifest.pragma('wal_checkpoint(TRUNCATE)');
+    } catch {}
+    try {
+      this.#deps.view.pragma('wal_checkpoint(TRUNCATE)');
+    } catch {}
     this.setPhase('stopped');
   }
 

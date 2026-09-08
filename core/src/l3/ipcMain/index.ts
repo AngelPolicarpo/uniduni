@@ -320,10 +320,11 @@ export class ProcessLock {
       }
 
       // Somente com o lock em mãos podemos truncar e escrever.
-      // Detecta órfão: se o arquivo continha PID morto ou install_id diferente, log lock.stolen.
+      // Detecta órfão: se o arquivo continha PID morto ou install_id diferente (sem release limpo), log lock.stolen.
       const prevOwner = this.#readOwner(lockPath);
       if (
         prevOwner !== null &&
+        !(prevOwner as { released?: boolean }).released &&
         typeof prevOwner.pid === 'number' &&
         prevOwner.pid !== process.pid
       ) {
@@ -368,6 +369,20 @@ export class ProcessLock {
 
   release(): void {
     if (this.#lockFd !== null) {
+      try {
+        fs.ftruncateSync(this.#lockFd, 0);
+        fs.writeSync(
+          this.#lockFd,
+          JSON.stringify({
+            pid: process.pid,
+            install_id: this.#installId(),
+            released: true,
+            time: Date.now(),
+          }),
+          0,
+        );
+        fs.fsyncSync(this.#lockFd);
+      } catch {}
       destravar(this.#lockFd);
       try {
         fs.closeSync(this.#lockFd);

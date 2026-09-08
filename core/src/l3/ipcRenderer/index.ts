@@ -294,7 +294,7 @@ export class IpcServer {
         epoch: this.#epoch,
         id: frame.id,
         ok: true,
-        data: (data as unknown) ?? {},
+        data: data === undefined ? {} : (data as unknown),
       });
     } catch (err) {
       const e = err as {

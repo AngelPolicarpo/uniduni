@@ -1211,7 +1211,7 @@ ipcMain.handle('requestAuthToken', async (_e, cmd: unknown, arg: unknown) => {
     console.warn(`[main] requestAuthToken recusado: ${String(cmd)} não é comando main-confirmed`);
     return { ok: false, code: 'E_UNKNOWN_COMMAND' };
   }
-  const win = BrowserWindow.getFocusedWindow();
+  const win = (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null) ?? BrowserWindow.getFocusedWindow();
   if (win === null) return { ok: false, code: 'E_NO_WINDOW' };
 
   // §15.3 emendado, regra 3 — o alvo sai do argumento. O main extrai só o CAMPO declarado e

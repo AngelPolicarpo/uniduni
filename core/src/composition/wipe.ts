@@ -78,6 +78,24 @@ function fecharEmSilencio(o: { close(): void } | null | undefined): void {
   } catch {}
 }
 
+/**
+ * Remove os diretórios de blobs descriptografados (<dataDir>/<blobsCoreKeyHex>)
+ * e diretórios temporários de anexo residuais em disco.
+ */
+function apagarBlobs(dataDir: string): void {
+  try {
+    const entries = fs.readdirSync(dataDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (
+        entry.isDirectory() &&
+        (/^[0-9a-f]{64}$/i.test(entry.name) || entry.name === 'blobs' || entry.name === 'staging')
+      ) {
+        fs.rmSync(path.join(dataDir, entry.name), { recursive: true, force: true });
+      }
+    }
+  } catch {}
+}
+
 /** Executa UMA etapa do switch — o mesmo corpo para executar e para retomar. */
 async function executarEtapa(etapa: WipeStage, deps: WipeResourceDeps): Promise<void> {
   switch (etapa) {
@@ -92,9 +110,18 @@ async function executarEtapa(etapa: WipeStage, deps: WipeResourceDeps): Promise<
       // Fechado, o armazenamento dos cores sai do disco: uma limpeza que deixa o log de
       // toda comunidade legível em `<dataDir>/cores` contradiria §18.4 (réplica removida
       // sai inteira) e o propósito da máquina. É a etapa que nomeia os cores.
-      try {
-        await fs.promises.rm(path.join(deps.dataDir, 'cores'), { recursive: true, force: true });
-      } catch {}
+      {
+        const coresDir = path.join(deps.dataDir, 'cores');
+        if (fs.existsSync(coresDir)) {
+          try {
+            await fs.promises.rm(coresDir, { recursive: true, force: true });
+          } catch {}
+          if (fs.existsSync(coresDir)) {
+            throw Object.assign(new Error(`não foi possível remover ${coresDir}`), { code: 'E_WIPE_INCOMPLETE' });
+          }
+        }
+        apagarBlobs(deps.dataDir);
+      }
       break;
     case 'view-deleted':
       fecharEmSilencio(deps.view);
@@ -111,6 +138,9 @@ async function executarEtapa(etapa: WipeStage, deps: WipeResourceDeps): Promise<
     case 'key-wiped':
       deps.wipeIdentity();
       deps.wipeDataKey?.();
+      try {
+        fs.rmSync(path.join(deps.dataDir, 'keystore-accepted'), { force: true });
+      } catch {}
       break;
     case 'done':
       try {
@@ -192,8 +222,12 @@ export async function resumePendingWipe(
     try {
       await fs.promises.rm(path.join(deps.dataDir, 'cores'), { recursive: true, force: true });
     } catch {}
+    apagarBlobs(deps.dataDir);
     deps.wipeIdentity();
     deps.wipeDataKey?.();
+    try {
+      fs.rmSync(path.join(deps.dataDir, 'keystore-accepted'), { force: true });
+    } catch {}
     try {
       fs.rmSync(sentinela, { force: true });
     } catch {}

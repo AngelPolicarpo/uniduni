@@ -322,10 +322,8 @@ export class IdentityManager {
 
   async load(): Promise<boolean> {
     // §10.2: tenta manifest.secrets primeiro, depois arquivo (compatibilidade).
-    if (this.#manifest !== null) {
-      try {
-        if (await this.#loadFromManifest()) return true;
-      } catch {}
+    if (this.#manifest !== null && this.#hasManifestSecrets()) {
+      return this.#loadFromManifest();
     }
     return this.#loadFromFile();
   }

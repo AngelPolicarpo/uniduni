@@ -75,6 +75,8 @@ let comandoConfirmado: ((cmd: string) => unknown | null) | null = null;
 let canonicalizarEscopo: ((v: unknown) => string | null) | null = null;
 /** Para a rede de §14.1 no draining — o transporte é do processo, não do runtime. */
 let pararRede: (() => Promise<void>) | null = null;
+/** §3.2 item 4 — sanitização da Data Key no shutdown */
+let limparDataKey: (() => void) | null = null;
 // Os ids deste lado começam alto para não colidir com os do `IpcKeystoreOracle`, que
 // compartilha a mesma porta IPC-M com protocolo próprio (`{a, id}`).
 let proximoIdM = 10_000_000;
@@ -214,7 +216,10 @@ async function boot(): Promise<void> {
   const manifestoAberto = (): object | null => {
     try {
       return new ManifestDbCtor(manifestPath);
-    } catch {
+    } catch (err) {
+      if ((err as { code?: string })?.code === 'E_SCHEMA_AHEAD') {
+        throw err;
+      }
       return null;
     }
   };
@@ -316,6 +321,9 @@ async function boot(): Promise<void> {
       ? await cofre.oracle.unwrapDataKey(wrapped)
       : crypto.randomBytes(32).toString('base64');
   const dataKey = Buffer.from(dataKeyB64, 'base64');
+  limparDataKey = () => {
+    dataKey.fill(0);
+  };
 
   /**
    * §14.1/§14.3 — a rede de verdade. O backend nasce sobre o PAR DA IDENTIDADE (é por
@@ -640,6 +648,7 @@ async function drenarESair(): Promise<void> {
     log(`draining falhou: ${(err as Error).message}`);
     process.parentPort?.postMessage({ e: 'drained', summary: null });
   } finally {
+    limparDataKey?.();
     liberarLock?.();
     process.exit(0);
   }

@@ -529,7 +529,7 @@ export function registerCoreCommands(server: IpcServer, deps: CoreCommandDeps): 
   });
 
   // §15.6 — `{...} | null`: sem identidade criada, null é "nada local", não erro.
-  server.register('query.identity', 'standard', () => {
+  server.register('query.identity', 'open', () => {
     const identity = deps.identity;
     if (identity === undefined) refuse('E_UNKNOWN_COMMAND');
     return identity.self();
@@ -1217,7 +1217,7 @@ export function registerCoreCommands(server: IpcServer, deps: CoreCommandDeps): 
 
   // ── Leitura de §15.6 (estrutura e mensagens) ─────────────────────────────────────
   //
-  // Todas standard (§15.3): não mudam estado e não exigem confirmação nativa. `cursor` e
+  // Todas open (§15.3): leituras abertas para o renderer, sem exigir identidade criada. `cursor` e
   // `limit` são opcionais e opacos para a fronteira — quem os interpreta é §23.3.
 
   function reads(): NonNullable<CoreCommandDeps['reads']> {
@@ -1243,17 +1243,17 @@ export function registerCoreCommands(server: IpcServer, deps: CoreCommandDeps): 
     return v as NonNullable<T>;
   }
 
-  server.register('query.structure', 'standard', (rawArg) => achado(reads().structure(str((rawArg ?? {}) as Arg, 'communityId'))));
+  server.register('query.structure', 'open', (rawArg) => achado(reads().structure(str((rawArg ?? {}) as Arg, 'communityId'))));
     // §15.6 `query.voiceQueue` (emenda de 2026-08-28) — a leitura que reconstrói
     // `voice.queueChanged`; `null` quando o canal não tem fila conhecida.
-    server.register('query.voiceQueue', 'standard', (rawArg) => {
+    server.register('query.voiceQueue', 'open', (rawArg) => {
       const arg = (rawArg ?? {}) as Arg;
       // `null` é resposta válida da spec ("o canal não tem fila") — não é E_NOT_FOUND.
       const leitura = reads().voiceQueue?.({ communityId: str(arg, 'communityId'), channelId: str(arg, 'channelId') });
       return leitura ?? {};
     });
 
-  server.register('query.messages', 'standard', (rawArg) => {
+  server.register('query.messages', 'open', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
     const direction = arg['direction'];
     if (direction !== undefined && direction !== 'before' && direction !== 'after') refuse('E_VALIDATION');
@@ -1265,33 +1265,33 @@ export function registerCoreCommands(server: IpcServer, deps: CoreCommandDeps): 
     });
   });
 
-  server.register('query.message', 'standard', (rawArg) => {
+  server.register('query.message', 'open', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
     return achado(reads().message({ communityId: str(arg, 'communityId'), messageId: str(arg, 'messageId') }));
   });
 
-  server.register('query.pinned', 'standard', (rawArg) => {
+  server.register('query.pinned', 'open', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
     return reads().pinned({ communityId: str(arg, 'communityId'), channelId: str(arg, 'channelId'), ...pagina(arg) });
   });
 
-  server.register('query.files', 'standard', (rawArg) => {
+  server.register('query.files', 'open', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
     return reads().files({ communityId: str(arg, 'communityId'), channelId: str(arg, 'channelId'), ...pagina(arg) });
   });
 
-  server.register('query.links', 'standard', (rawArg) => {
+  server.register('query.links', 'open', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
     return reads().links({ communityId: str(arg, 'communityId'), channelId: str(arg, 'channelId'), ...pagina(arg) });
   });
 
-  server.register('query.thread', 'standard', (rawArg) => {
+  server.register('query.thread', 'open', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
     return achado(reads().thread({ communityId: str(arg, 'communityId'), threadId: str(arg, 'threadId'), ...pagina(arg) }));
   });
 
   // §15.6 emenda de 2026-08-25 — o badge do chip de §9 2.2 (delta §2.2 item 7).
-  server.register('query.thread.unread', 'standard', (rawArg) => {
+  server.register('query.thread.unread', 'open', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
     const channelId = arg['channelId'];
     if (channelId !== undefined && (typeof channelId !== 'string' || channelId.length === 0)) refuse('E_VALIDATION');
@@ -1302,7 +1302,7 @@ export function registerCoreCommands(server: IpcServer, deps: CoreCommandDeps): 
     });
   });
 
-  server.register('query.reactors', 'standard', (rawArg) => {
+  server.register('query.reactors', 'open', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
     const limit = arg['limit'];
     if (limit !== undefined && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1)) refuse('E_VALIDATION');
@@ -1319,7 +1319,7 @@ export function registerCoreCommands(server: IpcServer, deps: CoreCommandDeps): 
   // Mesma régua das demais consultas: a fronteira valida forma e recorta; o enforcement
   // de leitura de §15.6.1 (`view_audit_log`, DR-25/T-44) mora na consulta, sobre o DS.
 
-  server.register('query.members', 'standard', (rawArg) => {
+  server.register('query.members', 'open', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
     const bruto = arg['filter'];
     let filtro: { query?: string; roleId?: string; onlyOnline?: boolean } | undefined;
@@ -1335,26 +1335,26 @@ export function registerCoreCommands(server: IpcServer, deps: CoreCommandDeps): 
     return reads().members({ communityId: str(arg, 'communityId'), ...(filtro !== undefined ? { filter: filtro } : {}), ...pagina(arg) });
   });
 
-  server.register('query.member', 'standard', (rawArg) => {
+  server.register('query.member', 'open', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
     const identityKey = str(arg, 'identityKey');
     if (!/^[0-9a-f]{64}$/i.test(identityKey)) refuse('E_VALIDATION');
     return achado(reads().member({ communityId: str(arg, 'communityId'), identityKey }));
   });
 
-  server.register('query.roles', 'standard', (rawArg) => reads().roles({ communityId: str((rawArg ?? {}) as Arg, 'communityId') }));
+  server.register('query.roles', 'open', (rawArg) => reads().roles({ communityId: str((rawArg ?? {}) as Arg, 'communityId') }));
 
-  server.register('query.bans', 'standard', (rawArg) => {
+  server.register('query.bans', 'open', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
     return reads().bans({ communityId: str(arg, 'communityId'), ...pagina(arg) });
   });
 
-  server.register('query.timeouts', 'standard', (rawArg) => {
+  server.register('query.timeouts', 'open', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
     return reads().timeouts({ communityId: str(arg, 'communityId'), ...pagina(arg) });
   });
 
-  server.register('query.auditLog', 'standard', (rawArg) => {
+  server.register('query.auditLog', 'open', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
     const type = opcional(arg, 'type');
     const byKey = opcional(arg, 'byKey');
@@ -1376,21 +1376,21 @@ export function registerCoreCommands(server: IpcServer, deps: CoreCommandDeps): 
 
   // ── Leitura de §15.6 (estado local do leitor) ────────────────────────────────────
 
-  server.register('query.outbox', 'standard', (rawArg) => {
+  server.register('query.outbox', 'open', (rawArg) => {
     const arg = (rawArg ?? {}) as Arg;
     const communityId = opcional(arg, 'communityId');
     return reads().outbox({ ...(communityId !== undefined ? { communityId } : {}) });
   });
 
-  server.register('query.communities', 'standard', () => reads().communities());
+  server.register('query.communities', 'open', () => reads().communities());
 
-  server.register('query.preferences', 'standard', () => reads().preferences());
+  server.register('query.preferences', 'open', () => reads().preferences());
 
-  server.register('query.hostStatus', 'standard', (rawArg) => reads().hostStatus({ communityId: str((rawArg ?? {}) as Arg, 'communityId') }));
+  server.register('query.hostStatus', 'open', (rawArg) => reads().hostStatus({ communityId: str((rawArg ?? {}) as Arg, 'communityId') }));
 
-  server.register('query.selfModeration', 'standard', (rawArg) => reads().selfModeration({ communityId: str((rawArg ?? {}) as Arg, 'communityId') }));
+  server.register('query.selfModeration', 'open', (rawArg) => reads().selfModeration({ communityId: str((rawArg ?? {}) as Arg, 'communityId') }));
 
-  server.register('query.resolveMessageLink', 'standard', (rawArg) => {
+  server.register('query.resolveMessageLink', 'open', (rawArg) => {
     // O main já validou a gramática de §3.5; o núcleo revalida a forma do ref — recusa
     // aqui é `{status:'malformed'}`, não erro de comando (§15.6).
     return reads().resolveMessageLink({ ref: str((rawArg ?? {}) as Arg, 'ref') });

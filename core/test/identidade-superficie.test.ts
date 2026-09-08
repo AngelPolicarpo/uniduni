@@ -189,9 +189,10 @@ describe('§56.1 ciclo de §3.3 — awaiting-identity → ready com evento', () 
       // §15.3 — standard exige identidade; queries/open passam.
       const recusa = await r.io.request('message.send', { communityId: 'x', channelId: 'y', content: 'oi', mentions: [] });
       assert.equal(recusa.code, 'E_NO_IDENTITY');
-      // Sem identidade a consulta de identidade nem chega ao handler: a classe standard
-      // recusa antes (E_NO_IDENTITY) — não há "nada local" para descrever.
-      assert.equal((await r.io.request('query.identity', {})).code, 'E_NO_IDENTITY');
+      // §15.3/§15.6 — query é open: sem identidade criada, responde null ("nada local"), não erro.
+      const semIdentidade = await r.io.request('query.identity', {});
+      assert.ok(semIdentidade.ok, JSON.stringify(semIdentidade));
+      assert.equal(semIdentidade.data, null);
 
       // Erros da coluna de §15.4, na ordem.
       const ruim = await r.io.request('identity.create', { displayName: 'a', avatarColor: 99 });

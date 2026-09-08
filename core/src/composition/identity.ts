@@ -16,6 +16,7 @@ import { FallbackKeystoreOracle, type KeystoreOracle } from '../l0/keystore/inde
 import { acceptInsecure, hasAcceptedInsecure } from '../l0/keystore/index.ts';
 import type { ManifestDb } from '../l0/manifest/index.ts';
 import { isAvatarColor, checkDisplayName } from '../l1/fold/index.ts';
+import { aeadOpenSeed } from './ports.ts';
 
 /** Presença local de §6.1 — `offline` nunca é escrito; a tabela é fechada. */
 export const PRESENCE_VALUES = ['online', 'idle', 'dnd', 'invisible'] as const;
@@ -281,13 +282,32 @@ export class IdentityService {
       is_host: number;
       left_at: number | null;
     }>;
+    const dk = this.#deps.dataKey();
     const saida: ExportCommunity[] = [];
     for (const r of rows) {
       if (r.left_at !== null) continue;
+      let communitySeed: Buffer | undefined;
+      if (
+        Boolean(r.is_host) &&
+        r.community_seed_enc !== undefined &&
+        r.community_seed_enc !== null &&
+        r.community_seed_nonce !== undefined &&
+        r.community_seed_nonce !== null
+      ) {
+        const seed = aeadOpenSeed(
+          Buffer.from(r.community_seed_enc),
+          Buffer.from(r.community_seed_nonce),
+          dk,
+        );
+        if (seed !== null && seed.length === 32) {
+          communitySeed = seed;
+        }
+      }
       saida.push({
         communityId: r.community_id,
         coreKey: Buffer.from(r.core_key),
         blobsKey: Buffer.from(r.blobs_key),
+        ...(communitySeed !== undefined ? { communitySeed } : {}),
       });
     }
     return saida;
@@ -300,10 +320,17 @@ export class IdentityService {
     const saveFile = this.#deps.saveFile;
     if (saveFile === undefined) return { ok: false, code: 'E_CANCELLED' };
     let bundle: Buffer;
+    const comms = this.exportCommunities();
     try {
-      bundle = this.#deps.manager.exportBundle(passphrase, this.exportCommunities());
+      bundle = this.#deps.manager.exportBundle(passphrase, comms);
     } catch (err) {
       return { ok: false, code: (err as { code?: string }).code ?? 'E_NO_IDENTITY' };
+    } finally {
+      for (const c of comms) {
+        if (c.communitySeed !== undefined) {
+          c.communitySeed.fill(0);
+        }
+      }
     }
     const r = await saveFile({ suggestedName: 'identidade-comunidade.bak', data: bundle });
     if (!r.ok) return { ok: false, code: r.code };

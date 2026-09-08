@@ -171,6 +171,8 @@ describe('§56.4 backup e restauração — export → import ponta a ponta (§5
       // A linha voltou ao manifest e a comunidade reabriu pelo caminho do boot.
       const linha = b.manifest.getCommunity(cid) as Record<string, unknown> | null;
       assert.notEqual(linha, null, 'linha da comunidade não restaurada');
+      assert.equal(linha!['is_host'], 1, 'comunidade hospedada deve permanecer hospedada');
+      assert.ok(linha!['community_seed_enc'] !== null, 'semente da comunidade deve ser restaurada');
     } finally {
       await a.fechar();
       if (b !== null) await b.fechar();
@@ -189,6 +191,9 @@ describe('§56.5 máquina de wipe — executar, falhar e retomar (§18.6)', () =
     lock.acquire();
     fs.mkdirSync(path.join(dir, 'cores'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'cores', 'marcado'), 'x');
+    fs.mkdirSync(path.join(dir, 'a'.repeat(64)), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'a'.repeat(64), 'arquivo.png'), 'blob-data');
+    fs.writeFileSync(path.join(dir, 'keystore-accepted'), 'accepted');
 
     let fechado = 0;
     const r = await executeWipe({
@@ -209,6 +214,8 @@ describe('§56.5 máquina de wipe — executar, falhar e retomar (§18.6)', () =
     assert.equal(fs.existsSync(path.join(dir, 'view.db')), false);
     assert.equal(fs.existsSync(path.join(dir, 'manifest.db')), false);
     assert.equal(fs.existsSync(path.join(dir, 'cores')), false);
+    assert.equal(fs.existsSync(path.join(dir, 'a'.repeat(64))), false, 'blobs devem ser removidos no wipe');
+    assert.equal(fs.existsSync(path.join(dir, 'keystore-accepted')), false, 'keystore-accepted deve ser removido no wipe');
     assert.equal(fs.existsSync(path.join(dir, WIPE_SENTINEL)), false);
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });

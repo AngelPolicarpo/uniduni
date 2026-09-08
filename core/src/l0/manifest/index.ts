@@ -337,7 +337,7 @@ export class ManifestDb {
     addStagingCol('blob_ranges', 'TEXT');
     const version = this.metaGet('manifest_schema_version');
     if (version !== null && Number(version) > Number(MANIFEST_SCHEMA_VERSION)) {
-      throw new Error('manifest schema is ahead of this binary');
+      throw Object.assign(new Error('manifest schema is ahead of this binary'), { code: 'E_SCHEMA_AHEAD' });
     }
     if (version === null) this.metaSet('manifest_schema_version', MANIFEST_SCHEMA_VERSION);
   }
