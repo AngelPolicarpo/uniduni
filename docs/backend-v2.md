@@ -294,9 +294,10 @@ escolhe silenciosamente entre eles — que era a lacuna. As três regras:
    caminhos. Aceitar o modo inseguro **não** é oferecido aqui: ele não recuperaria dado
    nenhum, só apagaria a única cópia da chave.
 
-O aceite de L-2 (`keystore-accepted`) vale para o modo que estava em uso quando foi dado, e
-não é gatilho de degradação futura: um aceite antigo não autoriza abrir em modo inseguro uma
-instalação cuja Data Key está em modo `secure` — a regra 3 vence.
+O aceite de L-2 (`keystore-accepted`) pertence à instalação e vale para o modo que estava
+em uso quando foi dado; `identity.wipe` o remove (§18.6), exigindo novo consentimento explícito
+se a instalação for recriada sem secret store. Um aceite antigo não autoriza abrir em modo
+inseguro uma instalação cuja Data Key está em modo `secure` — a regra 3 vence.
 
 ### 3.3 Ciclo de vida do núcleo
 
@@ -2464,7 +2465,9 @@ Regras:
 
 - Falha em (1) → o main encaminha o argv à instância viva e encerra silenciosamente.
 - Falha em (2) → `E_CORE_ALREADY_RUNNING` com o PID; **lock órfão** (PID inexistente ou de
-  outro `install_id`) é quebrado automaticamente, com log `lock.stolen`.
+  outro `install_id` sem saída limpa registrada) é quebrado automaticamente, com log `lock.stolen`.
+  A saída voluntária (`release`) registra a liberação no arquivo antes de fechar o descritor,
+  distinguindo o encerramento normal de um processo terminado abruptamente.
 - **Emenda de 2026-09-05 — não há etapa (2) sem `flock`/`LockFileEx`.** A exclusão é do
   sistema operacional; comparar o PID gravado no arquivo **não** é a etapa (2) e não pode
   substituí-la, porque entre ler o arquivo e escrevê-lo cabem duas instâncias inteiras — a
@@ -6010,13 +6013,15 @@ none → requested → swarm-down → cores-closed → view-deleted → manifest
   processo, e sai pelo caminho normal de `stopped`. Liberar no meio do boot deixaria o
   núcleo rodando a sessão inteira sem a exclusão de §10.8.
 - Toda etapa que apaga arquivo **fecha o descritor antes de apagar** e **verifica** que o
-  arquivo sumiu; falha em remover é `E_WIPE_INCOMPLETE{stage}`, nunca sucesso silencioso.
-  Isto não é detalhe de implementação: em Windows o SQLite abre o banco sem
-  `FILE_SHARE_DELETE`, então apagar um `manifest.db` ainda aberto **falha**, e engolir esse
-  erro faz o `wipe` reportar sucesso deixando `communities.core_key` e
-  `invite_secrets.secret` no disco.
+  arquivo sumiu (aplicável a `manifest.db`, `view.db` e `cores/`); falha em remover é
+  `E_WIPE_INCOMPLETE{stage}`, nunca sucesso silencioso. Isto não é detalhe de implementação: em
+  Windows o SQLite abre o banco sem `FILE_SHARE_DELETE`, então apagar um `manifest.db` ainda
+  aberto **falha**, e engolir esse erro faz o `wipe` reportar sucesso deixando
+  `communities.core_key` e `invite_secrets.secret` no disco.
 - `key-wiped` zera **também** a Data Key do processo (§3.2 item 4), e não só a semente e a
-  chave privada de identidade: é ela que protege as sementes de comunidade (§5.3).
+  chave privada de identidade: é ela que protege as sementes de comunidade (§5.3). Remove também
+  o arquivo de consentimento `keystore-accepted` (L-2) e os diretórios locais de anexos
+  descriptografados (`<dataDir>/<blobsCoreKeyHex>/`).
 - Erros possíveis, todos nomeados: `E_WIPE_INCOMPLETE{stage}` com caminho de retentativa na
   UI. Nunca "sem erro possível".
 - Classe `main-confirmed` (§15.3): o renderer sozinho não consegue disparar.
