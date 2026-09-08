@@ -1220,6 +1220,7 @@ export class CoreRuntime {
     const seedPort = manifestCommunitySeedPort(deps.manifest, deps.dataKey);
     const seed = isHost ? seedPort(communityId) : null;
     const keyPair = seed === null ? null : deriveCommunityKeyPairs(seed).log;
+    if (seed !== null) seed.fill(0);
 
     const core =
       deps.openCore !== undefined
@@ -1308,6 +1309,11 @@ export class CoreRuntime {
         }
       } catch {
         // Sem core de blobs local, `blob.stage` recusa (`E_NO_BLOBS_KEY`) e o resto segue.
+      } finally {
+        if (sementeGravada !== null && sementeGravada !== sementeBlobs) {
+          sementeGravada.fill(0);
+        }
+        sementeBlobs.fill(0);
       }
     }
 
@@ -1985,6 +1991,7 @@ export async function bootCore(deps: BootDeps): Promise<CoreRuntime> {
             coreKey: blobs.publicKey,
             secretSeedEnc: aeadSealPacked(blobs.seed, deps.dataKey),
           });
+          blobs.seed.fill(0);
         }
       },
       aoFalhar: (info) => deps.manifest.deleteCommunity(info.communityId),

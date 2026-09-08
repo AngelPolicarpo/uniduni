@@ -75,7 +75,7 @@ export function identitySeedOf(identity: { readonly secretKey: Buffer }): Buffer
   if (identity.secretKey.length !== sodium.crypto_sign_SECRETKEYBYTES) {
     throw new Error('Chave secreta de identidade com tamanho inesperado');
   }
-  return identity.secretKey.subarray(0, sodium.crypto_sign_SEEDBYTES);
+  return Buffer.from(identity.secretKey.subarray(0, sodium.crypto_sign_SEEDBYTES));
 }
 
 /**

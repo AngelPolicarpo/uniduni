@@ -248,9 +248,15 @@ async function boot(): Promise<void> {
     wipeIdentity: () => {
       // Material legado fora do manifest (fase 1 gravava arquivos soltos).
       for (const nome of ['identity.enc', 'datakey.wrapped', 'identity.meta.json']) {
-        try {
-          fs.rmSync(path.join(dataDir, nome), { force: true });
-        } catch {}
+        const p = path.join(dataDir, nome);
+        if (fs.existsSync(p)) {
+          try {
+            fs.rmSync(p, { force: true });
+          } catch {}
+          if (fs.existsSync(p)) {
+            throw Object.assign(new Error(`não foi possível remover ${p}`), { code: 'E_WIPE_INCOMPLETE' });
+          }
+        }
       }
     },
   });

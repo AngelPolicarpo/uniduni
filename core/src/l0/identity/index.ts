@@ -92,14 +92,19 @@ function aeadOpen(box: Buffer, key: Buffer): Buffer {
 
 function keyFromPassphrase(passphrase: string, salt: Buffer): Buffer {
   const key = Buffer.alloc(KEYBYTES);
-  sodium.crypto_pwhash(
-    key,
-    Buffer.from(passphrase, 'utf8'),
-    salt,
-    sodium.crypto_pwhash_OPSLIMIT_MODERATE,
-    sodium.crypto_pwhash_MEMLIMIT_MODERATE,
-    sodium.crypto_pwhash_ALG_DEFAULT,
-  );
+  const passBuf = Buffer.from(passphrase, 'utf8');
+  try {
+    sodium.crypto_pwhash(
+      key,
+      passBuf,
+      salt,
+      sodium.crypto_pwhash_OPSLIMIT_MODERATE,
+      sodium.crypto_pwhash_MEMLIMIT_MODERATE,
+      sodium.crypto_pwhash_ALG_DEFAULT,
+    );
+  } finally {
+    passBuf.fill(0);
+  }
   return key;
 }
 
@@ -638,18 +643,17 @@ export class IdentityManager {
         this.#manifest.raw.prepare('DELETE FROM meta WHERE key = ?').run('identity_meta');
       } catch {}
     }
-    try {
-      const keyPath = path.join(this.#dataDir, 'identity.enc');
-      if (fs.existsSync(keyPath)) fs.rmSync(keyPath, { force: true });
-    } catch {}
-    try {
-      const dataKeyPath = path.join(this.#dataDir, 'datakey.wrapped');
-      if (fs.existsSync(dataKeyPath)) fs.rmSync(dataKeyPath, { force: true });
-    } catch {}
-    try {
-      const metaPath = path.join(this.#dataDir, 'identity.meta.json');
-      if (fs.existsSync(metaPath)) fs.rmSync(metaPath, { force: true });
-    } catch {}
+    for (const nome of ['identity.enc', 'datakey.wrapped', 'identity.meta.json']) {
+      const p = path.join(this.#dataDir, nome);
+      if (fs.existsSync(p)) {
+        try {
+          fs.rmSync(p, { force: true });
+        } catch {}
+        if (fs.existsSync(p)) {
+          throw Object.assign(new Error(`não foi possível remover ${p}`), { code: 'E_WIPE_INCOMPLETE' });
+        }
+      }
+    }
   }
 
   #initKeys(seed: Buffer): void {

@@ -91,7 +91,8 @@ function handleDeepLinkRaw(raw: string): void {
  * processo que a pediu. A emenda de 2026-09-05 em A13(6) fixa isso por escrito.
  */
 if (!app.requestSingleInstanceLock()) {
-  app.quit();
+  app.exit(0);
+  process.exit(0);
 } else {
   app.on('second-instance', (_e, argv) => {
     const link = argv.find((a) => a.startsWith('comunidadep2p://'));

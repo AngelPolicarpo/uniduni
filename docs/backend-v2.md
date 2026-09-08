@@ -299,6 +299,17 @@ em uso quando foi dado; `identity.wipe` o remove (§18.6), exigindo novo consent
 se a instalação for recriada sem secret store. Um aceite antigo não autoriza abrir em modo
 inseguro uma instalação cuja Data Key está em modo `secure` — a regra 3 vence.
 
+**Emenda de 2026-09-08 — fronteira de strings e zeração de sementes derivadas em memória.**
+O item 4 exige zerar o `Buffer` da Data Key (`buf.fill(0)`). Na fronteira IPC-M com o Electron,
+o segredo trafega em base64 e interage com `safeStorage.encryptString`/`decryptString`; primitivas
+de string na engine V8 são imutáveis e gerenciadas pelo garbage collector, não admitindo
+`buf.fill(0)`. A obrigação de zeração imediata aplica-se a todo `Buffer` instanciado a partir
+dessas strings e a todas as sementes intermediárias em memória (`communitySeed`, `memberBlobsSeed`
+e sementes de derivação de pares de chaves no `boot.ts` e `corestore`). Nenhuma função pode
+repassar fatias mutáveis (`subarray`) da chave privada viva (`secretKey`) como semente, exigindo-se
+cópia desvinculada (`Buffer.from`) para isolar o ciclo de vida e evitar corrupção por zeração
+concorrente.
+
 ### 3.3 Ciclo de vida do núcleo
 
 | Fase | O que acontece | Falha e reação |
@@ -2463,7 +2474,7 @@ ordem exata, sempre:
 
 Regras:
 
-- Falha em (1) → o main encaminha o argv à instância viva e encerra silenciosamente.
+- Falha em (1) → o main encaminha o argv à instância viva e encerra silenciosamente de forma síncrona e imediata (`app.exit(0)` / `process.exit(0)`), sem prosseguir com a execução do script de topo de módulo nem acionar ganchos tardios de encerramento.
 - Falha em (2) → `E_CORE_ALREADY_RUNNING` com o PID; **lock órfão** (PID inexistente ou de
   outro `install_id` sem saída limpa registrada) é quebrado automaticamente, com log `lock.stolen`.
   A saída voluntária (`release`) registra a liberação no arquivo antes de fechar o descritor,
@@ -6025,6 +6036,14 @@ none → requested → swarm-down → cores-closed → view-deleted → manifest
 - Erros possíveis, todos nomeados: `E_WIPE_INCOMPLETE{stage}` com caminho de retentativa na
   UI. Nunca "sem erro possível".
 - Classe `main-confirmed` (§15.3): o renderer sozinho não consegue disparar.
+- **Emenda de 2026-09-08 — verificação compulsória em todos os artefatos de persistência e em ambos os ramos.**
+  A exigência de verificação ("falha em remover é `E_WIPE_INCOMPLETE`, nunca sucesso silencioso")
+  abrange **todos** os artefatos físicos que o wipe remove: os bancos (`manifest.db`, `view.db`),
+  os logs de comunidades (`cores/`), os diretórios de anexos locais e staging (`<dataDir>/<blobsCoreKeyHex>/`,
+  `blobs/`, `staging/`) e o arquivo de consentimento `keystore-accepted`. Se qualquer arquivo ou
+  diretório sobreviver após a tentativa de remoção (e.g. bloqueio de descritor em Windows), a
+  operação lança `E_WIPE_INCOMPLETE` imediatamente. Esta regra é simétrica e obrigatória tanto no
+  fluxo direto de `executeWipe` quanto no ramo de retomada pós-sentinela de `resumePendingWipe`.
 
 ### 18.7 Saída do host
 

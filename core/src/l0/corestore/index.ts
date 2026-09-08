@@ -281,6 +281,7 @@ export function deriveCommunityKeyPairs(communitySeed: Buffer): {
     const publicKey = Buffer.alloc(sodium.crypto_sign_PUBLICKEYBYTES);
     const secretKey = Buffer.alloc(sodium.crypto_sign_SECRETKEYBYTES);
     sodium.crypto_sign_seed_keypair(publicKey, secretKey, seed);
+    seed.fill(0);
     return { publicKey, secretKey };
   };
   return { log: derive('ns/log/1'), blobs: derive('ns/blobs/1') };

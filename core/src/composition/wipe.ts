@@ -83,17 +83,26 @@ function fecharEmSilencio(o: { close(): void } | null | undefined): void {
  * e diretórios temporários de anexo residuais em disco.
  */
 function apagarBlobs(dataDir: string): void {
+  let entries: fs.Dirent[] = [];
   try {
-    const entries = fs.readdirSync(dataDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (
-        entry.isDirectory() &&
-        (/^[0-9a-f]{64}$/i.test(entry.name) || entry.name === 'blobs' || entry.name === 'staging')
-      ) {
-        fs.rmSync(path.join(dataDir, entry.name), { recursive: true, force: true });
+    entries = fs.readdirSync(dataDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (
+      entry.isDirectory() &&
+      (/^[0-9a-f]{64}$/i.test(entry.name) || entry.name === 'blobs' || entry.name === 'staging')
+    ) {
+      const alvo = path.join(dataDir, entry.name);
+      try {
+        fs.rmSync(alvo, { recursive: true, force: true });
+      } catch {}
+      if (fs.existsSync(alvo)) {
+        throw Object.assign(new Error(`não foi possível remover ${alvo}`), { code: 'E_WIPE_INCOMPLETE' });
       }
     }
-  } catch {}
+  }
 }
 
 /** Executa UMA etapa do switch — o mesmo corpo para executar e para retomar. */
@@ -138,9 +147,17 @@ async function executarEtapa(etapa: WipeStage, deps: WipeResourceDeps): Promise<
     case 'key-wiped':
       deps.wipeIdentity();
       deps.wipeDataKey?.();
-      try {
-        fs.rmSync(path.join(deps.dataDir, 'keystore-accepted'), { force: true });
-      } catch {}
+      {
+        const keystoreAccepted = path.join(deps.dataDir, 'keystore-accepted');
+        if (fs.existsSync(keystoreAccepted)) {
+          try {
+            fs.rmSync(keystoreAccepted, { force: true });
+          } catch {}
+          if (fs.existsSync(keystoreAccepted)) {
+            throw Object.assign(new Error(`não foi possível remover ${keystoreAccepted}`), { code: 'E_WIPE_INCOMPLETE' });
+          }
+        }
+      }
       break;
     case 'done':
       try {
@@ -219,15 +236,27 @@ export async function resumePendingWipe(
   if (temSentinela) {
     apagarBanco(path.join(deps.dataDir, 'view.db'));
     apagarBanco(path.join(deps.dataDir, 'manifest.db'));
-    try {
-      await fs.promises.rm(path.join(deps.dataDir, 'cores'), { recursive: true, force: true });
-    } catch {}
+    const coresDir = path.join(deps.dataDir, 'cores');
+    if (fs.existsSync(coresDir)) {
+      try {
+        await fs.promises.rm(coresDir, { recursive: true, force: true });
+      } catch {}
+      if (fs.existsSync(coresDir)) {
+        throw Object.assign(new Error(`não foi possível remover ${coresDir}`), { code: 'E_WIPE_INCOMPLETE' });
+      }
+    }
     apagarBlobs(deps.dataDir);
     deps.wipeIdentity();
     deps.wipeDataKey?.();
-    try {
-      fs.rmSync(path.join(deps.dataDir, 'keystore-accepted'), { force: true });
-    } catch {}
+    const keystoreAccepted = path.join(deps.dataDir, 'keystore-accepted');
+    if (fs.existsSync(keystoreAccepted)) {
+      try {
+        fs.rmSync(keystoreAccepted, { force: true });
+      } catch {}
+      if (fs.existsSync(keystoreAccepted)) {
+        throw Object.assign(new Error(`não foi possível remover ${keystoreAccepted}`), { code: 'E_WIPE_INCOMPLETE' });
+      }
+    }
     try {
       fs.rmSync(sentinela, { force: true });
     } catch {}
