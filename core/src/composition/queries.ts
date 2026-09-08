@@ -159,14 +159,17 @@ function recusar(code: string): never {
 
 // ─── Cursor de §15.6.1 — `base64url({seq,id})`, opaco ───────────────────────────────────
 
-export function encodeCursor(c: { readonly seq: number; readonly id: string }): string {
-  return Buffer.from(JSON.stringify({ seq: c.seq, id: c.id }), 'utf8').toString('base64url');
+export function encodeCursor(c: { readonly seq: number; readonly id: string; readonly scope?: string }): string {
+  return Buffer.from(JSON.stringify({ seq: c.seq, id: c.id, ...(c.scope !== undefined ? { scope: c.scope } : {}) }), 'utf8').toString('base64url');
 }
 
-export function decodeCursor(cursor: string): { readonly seq: number; readonly id: string } {
+export function decodeCursor(cursor: string, expectedScope?: string): { readonly seq: number; readonly id: string } {
   try {
-    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { seq?: unknown; id?: unknown };
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { seq?: unknown; id?: unknown; scope?: unknown };
     if (typeof parsed.seq !== 'number' || !Number.isInteger(parsed.seq) || typeof parsed.id !== 'string' || parsed.id.length === 0) {
+      recusar('E_BAD_CURSOR');
+    }
+    if (expectedScope !== undefined && typeof parsed.scope === 'string' && parsed.scope !== expectedScope) {
       recusar('E_BAD_CURSOR');
     }
     return { seq: parsed.seq, id: parsed.id };

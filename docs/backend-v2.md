@@ -2703,6 +2703,8 @@ incompatibilidade de protocolo, corrupção ou violação do escalonador e deixa
 como `failed` para diagnóstico, sem reenvio automático de um envelope que o host já recusará.
 Esse estado não é elegível para `message.retry`; só uma correção de compatibilidade ou
 reconstrução autorizada da fila pode removê-lo, sem reassinar silenciosamente a operação.
+Por ser terminal e não-reenviável, um item em `failed` com `E_AUTHOR_SEQ_OVERTAKEN` não
+bloqueia a fila (`ready()`) para itens enfileirados posteriores no mesmo canal.
 
 Regras normativas que decorrem:
 
@@ -3346,7 +3348,7 @@ abriu do `member_blobs_core.secret_seed_enc` — anuncia desde que a comunidade 
 quer algum anexo procura ao pedir `blob.download`. A replicação em si é do hypercore, no
 mesmo mux das comunidades (§16.1), uma vez por `(mux, core)`.
 
-`swarm.join(coreKey)` e o join dos cores de blobs relevantes são feitos explicitamente:
+`swarm.join(discoveryKey(coreKey))` e o join dos cores de blobs relevantes são feitos explicitamente:
 **estar conectado a um par não é estar replicando um core** — precisa ser código, não
 suposição.
 

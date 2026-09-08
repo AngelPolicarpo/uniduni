@@ -253,16 +253,11 @@ export class CommunityClient {
       blocked: false,
       state: lagState,
     });
-    // swarm join do tópico do log (§14.1)
-    const topicHex = handle.core.key.toString('hex');
-    this.#swarm.join(topicHex, { topicHex, kind: 'community-log', communityId: handle.communityId });
+    // §14.1 — O transporte é o único dono do anúncio/descoberta no swarm via discoveryKey.
+    // O cliente gerencia o estado de replicação e lag, sem duplicar joins no swarm com a chave crua.
   }
 
   removeCommunity(communityId: string): void {
-    const entry = this.#communities.get(communityId);
-    if (entry === undefined) return;
-    const topicHex = entry.handle.core.key.toString('hex');
-    this.#swarm.leave(topicHex);
     this.#communities.delete(communityId);
   }
 

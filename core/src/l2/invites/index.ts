@@ -453,6 +453,14 @@ export class InviteManager {
     return this.#preMemberConnections;
   }
 
+  incrementPreMemberConnections(): void {
+    this.#preMemberConnections++;
+  }
+
+  decrementPreMemberConnections(): void {
+    if (this.#preMemberConnections > 0) this.#preMemberConnections--;
+  }
+
   get challengeStore(): ChallengeStore {
     return this.#challenges;
   }

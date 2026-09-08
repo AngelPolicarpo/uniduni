@@ -112,7 +112,7 @@ export class PresenceManager {
     const community = this.#ensurePresenceMap(args.communityId);
     const existing = community.get(args.identityKey);
     if (existing !== undefined) {
-      const elapsed = now - existing.lastPublishAt;
+      const elapsed = Math.max(0, now - existing.lastPublishAt);
       if (elapsed < RATE_LIMIT_PRESENCE_MS) {
         return { ok: false, code: 'E_RATE_LIMITED', retryAfterMs: RATE_LIMIT_PRESENCE_MS - elapsed };
       }
@@ -310,7 +310,12 @@ export class PresenceManager {
   ingestPresence(args: { readonly communityId: string; readonly identityKey: string; readonly status: PresenceStatus; readonly at: number }): void {
     if (args.status === 'invisible') return;
     const map = this.#ensurePresenceMap(args.communityId);
-    map.set(args.identityKey, { status: args.status, lastSeenAt: args.at, lastPublishAt: args.at });
+    const existing = map.get(args.identityKey);
+    map.set(args.identityKey, {
+      status: args.status,
+      lastSeenAt: args.at,
+      lastPublishAt: existing !== undefined ? existing.lastPublishAt : args.at,
+    });
   }
 
   ingestTyping(args: { readonly communityId: string; readonly identityKey: string; readonly channelId: string; readonly until: number }): void {

@@ -375,6 +375,10 @@ export class Outbox {
           // Não elegível para `message.retry` (§11.6) — terminal para a UI.
           this.#emitFailed(item, 'E_AUTHOR_SEQ_OVERTAKEN', true);
         }
+        if (now - item.created_at > this.#maxAgeMs && item.acked_seq === null) {
+          this.#drop(item, 'expired');
+          expired++;
+        }
         continue;
       }
 

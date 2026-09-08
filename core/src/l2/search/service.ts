@@ -279,9 +279,12 @@ export class SearchService {
       ' c.name AS channel_name, m.author_key AS author_key, m.content AS content,' +
       ' m.author_ts AS author_ts, m.host_ts AS host_ts, m.clock_skewed AS clock_skewed,' +
       ' m.edited_at AS edited_at, m.pinned AS pinned, m.thread_id AS thread_id' +
-      ' FROM messages_fts' +
-      ' JOIN messages m ON m.rowid = messages_fts.rowid' +
-      ' JOIN channels c ON c.community_id = m.community_id AND c.id = m.channel_id' +
+      (match !== null
+        ? ' FROM messages_fts' +
+          ' JOIN messages m ON m.rowid = messages_fts.rowid' +
+          ' JOIN channels c ON c.community_id = m.community_id AND c.id = m.channel_id'
+        : ' FROM messages m' +
+          ' JOIN channels c ON c.community_id = m.community_id AND c.id = m.channel_id') +
       ` WHERE ${where.join(' AND ')}` +
       // Ordenação de §23.2: recência, não relevância.
       ' ORDER BY m.seq DESC LIMIT ?';

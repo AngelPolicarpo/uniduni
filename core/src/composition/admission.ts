@@ -491,9 +491,11 @@ export class AdmissionService {
     const orcamento = this.#deps.swarm.budget.preMemberBudget;
     if (ocupados.has(info.peerKeyHex) === false && ocupados.size >= orcamento) return false;
     ocupados.add(info.peerKeyHex);
+    manager.incrementPreMemberConnections();
     info.transport.onDown(() => {
       const atual = this.#ocupacao.get(info.topicHex);
       if (atual !== undefined) atual.delete(info.peerKeyHex);
+      manager.decrementPreMemberConnections();
     });
 
     const server = new RpcServer({ protocol: 'admission', transport: gateLimitado(info.transport, info.peerKeyHex, info.address, this.#limiter) });

@@ -151,8 +151,10 @@ export class HostStatusTracker {
    */
   channelAttached(communityId: string): void {
     const d = this.#dinamico.get(communityId);
-    if (d === undefined || this.#atual(communityId) !== null) return;
-    if (d.estado === 'unknown' || d.estado === 'offline' || d.estado === 'reconnecting') {
+    if (d === undefined) return;
+    const atual = this.#atual(communityId);
+    if (atual !== null && atual !== 'unauthorized') return;
+    if (d.estado === 'unknown' || d.estado === 'offline' || d.estado === 'reconnecting' || atual === 'unauthorized') {
       this.#mudar(communityId, 'connecting');
     }
   }
@@ -168,24 +170,22 @@ export class HostStatusTracker {
     }
     if (d.estado === 'connecting') {
       d.attempts += 1;
-      // Vindo de `connecting`, o que decide é a história: queda após contato observado é
-      // reconexão em curso — `offline` diria que nunca houve host.
       const teveContato = this.#deps.manifest.getLastHostSeenAt(communityId) !== null;
       this.#mudar(communityId, teveContato ? 'reconnecting' : 'offline');
     }
   }
 
   /**
-   * §19.4 — uma falha de `hello` é uma falha de contato, em qualquer estado. O `onDown`
-   * cobre a queda que o transporte PERCEBE; a conexão meio aberta (o cabo morreu sem FIN
-   * nenhum) não a percebe, e o estado ficava em `connecting` para sempre — o hello morria
-   * no teto de request a cada cadência, sem nunca virar veredito. Duas falhas consecutivas
-   * são o mesmo critério de §19.4 que vale para a submissão: sem contato anterior é
-   * `offline`, com contato é `reconnecting`.
+   * Falha observada no ping `hello` de §16.3/§22.1.
+   *
+   * Duas falhas consecutivas são o critério que vale para conectar ou reconectar:
+   * sem contato anterior é `offline`, com contato é `reconnecting`. Em `online`,
+   * uma conexão meio-aberta (half-open) sem FIN/RST é detectada por este canal
+   * e transiciona para `reconnecting`.
    */
   noteHelloFailure(communityId: string): void {
     const d = this.#dinamico.get(communityId);
-    if (d === undefined || d.estado !== 'connecting') return;
+    if (d === undefined || (d.estado !== 'connecting' && d.estado !== 'online')) return;
     d.attempts += 1;
     if (d.attempts < 2) return;
     const teveContato = this.#deps.manifest.getLastHostSeenAt(communityId) !== null;
@@ -228,7 +228,10 @@ export class HostStatusTracker {
     if (d === undefined || this.#parado) return;
     // Contato renovado mantém a marca do LS fresca mesmo sem mudança de estado.
     this.#deps.manifest.setLastHostSeenAt(communityId, this.#deps.now());
-    if (d.estado === 'online') return;
+    if (d.estado === 'online') {
+      d.attempts = 0;
+      return;
+    }
     const perdas = d.attempts;
     d.attempts = 0;
     this.#mudar(communityId, 'online');

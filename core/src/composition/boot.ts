@@ -785,7 +785,7 @@ export class CoreRuntime {
     // §16.3 fluxo obrigatório — hello ANTES de qualquer outro método na conexão nova. A
     // queda anterior falhou os pendentes e esvaziou a fila, então este frame sai primeiro;
     // o loop de HELLO_INTERVAL_MS renova daí em diante.
-    void this.#enviarHello(a.communityId).catch(() => {});
+    void this.#enviarHello(a.communityId, true).catch(() => {});
   }
 
   /**
@@ -800,12 +800,12 @@ export class CoreRuntime {
     }
   }
 
-  async #enviarHello(communityId: string): Promise<void> {
+  async #enviarHello(communityId: string, force = false): Promise<void> {
     const c = this.#open.get(communityId);
     if (c === undefined || c.isHost || c.rpc === null) return;
     // Sem canal vivo não há tentativa real (§11.8): efêmero não enfileira no RpcClient.
     const estado = this.hostStatus?.statusOf(communityId) ?? 'unknown';
-    if (estado !== 'online' && estado !== 'connecting') return;
+    if (!force && estado !== 'online' && estado !== 'connecting') return;
     const corpo = new Uint8Array(
       Buffer.from(JSON.stringify({ clientVersion: this.#deps.foldBuildId, opVersion: OP_VERSION }), 'utf8'),
     );
@@ -838,6 +838,7 @@ export class CoreRuntime {
       return;
     }
     this.client.markHello(communityId, this.#now());
+    this.client.markUnauthorized(communityId, false);
     // O host RESPONDEU: é contato observado, com todas as consequências de §11.8.
     this.hostStatus?.markSeen(communityId);
   }
@@ -2319,7 +2320,15 @@ export async function bootCore(deps: BootDeps): Promise<CoreRuntime> {
         rotacionarLogs(path.join(deps.dataDir, 'logs'), now());
       },
       'succession.check': () => {
-        for (const c of runtime.communities()) succession.checkEligibility(c.communityId);
+        for (const c of runtime.communities()) {
+          const eligible = succession.checkEligibility(c.communityId);
+          if (eligible === true) {
+            fanout.emit(
+              { topic: 'community.successionEligible', data: { communityId: c.communityId } },
+              { communityId: c.communityId },
+            );
+          }
+        }
       },
     },
   });
@@ -2374,10 +2383,9 @@ export async function bootCore(deps: BootDeps): Promise<CoreRuntime> {
           c.presence.tick();
         }
       },
-      // §17.6 — TTL 5 s do typing, varrido por segundo no host.
+      // §17.6 — TTL 5 s do typing, varrido por segundo no host e no membro (autolimpeza).
       'typing.expire': () => {
         for (const c of runtime.communities()) {
-          if (!c.isHost) continue;
           c.presence.expireTyping();
         }
       },

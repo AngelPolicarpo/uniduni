@@ -434,6 +434,10 @@ export class ManifestDb {
     for (const row of rows) {
       const key = channelKey(row.channel_id);
       if (occupied.has(key) || blocked.has(key)) continue;
+      // §11.6 terminal: não elegível para retry e ultrapassado pelo watermark — não bloqueia a fila do canal.
+      if (row.state === 'failed' && row.last_error === 'E_AUTHOR_SEQ_OVERTAKEN') {
+        continue;
+      }
       if (row.state !== 'queued' || !readyIds.has(row.local_seq)) {
         blocked.add(key);
         continue;
