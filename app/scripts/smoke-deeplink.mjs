@@ -37,6 +37,8 @@ const CHAVE64 = 'A'.repeat(64);
 const casos = [
   // Aceita: as três rotas de §3.5 + B64.
   ['comunidadep2p://join/0123456789ABCDEF', { route: 'join', code: '0123456789ABCDEF' }],
+  // A caixa do código de convite é tolerada (Crockford case-insensitive, §15.4), e o código segue em maiúsculas.
+  ['comunidadep2p://join/0123456789abcdef', { route: 'join', code: '0123456789ABCDEF' }],
   [`comunidadep2p://m/${'A'.repeat(86)}`, { route: 'message', ref: 'A'.repeat(86) }],
   [`comunidadep2p://u/${CHAVE64}`, { route: 'user', key: CHAVE64.toLowerCase() }],
   // A caixa da URL é tolerada na rota de pessoa, e a chave segue em minúsculas.
@@ -45,7 +47,6 @@ const casos = [
   // Recusa: gramática fechada quer dizer que tudo o mais é `null`.
   ['comunidadep2p://join/invalid-short', null],
   ['comunidadep2p://join/0123456789ABCDEFG', null], // 17 caracteres
-  ['comunidadep2p://join/0123456789abcdef', null], // Crockford é maiúsculo
   ['comunidadep2p://join/0123456789ABCDEI', null], // `I` não existe em Crockford
   [`comunidadep2p://u/${'A'.repeat(63)}`, null],
   [`comunidadep2p://u/${'Z'.repeat(64)}`, null], // fora do alfabeto hexadecimal

@@ -95,4 +95,20 @@ describe("montarImpacto", () => {
     expect(r[0]?.inCall).toBe(5);
     expect(r[0]?.online).toBe(2);
   });
+
+  it("comunidade presente no núcleo mas ausente da lista local entra no impacto se houver atividade", () => {
+    const doNucleo = new Map([
+      ["c-desconhecida", { name: "Fantasma", onlineCount: 2, inCallCount: 0, pendingReplication: 1 }],
+    ]);
+
+    const r = montarImpacto({
+      communities: [],
+      doNucleo,
+      ...SEM_VOZ,
+    });
+    expect(r).toHaveLength(1);
+    expect(r[0]?.community.name).toBe("Fantasma");
+    expect(r[0]?.online).toBe(2);
+    expect(r[0]?.pendingReplication).toBe(1);
+  });
 });

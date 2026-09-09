@@ -72,7 +72,9 @@ export function CommunitySettings({ community, onClose }: CommunitySettingsProps
           {canManageCommunity && (
             <CommunityIdentitySection community={community} semHost={semHost} />
           )}
-          {canInvite && <CommunityInvitesSection community={community} />}
+          {canInvite && (
+            <CommunityInvitesSection community={community} semHost={semHost} />
+          )}
           <CommunityDangerZone
             community={community}
             semHost={semHost}

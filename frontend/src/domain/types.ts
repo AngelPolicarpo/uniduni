@@ -311,7 +311,9 @@ export type InvitePreview =
   | { status: "ok"; community: Community; invitedBy: Member }
   | { status: "already-member"; community: Community }
   | { status: "banned"; communityName: string }
-  | { status: "invalid" };
+  | { status: "invalid" }
+  | { status: "ended"; communityName: string }
+  | { status: "unreachable"; hint?: string };
 
 /* ─── Busca (§23.1) — resultados de `query.search`, já adaptados ──────────── */
 

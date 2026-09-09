@@ -27,6 +27,8 @@ export interface HostedImpact {
 }
 
 interface LinhaDeImpacto {
+  communityId?: string;
+  name?: string;
   onlineCount: number;
   inCallCount: number;
   pendingReplication: number;
@@ -150,7 +152,10 @@ export function montarImpacto(args: {
 }): HostedImpact[] {
   const { communities, doNucleo, euId, voiceCommunityId, outrosNaChamada } = args;
   const impact: HostedImpact[] = [];
+  const comunidadesConhecidas = new Set<string>();
+
   for (const community of communities) {
+    comunidadesConhecidas.add(community.id);
     if (!community.isHostedByMe) continue;
 
     const nucleo = doNucleo?.get(community.id);
@@ -172,6 +177,34 @@ export function montarImpacto(args: {
       impact.push({ community, online, inCall, pendingReplication });
     }
   }
+
+  // Defensiva contra descompasso de store local: se o núcleo informa impacto de uma comunidade
+  // hospedada que ainda não consta na lista local, preservamos a informação do núcleo.
+  if (doNucleo !== null) {
+    for (const [cid, nucleo] of doNucleo) {
+      if (comunidadesConhecidas.has(cid)) continue;
+      if (nucleo.onlineCount > 0 || nucleo.inCallCount > 0 || nucleo.pendingReplication > 0) {
+        impact.push({
+          community: {
+            id: cid,
+            name: nucleo.name ?? "Comunidade",
+            iconColor: "accent",
+            hostPeerId: "",
+            isHostedByMe: true,
+            createdAt: "",
+            memberCount: nucleo.onlineCount,
+            categoryIds: [],
+            roleIds: [],
+            connectionHealth: { hostStatus: "online" },
+          },
+          online: nucleo.onlineCount,
+          inCall: nucleo.inCallCount,
+          pendingReplication: nucleo.pendingReplication,
+        });
+      }
+    }
+  }
+
   return impact;
 }
 

@@ -100,7 +100,7 @@ function CommunityGlyph({
   );
 }
 
-function PreviewSkeleton() {
+function PreviewSkeleton({ onCancel }: { onCancel?: () => void }) {
   return (
     <>
       <div className="flex items-center gap-4 rounded-md border border-border-default bg-surface-sidebar p-4">
@@ -112,6 +112,14 @@ function PreviewSkeleton() {
         </div>
       </div>
       <p className="text-meta text-text-tertiary">{RESOLVENDO_HINT}</p>
+      {onCancel && (
+        <div className="mt-4 flex justify-end">
+          {/* §16.1 — sair da espera é sempre possível (30 s). */}
+          <Button variant="secondary" size="lg" onClick={onCancel}>
+            Cancelar
+          </Button>
+        </div>
+      )}
     </>
   );
 }
@@ -225,7 +233,15 @@ export function JoinCommunityOverlay({ layout }: JoinCommunityOverlayProps) {
       const r = await api.inviteResolve(code);
       if (vivo()) setPreview(r);
     } catch (e) {
-      if (vivo()) setErro(falhaDe(e));
+      const falha = falhaDe(e);
+      const desfecho = desfechoDaRecusa(falha.codigo, null);
+      if (vivo()) {
+        if (desfecho !== null) {
+          setPreview(desfecho);
+        } else {
+          setErro(falha);
+        }
+      }
     } finally {
       if (vivo()) setResolvendo(false);
     }
@@ -332,6 +348,7 @@ export function JoinCommunityOverlay({ layout }: JoinCommunityOverlayProps) {
         onJoin={() => void handleJoin()}
         onGoTo={goToCommunity}
         onCancel={handleClose}
+        onBack={fromLink ? undefined : () => { setStep("input"); setErro(null); }}
       />
     );
 
@@ -339,7 +356,7 @@ export function JoinCommunityOverlay({ layout }: JoinCommunityOverlayProps) {
   // preview ocupa a tela inteira em vez de flutuar sobre o vazio (§7, 0.3).
   if (layout === "fullscreen") {
     return (
-      <FullscreenInvite title="Convite para uma comunidade">
+      <FullscreenInvite title="Convite para uma comunidade" onClose={handleClose}>
         {body}
       </FullscreenInvite>
     );
@@ -360,10 +377,21 @@ export function JoinCommunityOverlay({ layout }: JoinCommunityOverlayProps) {
 function FullscreenInvite({
   title,
   children,
+  onClose,
 }: {
   title: string;
   children: ReactNode;
+  onClose?: () => void;
 }) {
+  useEffect(() => {
+    if (!onClose) return;
+    function onKeyDown(ev: KeyboardEvent) {
+      if (ev.key === "Escape") onClose?.();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   return (
     <main className="flex min-h-full items-center justify-center bg-surface-app px-4 py-8 tablet:px-8">
       <div className="w-full max-w-[440px]">
@@ -389,6 +417,7 @@ function PreviewCard({
   onJoin,
   onGoTo,
   onCancel,
+  onBack,
 }: {
   preview: InvitePreview | null;
   resolvendo: boolean;
@@ -400,6 +429,7 @@ function PreviewCard({
   onJoin: () => void;
   onGoTo: (communityId: string, channelId?: string) => void;
   onCancel: () => void;
+  onBack?: () => void;
 }) {
   // Falha de transporte/gramática antes de qualquer desfecho. E_MALFORMED é
   // recusa da forma do código — mesma tela do convite inválido.
@@ -411,8 +441,13 @@ function PreviewCard({
             <p className="text-body text-feedback-danger">{INVALID_MESSAGE}</p>
             <CodigoUsado code={code} />
           </div>
-          <div className="mt-3 flex justify-end">
-            <Button variant="secondary" size="lg" onClick={onCancel}>
+          <div className="mt-3 flex justify-end gap-2">
+            {onBack && (
+              <Button variant="secondary" size="lg" onClick={onBack}>
+                Corrigir código
+              </Button>
+            )}
+            <Button variant={onBack ? "ghost" : "secondary"} size="lg" onClick={onCancel}>
               Cancelar
             </Button>
           </div>
@@ -435,7 +470,7 @@ function PreviewCard({
     );
   }
 
-  if (resolvendo || preview === null) return <PreviewSkeleton />;
+  if (resolvendo || preview === null) return <PreviewSkeleton onCancel={onCancel} />;
 
   if (preview.status === "invalid") {
     return (

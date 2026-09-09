@@ -523,6 +523,21 @@ ações normativas estejam disponíveis em qualquer rota de acesso à conversa.
 6. **Confirmação antes de sucesso e patch condicional de permissões (`RoleEditor` / §21.1, U-23):** O salvamento de alterações de cargo só descarta o rascunho e exibe toast de sucesso após a conclusão bem-sucedida da sincronização (`sincronizarComunidade`). O payload de `role.update` agora envia o campo `permissions` apenas se tiver havido alteração real de permissões, prevenindo *lost-update* concorrente.
 7. **Tratamento de host offline e erro traduzido em moderação (U-02, U-15, §12):** Os botões de revogação de ban e remoção de timeout em `ModerationTab` e de confirmação em `ModerationDialog` são desabilitados com o tooltip `OFFLINE_HINT` quando `semHost` for verdadeiro. Mensagens de erro de revogação/remoção utilizam `motivoDaRecusa` em vez de expor códigos de fio `E_*`. O diálogo de banimento inclui a declaração explícita de que a revogação restaura a visualização das mensagens ocultadas (U-15).
 
+**Emenda de 2026-09-09 — Onboarding, convites, deep links e guarda de saída do host (Fase 11 / §3.5, §12, §15.4, §15.6, §18.7, U-02, U-03, U-04, U-05, U-06).**
+1. **Normalização Crockford no Main (`app/src/main/deeplink.ts` / §3.5, §15.4):** Expressão regular `RE_JOIN` e parser do protocolo `comunidadep2p://join/<CODE16>` tornados case-insensitive (`/i`) com normalização `.toUpperCase()` do código extraído, alinhando com a especificação Crockford Base32 e aceitando links em caixa baixa enviados por SO ou navegador antes do descarte do main.
+2. **Resiliência e usabilidade do Overlay de Convites (`JoinCommunityOverlay` / §12.3, §16.1, U-03):**
+   - Cancelamento permitido durante resolução pendente: `PreviewSkeleton` recebe e renderiza botão "Cancelar", evitando bloqueio de navegação do usuário em rede lenta ou host inacessível.
+   - Suporte a tecla `Escape` em visualização em tela cheia (`FullscreenInvite`).
+   - Mapeamento de recusas de transporte IPC (`E_HOST_UNAVAILABLE`, `E_TIMEOUT`) para o estado amigável `unreachable` com opção de retentativa, em vez de expor banner cru de erro `E_*`.
+   - Botão "Voltar e corrigir" em recusa de código malformado (`E_MALFORMED`), permitindo retificar erro de digitação sem perder o texto digitado nem fechar o modal.
+3. **União completa de 6 desfechos de convite no modelo de domínio (`frontend/src/domain/types.ts` / U-03, §12.3):** Adicionados os estados `ended` e `unreachable` à definição de `InvitePreview`, alinhando os tipos do domínio com `ipc/dto.ts` e `backend-v2.md §12.3`.
+4. **Governança de convites sob host offline e prevenção de concorrência (`CommunityInvitesSection`, `CommunitySettings` / U-02, U-05):**
+   - Propagação de `semHost` para `CommunityInvitesSection` a partir de `CommunitySettings`.
+   - Desabilitação das ações "Criar novo convite" e "Revogar" quando `semHost` for verdadeiro, com tooltip `OFFLINE_HINT` ("só muda com o host conectado") (U-02).
+   - Bloqueio de cliques concorrentes via referências síncronas `criandoConviteRef` e `revogandoRef`.
+   - Inclusão do aviso normativo obrigatório U-05: *"Não há aprovação manual: a mitigação de link vazado é revogar."* na listagem e no modal de criação.
+5. **Resolução de links internos contra cold-start (`MessageLinkResolver` / §4, §15.6):** Aguarda o término da fase de inicialização/conexão da sessão (`inicial`/`conectando`) e sincronização do espelho local antes de declarar um link interno `/m/:code` bloqueado ou inexistente, evitando descarte prematuro e irreversível do link durante o boot.
+6. **Robustez do cálculo de impacto de saída do host (`hostExit.ts`, `HostExitGuard` / §18.7, U-06):** Em `montarImpacto`, caso o núcleo (`api.hostExitImpact()`) relate atividade (pares online, chamadas em andamento ou operações pendentes de replicação) em comunidades que ainda não constem na lista local (por exemplo, após limpeza ou descompasso do store), o impacto é preservado com modelo de fallback, impedindo auto-confirmação silenciosa e perda de dados.
 
 ---
 

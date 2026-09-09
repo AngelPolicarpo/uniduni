@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Copy } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Modal } from "../../components/ui/Modal";
@@ -9,6 +9,7 @@ import { linkDeConvite } from "../../mocks/dataset";
 import { copiarTexto } from "../../lib/copiar";
 import { api } from "../../ipc/api";
 import { mensagemDeErro } from "../../live/sessao";
+import { OFFLINE_HINT } from "../../live/recusas";
 import { sincronizarConvites } from "../../live/sincronizacao";
 import { useFindMember, useInvites } from "../../store/communityStore";
 import { useToastStore } from "../../store/toastStore";
@@ -32,11 +33,21 @@ const USES_OPTIONS = [
 const TEXTO_U04 =
   "Só quem criou um convite consegue ver o código dele. Isso é o que impede alguém de emitir convites em nome de outra pessoa.";
 
+/** Delta U-05 — texto obrigatório: não há aprovação manual; mitigação é revogar. */
+const TEXTO_U05 =
+  "Não há aprovação manual: a mitigação de link vazado é revogar.";
+
 /**
  * Convites da comunidade (§10, 3.1b) — a única porta de entrada; não existe
  * diretório público.
  */
-export function CommunityInvitesSection({ community }: { community: Community }) {
+export function CommunityInvitesSection({
+  community,
+  semHost = false,
+}: {
+  community: Community;
+  semHost?: boolean;
+}) {
   const findMember = useFindMember();
   const invites = useInvites(community.id);
   const showToast = useToastStore((state) => state.showToast);
@@ -44,6 +55,8 @@ export function CommunityInvitesSection({ community }: { community: Community })
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [criandoConvite, setCriandoConvite] = useState(false);
   const [revogando, setRevogando] = useState<string | null>(null);
+  const criandoConviteRef = useRef(false);
+  const revogandoRef = useRef<string | null>(null);
   const [expiry, setExpiry] = useState("0");
   const [uses, setUses] = useState("0");
 
@@ -53,7 +66,8 @@ export function CommunityInvitesSection({ community }: { community: Community })
    * evento), então o toast é a única vez que ele aparece pronto para copiar.
    */
   async function criarConvite() {
-    if (criandoConvite) return;
+    if (semHost || criandoConviteRef.current) return;
+    criandoConviteRef.current = true;
     setCriandoConvite(true);
     try {
       const dias = Number(expiry);
@@ -69,6 +83,7 @@ export function CommunityInvitesSection({ community }: { community: Community })
     } catch (e) {
       showToast(mensagemDeErro(e), "error");
     } finally {
+      criandoConviteRef.current = false;
       setCriandoConvite(false);
     }
   }
@@ -83,7 +98,8 @@ export function CommunityInvitesSection({ community }: { community: Community })
    * linha já traz o que o comando pede.
    */
   async function revogarConvite(invite: Invite) {
-    if (revogando !== null) return;
+    if (semHost || revogandoRef.current !== null) return;
+    revogandoRef.current = invite.invitePublicKey;
     setRevogando(invite.invitePublicKey);
     try {
       await api.inviteRevoke({
@@ -94,6 +110,7 @@ export function CommunityInvitesSection({ community }: { community: Community })
     } catch (e) {
       showToast(mensagemDeErro(e), "error");
     } finally {
+      revogandoRef.current = null;
       setRevogando(null);
     }
   }
@@ -104,6 +121,8 @@ export function CommunityInvitesSection({ community }: { community: Community })
         title="Convites"
         description="A única porta de entrada da comunidade — não existe diretório público."
       >
+        <p className="text-meta text-text-tertiary">{TEXTO_U05}</p>
+
         {invites.length === 0 && (
           <p className="text-body text-text-tertiary">
             Nenhum convite ativo. Crie um para alguém entrar.
@@ -146,7 +165,8 @@ export function CommunityInvitesSection({ community }: { community: Community })
                   variant="ghost"
                   size="sm"
                   loading={revogando === invite.invitePublicKey}
-                  disabled={revogando !== null && revogando !== invite.invitePublicKey}
+                  disabled={semHost || (revogando !== null && revogando !== invite.invitePublicKey)}
+                  title={semHost ? OFFLINE_HINT : undefined}
                   onClick={() => void revogarConvite(invite)}
                 >
                   Revogar
@@ -184,6 +204,8 @@ export function CommunityInvitesSection({ community }: { community: Community })
           variant="secondary"
           size="sm"
           className="self-start"
+          disabled={semHost}
+          title={semHost ? OFFLINE_HINT : undefined}
           onClick={() => setCreatingInvite(true)}
         >
           Criar novo convite
@@ -198,6 +220,7 @@ export function CommunityInvitesSection({ community }: { community: Community })
           size="md"
         >
           <div className="flex flex-col gap-4">
+            <p className="text-meta text-text-tertiary">{TEXTO_U05}</p>
             <Select
               label="Expiração"
               value={expiry}
@@ -214,7 +237,12 @@ export function CommunityInvitesSection({ community }: { community: Community })
               <Button variant="secondary" onClick={() => setCreatingInvite(false)}>
                 Cancelar
               </Button>
-              <Button loading={criandoConvite} onClick={() => void criarConvite()}>
+              <Button
+                loading={criandoConvite}
+                disabled={semHost || criandoConvite}
+                title={semHost ? OFFLINE_HINT : undefined}
+                onClick={() => void criarConvite()}
+              >
                 Criar convite
               </Button>
             </div>

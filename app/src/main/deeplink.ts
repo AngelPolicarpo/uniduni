@@ -11,7 +11,7 @@
  * `shell.openExternal`, nada de navegação: o main encaminha a rota já reconhecida.
  */
 
-const RE_JOIN = /^comunidadep2p:\/\/join\/([0-9A-HJKMNP-TV-Z]{16})$/;
+const RE_JOIN = /^comunidadep2p:\/\/join\/([0-9A-HJKMNP-TV-Z]{16})$/i;
 const RE_MSG = /^comunidadep2p:\/\/m\/([A-Za-z0-9_-]{86})$/;
 const RE_USER = /^comunidadep2p:\/\/u\/([0-9a-fA-F]{64})$/;
 
@@ -23,7 +23,7 @@ export type DeepLink =
 export function parseDeepLink(raw: string): DeepLink | null {
   const bruto = raw.trim();
   const j = RE_JOIN.exec(bruto);
-  if (j !== null) return { route: 'join', code: j[1] as string };
+  if (j !== null) return { route: 'join', code: (j[1] as string).toUpperCase() };
   const m = RE_MSG.exec(bruto);
   if (m !== null) return { route: 'message', ref: m[1] as string };
   // B64 — a chave segue em minúsculas adiante; a caixa da URL é tolerada aqui.

@@ -9,6 +9,7 @@ import { usePendingMessageStore } from "../../store/inviteStore";
 import { useMessageStore } from "../../store/messageStore";
 import { useToastStore } from "../../store/toastStore";
 import { useUiStore } from "../../store/uiStore";
+import { useSessao } from "../../live/sessao";
 
 /**
  * Resolve um link `/m/:code` depois que o shell está de pé (§4).
@@ -26,6 +27,8 @@ export function MessageLinkResolver() {
     (state) => state.clearPendingMessage,
   );
 
+  const estadoSessao = useSessao((state) => state.estado);
+  const joinedCommunityIds = useCommunityStore((state) => state.joinedCommunityIds);
   const setActiveCommunity = useCommunityStore(
     (state) => state.setActiveCommunity,
   );
@@ -45,8 +48,12 @@ export function MessageLinkResolver() {
       return;
     }
 
+    // Se o app ainda está na inicialização da sessão, espera a sincronização inicial
+    // para não rejeitar prematuramente um link de comunidade válida (§3.5, §15.6).
+    const emConexao = estadoSessao === "inicial" || estadoSessao === "conectando";
     const state = useCommunityStore.getState();
     if (!state.joinedCommunityIds.includes(pending.communityId)) {
+      if (emConexao) return;
       setBlocked(true);
       clearPending();
       return;
@@ -54,6 +61,7 @@ export function MessageLinkResolver() {
 
     const channel = selectChannel(state, pending.channelId);
     if (!channel) {
+      if (emConexao) return;
       // Canal existe do outro lado, mas não neste dispositivo (premissa 6).
       showToast("Esta mensagem ainda não chegou neste dispositivo");
       setActiveCommunity(pending.communityId);
@@ -73,6 +81,8 @@ export function MessageLinkResolver() {
   }, [
     pending,
     invalid,
+    estadoSessao,
+    joinedCommunityIds,
     clearPending,
     setActiveCommunity,
     setActiveChannel,
