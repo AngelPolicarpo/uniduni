@@ -182,6 +182,15 @@ describe('ciclo de vida do voluntariado', () => {
     assert.deepEqual(r.stateChanges.at(-1), { communityId: 'com', enabled: true, expiresAt: ok.expiresAt, bytesRelayed: 0 });
   });
 
+  it('falha de submissão do fold (seq -1) devolve E_SUBMIT_FAILED e não ativa o runtime', async () => {
+    const r = rig();
+    r.consent.set('com', 'accepted', { remember: true });
+    r.submit.submit = async () => -1;
+    const res = await r.volunteer.enable({ communityId: 'com' });
+    assert.deepEqual(res, { ok: false, code: 'E_SUBMIT_FAILED' });
+    assert.equal(r.volunteer.status('com'), null);
+  });
+
   it('cada comunidade tem chave própria e estado independente', async () => {
     const r = rig();
     r.consent.set('a', 'accepted', { remember: true });

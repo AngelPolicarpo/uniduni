@@ -5079,6 +5079,18 @@ o relay. O prazo passa a esticar **uma vez** (`PRAZO_EXTRA_COM_TURN_MS`, 45 s) q
 `turn:` na lista, nenhum `relay` coletado e alguma coleta ainda em andamento. Sem `turn:`
 anunciado nada muda: a L-11 continua falhando em 20 s, que é o comportamento de §80.
 
+#### Emenda de 2026-09-08 — conformidade TURN (RFC 5766 §6.2), isolamento de revogação e fallback STUN
+
+1. **Retransmissão de Allocate:** se o cliente retransmitir uma requisição `Allocate` com o mesmo
+   `txId` para uma alocação ativa no mesmo 5-tupla, o servidor retransmite a resposta de sucesso em cache,
+   em estrita conformidade com a RFC 5766 §6.2, em vez de responder com 437 `Allocation Mismatch`.
+2. **Isolamento de alocações por sessão:** a revogação de mídia pelo host isola as alocações pelo
+   `sessionId` correspondente, garantindo que a saída ou moderação em um canal não derrube conexões relayadas
+   em outros canais ativos do membro.
+3. **Inanição de fallback STUN:** a descoberta de mapeamento externo para relay voluntário tenta
+   individualmente cada servidor configurado, impedindo que falhas no primeiro servidor esgotem o prazo global
+   e causem inanição dos servidores de contingência.
+
 ### 17.4 Autorização de sessão de mídia — tickets
 
 Fecha `T-15`, `T-32`, `T-41`, `DS-15` (na parte de autorização) e `T-40` (declarando o que
@@ -5096,12 +5108,13 @@ Fecha `T-15`, `T-32`, `T-41`, `DS-15` (na parte de autorização) e `T-40` (decl
 4. o cliente SÓ inicia DTLS com pares que passaram (3)
 ```
 
-**Revogação:** `mod.ban`, `mod.kick`, `mod.timeout`, `channel.delete`, `voice.leave` e
-**a queda da conexão do participante** fazem o host emitir
-`voice.revoked{targetKey, sessionId}` a todos os participantes. Ao receber, **cada cliente é
+**Revogação:** `mod.ban`, `mod.kick`, `mod.timeout`, `channel.delete`, `voice.leave`,
+**a perda da permissão `voice_speak` no fold** e **a queda da conexão do participante** fazem o
+host emitir `voice.revoked{targetKey, sessionId}` a todos os participantes. Ao receber, **cada cliente é
 obrigado a fechar imediatamente** a `RTCPeerConnection` com aquela chave e a parar de
-renovar o ticket. O ticket expirado deixa de ser renovado, então mesmo um cliente que ignore
-o evento perde a sessão em ≤ `MEDIA_TICKET_TTL_MS`.
+renovar o ticket. A renovação par-a-par (`voiceTicket`) recusa com `E_TICKET_DENIED` se qualquer um
+dos dois pares tiver perdido a permissão `voice_speak`. O ticket expirado deixa de ser renovado, então
+mesmo um cliente que ignore o evento perde a sessão em ≤ `MEDIA_TICKET_TTL_MS`.
 
 **Emenda de 2026-08-26 — queda de conexão é saída, e a lista não a tinha.** A redação
 anterior enumerava cinco gatilhos, e os cinco são **registro no log**. Faltava o único que
@@ -5282,6 +5295,12 @@ espera o primeiro terminar. Não é exclusão mútua (nenhuma das duas é recusa
 estar em curso) — é ordem, que é exatamente a semântica que "parar e começar de novo" pede.
 A fila não propaga falha: um `apresentar` que lançou não pode impedir o `parar` seguinte de
 rodar, porque é justamente depois de uma falha que se tenta de novo.
+
+**Emenda de 2026-09-08 — audiência sem auto-pareamento e revogação contínua de tela.**
+1. **Audiência não inclui o apresentador:** `share.join` recusa o próprio apresentador com
+   `E_ALREADY_SHARING`. Não há ticket consigo mesmo e a contagem de audiência reflete apenas espectadores reais.
+2. **Revogação contínua:** o apresentador que perde `voice_share_screen` no fold tem a sessão de tela
+   encerrada imediatamente pelo `sweepAgainst`, com revogação emitida a todos os espectadores.
 
 **Emenda de 2026-08-22 — a renovação de ticket é do núcleo, não do renderer.** §16.2 tinha
 `voiceTicket` e §26.2 tinha a cadência (`MEDIA_TICKET_TTL_MS/3`), mas nenhum dono: §15.4 não

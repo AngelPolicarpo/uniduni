@@ -1129,6 +1129,14 @@ export class CoreRuntime {
         notify: (topic, body) => {
           try {
             const data = JSON.parse(Buffer.from(body).toString('utf8')) as Record<string, unknown>;
+            if (topic === 'voice.signal') {
+              const c = this.#open.get(communityId);
+              const session = c?.host?.voice ? c.host.voice.currentSessionOf(eu) : null;
+              const peerKey = typeof data['peerKey'] === 'string' ? data['peerKey'] : '';
+              if (session === null || !c?.host?.voice.participantKeys(session.sessionId).has(peerKey)) {
+                return false;
+              }
+            }
             this.fanout.emit({ topic, data: { communityId, ...data } }, { communityId });
             return true;
           } catch {
@@ -1512,7 +1520,7 @@ export class CoreRuntime {
             // pela porta relayada) só conferiam `alloc.permissions`, que nunca era podada:
             // o banido seguia recebendo e mandando mídia pelo relay do host, na cota dele,
             // até a alocação vencer sozinha em `TURN_ALLOC_TTL_MS`.
-            this.#mediaHost?.revogar(t.targetKeyHex);
+            this.#mediaHost?.revogar(t.targetKeyHex, t.sessionId);
             // §17.4 — **a todos os participantes**, não só ao alvo. Quem fica é quem tem de
             // fechar a `RTCPeerConnection` com a chave revogada; mandando só ao alvo, o
             // banido saía da lista do host e continuava recebendo mídia de todo mundo, que

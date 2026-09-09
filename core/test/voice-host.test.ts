@@ -306,6 +306,45 @@ describe('voiceLeave e sweepAgainst — revogação de §17.4', () => {
     assert.equal(codeOf(r.sessions.renewTicket({ state: g.world.state, sessionId: a.sessionId, memberKeyHex: alice.publicKey.toString('hex'), peerKeyHex: bob.publicKey.toString('hex') })), 'E_TICKET_DENIED');
   });
 
+  it('perda de voice_speak no meio da chamada derruba só o alvo no sweep e impede renovação', () => {
+    const { g, vozId, alice, bob } = voiceWorld();
+    const r = rig();
+    const a = r.sessions.join({ state: g.world.state, channelId: vozId, memberKeyHex: alice.publicKey.toString('hex') });
+    r.sessions.join({ state: g.world.state, channelId: vozId, memberKeyHex: bob.publicKey.toString('hex') });
+    assert.ok(a.ok);
+    if (!a.ok) return;
+
+    // Remove voice_speak apenas de alice
+    const stateSemVoz = {
+      ...g.world.state,
+      members: new Map(g.world.state.members),
+      roles: new Map(g.world.state.roles),
+    };
+    const defaultRole = [...g.world.state.roles.values()].find((r) => r.isDefault)!;
+    const semVoz = new Set(defaultRole.permissions);
+    semVoz.delete(9);
+    stateSemVoz.roles.set('r-sem-voz', { ...defaultRole, permissions: semVoz, isDefault: false });
+    stateSemVoz.members.set(alice.publicKey.toString('hex'), {
+      ...g.world.state.members.get(alice.publicKey.toString('hex'))!,
+      roleIds: new Set(['r-sem-voz']),
+    });
+
+    r.revoked.length = 0;
+    r.rosters.length = 0;
+    const emitted = r.sessions.sweepAgainst(stateSemVoz);
+    assert.deepEqual(emitted, [
+      {
+        sessionId: a.sessionId,
+        channelId: vozId,
+        targetKeyHex: alice.publicKey.toString('hex'),
+        reason: 'moderation',
+        recipients: [alice.publicKey.toString('hex'), bob.publicKey.toString('hex')].sort(),
+      },
+    ]);
+    assert.equal(r.sessions.participantKeys(a.sessionId).has(alice.publicKey.toString('hex')), false);
+    assert.equal(codeOf(r.sessions.renewTicket({ state: stateSemVoz, sessionId: a.sessionId, memberKeyHex: alice.publicKey.toString('hex'), peerKeyHex: bob.publicKey.toString('hex') })), 'E_TICKET_DENIED');
+  });
+
   it('channel.delete encerra a sessão inteira; fim da comunidade também', () => {
     const { g, vozId, alice, bob } = voiceWorld();
     const r = rig();

@@ -143,7 +143,7 @@ export class RelayVolunteer {
   }
 
   /** Consentimento aceito e persistido é pré-condição de ligar (§17.7). */
-  async enable(args: { communityId: string }): Promise<EnableOk | { ok: false; code: 'E_CONSENT_REQUIRED' }> {
+  async enable(args: { communityId: string }): Promise<EnableOk | { ok: false; code: 'E_CONSENT_REQUIRED' | 'E_SUBMIT_FAILED' }> {
     const now = this.#clock.now();
     const record = this.#consent.get(args.communityId);
     if (record === undefined || record === null || record.decision !== 'accepted') {
@@ -161,6 +161,9 @@ export class RelayVolunteer {
       expiresAt,
       possession,
     });
+    if (seq === null || seq === undefined || seq < 0) {
+      return { ok: false, code: 'E_SUBMIT_FAILED' };
+    }
 
     const previous = this.#runtimes.get(args.communityId);
     const quota = previous?.quota ?? new RelayQuota({ maxBytesPerDay: this.#maxBytesPerDay, maxAllocs: this.#maxAllocs });
@@ -194,7 +197,7 @@ export class RelayVolunteer {
    * Renovação: mesmo caminho do `enable` (consentimento persistido continua válido),
    * com material fresco — novo `expiresAt` e nova posse. O fold sobrescreve a entrada.
    */
-  renew(args: { communityId: string }): Promise<EnableOk | { ok: false; code: 'E_CONSENT_REQUIRED' }> {
+  renew(args: { communityId: string }): Promise<EnableOk | { ok: false; code: 'E_CONSENT_REQUIRED' | 'E_SUBMIT_FAILED' }> {
     return this.enable(args);
   }
 

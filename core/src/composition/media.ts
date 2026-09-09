@@ -262,8 +262,8 @@ export class MediaHost {
    * `onRevoked` que emite `voice.revoked`: sem ela o banido seguia recebendo e mandando
    * mídia pelo relay do host até a alocação vencer sozinha.
    */
-  revogar(peerKeyHex: string): number {
-    return this.#server.revoke(peerKeyHex);
+  revogar(peerKeyHex: string, sessionId?: string): number {
+    return this.#server.revoke(peerKeyHex, sessionId);
   }
 
   close(): void {

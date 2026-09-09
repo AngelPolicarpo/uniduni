@@ -1375,6 +1375,10 @@ export class BlobManager {
       throw Object.assign(new Error('Nenhum par tem o blob'), { code: 'E_NO_PEERS' });
     }
 
+    if (this.#cancelado(blobsCoreKey.toString('hex'), blobIdHex)) {
+      throw Object.assign(new Error('Download cancelado'), { code: 'E_CANCELLED' });
+    }
+
     // Lê e verifica tamanho
     const data = await fs.promises.readFile(sourcePath);
     if (data.length > declaredSize) {
@@ -1391,6 +1395,10 @@ export class BlobManager {
       throw Object.assign(new Error('Hash diverge'), { code: 'E_BLOB_CORRUPT', cause: 'hash' });
     }
 
+    if (this.#cancelado(blobsCoreKey.toString('hex'), blobIdHex)) {
+      throw Object.assign(new Error('Download cancelado'), { code: 'E_CANCELLED' });
+    }
+
     // Grava em blobs/<blobsCoreKeyHex>/<blobIdHex>-<name> → blob.completed{path}
     const destDir = path.join(this.#dataDir, blobsCoreKey.toString('hex'));
     await fs.promises.mkdir(destDir, { recursive: true });
@@ -1403,6 +1411,9 @@ export class BlobManager {
     // Mock: não tenta Zone.Identifier, apenas registra que não aplicou em Linux
 
     if (this.#cancelado(blobsCoreKey.toString('hex'), blobIdHex)) {
+      if (sourcePath !== destPath) {
+        try { await fs.promises.unlink(destPath); } catch {}
+      }
       throw Object.assign(new Error('Download cancelado'), { code: 'E_CANCELLED' });
     }
     this.cache.setState(blobsCoreKey, blobIdHex, 'downloaded', { bytesDownloaded: data.length, path: destPath, declaredSize });
@@ -1627,6 +1638,10 @@ export class BlobManager {
    */
   cancelDownload(blobsCoreKey: Buffer | string, blobIdHex: string): void {
     const key = typeof blobsCoreKey === 'string' ? Buffer.from(blobsCoreKey, 'hex') : blobsCoreKey;
+    const current = this.getDownloadState(key, blobIdHex);
+    if (current === 'downloaded' || current === 'corrupt' || current === 'unavailable') {
+      return;
+    }
     this.#cancelados.add(`${key.toString('hex')}/${blobIdHex}`);
     this.cache.setState(key, blobIdHex, 'cancelled');
   }

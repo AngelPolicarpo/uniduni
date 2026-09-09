@@ -368,6 +368,7 @@ export class ShareHostSessions {
     const now = this.#clock.now();
     const session = this.#bySessionId(args.sessionId);
     if (session === undefined) return { ok: false, code: 'E_SESSION_GONE' };
+    if (args.memberKeyHex === session.presenterKeyHex) return { ok: false, code: 'E_ALREADY_SHARING' };
 
     const call = this.#voiceParticipants(session.channelId);
     if (call === null || !call.has(args.memberKeyHex)) return { ok: false, code: 'E_PERMISSION_DENIED' };
@@ -509,7 +510,8 @@ export class ShareHostSessions {
         channel.deletedAt !== undefined ||
         call === null ||
         !call.has(session.presenterKeyHex) ||
-        !this.#memberEligible(state, session.presenterKeyHex, now).ok
+        !this.#memberEligible(state, session.presenterKeyHex, now).ok ||
+        !memberHasPermission(state, session.presenterKeyHex, SHARE_SCREEN)
       ) {
         this.#end(session, emitted);
         continue;

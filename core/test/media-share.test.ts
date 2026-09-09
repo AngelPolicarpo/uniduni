@@ -377,6 +377,11 @@ describe('share.join — participante da chamada, teto de 8 e ticket do par', ()
     assert.equal(codeOf(r.shares.join({ sessionId: 'nada', memberKeyHex: VIEWER })), 'E_SESSION_GONE');
   });
 
+  it('apresentador tentando dar join na própria tela é recusado com E_ALREADY_SHARING', () => {
+    const { r, sessionId } = sessao(['espectador']);
+    assert.equal(codeOf(r.shares.join({ sessionId, memberKeyHex: PRESENTER })), 'E_ALREADY_SHARING');
+  });
+
   // §90 — não há mais vaga a disputar. O que limita a estrela é o upload de quem
   // apresenta, e disso cuida a degradação medida de §17.5; contar cabeças não media nada.
   // Vinte é arbitrário de propósito: prova que não existe número mágico entre 8 e 9.
@@ -590,6 +595,16 @@ describe('sweepAgainst — ban/kick/canal deletado encerram a sessão de tela', 
     callsGlobal.delete('ch-voz');
     r.shares.sweepAgainst(baseState([9, 11]));
     assert.equal(r.shares.sessionCount, 0);
+  });
+
+  it('perda de voice_share_screen do apresentador encerra a sessão no sweep', () => {
+    const { r, sessionId } = sessao();
+    r.revoked.length = 0;
+    // Estado onde o apresentador perdeu a permissão 11 (voice_share_screen)
+    const state = baseState([9]); // apenas voice_speak, sem voice_share_screen
+    const emitted = r.shares.sweepAgainst(state);
+    assert.equal(r.shares.sessionCount, 0);
+    assert.deepEqual(emitted, [{ sessionId, channelId: 'ch-voz', targetKeyHex: VIEWER }]);
   });
 });
 

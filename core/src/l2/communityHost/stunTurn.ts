@@ -426,8 +426,10 @@ export function parseTurnUsername(username: string): { sessionId: string; expire
   const sep = username.lastIndexOf(':');
   if (sep < 0) return null;
   const sessionId = username.slice(0, sep);
-  const expiresAt = Number.parseInt(username.slice(sep + 1), 10);
-  if (sessionId.length === 0 || !Number.isFinite(expiresAt)) return null;
+  const expiresStr = username.slice(sep + 1);
+  if (!/^\d+$/.test(expiresStr)) return null;
+  const expiresAt = Number.parseInt(expiresStr, 10);
+  if (sessionId.length === 0 || !Number.isFinite(expiresAt) || expiresAt <= 0) return null;
   return { sessionId, expiresAt };
 }
 
@@ -622,6 +624,8 @@ interface Allocation {
   bytesRelayed: number;
   tokens: number;
   lastRefill: number;
+  lastAllocateTxId?: Buffer;
+  lastAllocateSuccess?: Buffer;
 }
 
 export class MediaServer {
@@ -638,6 +642,7 @@ export class MediaServer {
   readonly #hostTurnSecret: (sessionId: string) => Buffer | null;
   readonly #realm: string;
   readonly #allocations = new Map<string, Allocation>(); // clientAddr → allocation
+  readonly #derivedKeyCache = new Map<string, { key: Buffer; expiresAt: number }>();
   /** Allocate em voo (porta de relay abrindo) → `txId`, para reconhecer retransmissão. */
   readonly #pending = new Map<string, Buffer>();
   #nonce = crypto.randomBytes(16).toString('hex');
@@ -735,6 +740,9 @@ export class MediaServer {
         n++;
       }
     }
+    for (const [cacheKey, entry] of this.#derivedKeyCache) {
+      if (entry.expiresAt <= now) this.#derivedKeyCache.delete(cacheKey);
+    }
     return n;
   }
 
@@ -746,10 +754,11 @@ export class MediaServer {
    * (ChannelData de saída e entrada pela porta relayada) continuavam entregando mídia
    * relayada a quem acabou de ser removido, à custa da máquina de quem hospeda.
    */
-  revoke(memberKeyHex: string): number {
+  revoke(memberKeyHex: string, sessionId?: string): number {
     let n = 0;
     for (const alloc of [...this.#allocations.values()]) {
       if (alloc.memberKeyHex !== memberKeyHex) continue;
+      if (sessionId !== undefined && alloc.sessionId !== sessionId) continue;
       this.#terminate(alloc);
       n++;
     }
@@ -818,11 +827,29 @@ export class MediaServer {
       this.counters.authFailures++;
       return { ok: false, challenge: true };
     }
+
+    const clientAddr = keyOf(addr);
+    const existing = this.#allocations.get(clientAddr);
+    if (existing !== undefined && existing.sessionId === parsed.sessionId && existing.username === dec.username) {
+      if (verifyMessageIntegrity(msg, existing.key)) {
+        this.#onPeerObserved(parsed.sessionId, existing.memberKeyHex, addr);
+        return { ok: true, sessionId: parsed.sessionId, peerKeyHex: existing.memberKeyHex, username: dec.username, key: existing.key };
+      }
+    }
+
     for (const peerKeyHex of this.#sessionPeerKeys(parsed.sessionId)) {
-      const peerKey = Buffer.from(peerKeyHex, 'hex');
-      if (peerKey.length !== 32) continue;
-      const password = turnCredentialPassword(segredo, parsed.sessionId, peerKey, parsed.expiresAt);
-      const key = longTermKey(dec.username, this.#realm, password);
+      const cacheKey = `${parsed.sessionId}:${peerKeyHex}:${dec.username}`;
+      const cached = this.#derivedKeyCache.get(cacheKey);
+      let key: Buffer;
+      if (cached !== undefined && cached.expiresAt === parsed.expiresAt) {
+        key = cached.key;
+      } else {
+        const peerKey = Buffer.from(peerKeyHex, 'hex');
+        if (peerKey.length !== 32) continue;
+        const password = turnCredentialPassword(segredo, parsed.sessionId, peerKey, parsed.expiresAt);
+        key = longTermKey(dec.username, this.#realm, password);
+        this.#derivedKeyCache.set(cacheKey, { key, expiresAt: parsed.expiresAt });
+      }
       if (verifyMessageIntegrity(msg, key)) {
         // O MAC fecha: esta chave está NESTE endereço agora. É a única prova de
         // par→endereço que o host obtém sem perguntar a ninguém.
@@ -874,6 +901,10 @@ export class MediaServer {
     const anterior = this.#allocations.get(clientAddr);
     if (anterior !== undefined) {
       if (anterior.expiresAt > now) {
+        if (anterior.lastAllocateTxId !== undefined && anterior.lastAllocateTxId.equals(dec.txId) && anterior.lastAllocateSuccess !== undefined) {
+          this.#sendAuthed(anterior.lastAllocateSuccess, anterior.key, addr);
+          return;
+        }
         this.#sendAuthed(encodeTurnError(dec.type, dec.txId, 437, 'Allocation Mismatch'), auth.key, addr);
         return;
       }
@@ -913,12 +944,16 @@ export class MediaServer {
           bytesRelayed: 0,
           tokens: this.#rateBytesPerMs * 1000, // burst de 1 s
           lastRefill: now,
+          lastAllocateTxId: dec.txId,
         };
         this.#wireRelay(alloc);
         this.#allocations.set(clientAddr, alloc);
         this.counters.allocates++;
         const success = encodeAllocateSuccess(dec.txId, relayPort.addr, addr, Math.floor(this.#controls.ttlMs / 1000));
-        if (success !== null) this.#sendAuthed(success, auth.key, addr);
+        if (success !== null) {
+          alloc.lastAllocateSuccess = success;
+          this.#sendAuthed(success, auth.key, addr);
+        }
       },
       () => {
         this.#pending.delete(clientAddr);

@@ -21,6 +21,7 @@ import {
   issueTurnCredential,
   longTermKey,
   parseChannelData,
+  parseTurnUsername,
   randomTxId,
   turnCredentialPassword,
   verifyMessageIntegrity,
@@ -899,5 +900,53 @@ describe('§17.3/§17.4 — a alocação não sobrevive à revogação nem ao pr
     assert.equal(resposta?.type, 0x0103, 'Allocate Success, não Allocation Mismatch');
     assert.ok(f.socket.sents.length > antes);
     assert.equal(f.server.allocationCount, 1);
+  });
+
+  it('parseTurnUsername valida estritamente a porta e timestamp numérico', () => {
+    assert.equal(parseTurnUsername('sessao:1234abc'), null);
+    assert.equal(parseTurnUsername('sessao:-10'), null);
+    assert.equal(parseTurnUsername('sessao:0'), null);
+    assert.equal(parseTurnUsername(''), null);
+    assert.equal(parseTurnUsername('sem-dois-pontos'), null);
+    assert.deepEqual(parseTurnUsername('minha-sessao:1700000000'), {
+      sessionId: 'minha-sessao',
+      expiresAt: 1700000000,
+    });
+  });
+
+  it('retransmissão de Allocate (RFC 5766 §6.2) devolve resposta em cache em vez de 437', async () => {
+    const f = fixture();
+    const cred = credLonga(f);
+    const req = authedRequest(f, TURN_ALLOCATE, [], cred);
+    f.server.handleDatagram(req, CLIENT);
+    await drain();
+    assert.equal(f.server.allocationCount, 1);
+    const primeiraResposta = f.socket.sents.at(-1)!.data;
+    const dec1 = decode(stripMessageIntegrity(primeiraResposta));
+    assert.equal(dec1?.type, 0x0103, 'Allocate Success');
+
+    // Retransmissão: mesmo cliente, mesma mensagem/txId
+    const sentsAntes = f.socket.sents.length;
+    f.server.handleDatagram(req, CLIENT);
+    await drain();
+    assert.equal(f.socket.sents.length, sentsAntes + 1, 'retransmitiu resposta');
+    const segundaResposta = f.socket.sents.at(-1)!.data;
+    const dec2 = decode(stripMessageIntegrity(segundaResposta));
+    assert.equal(dec2?.type, 0x0103, 'retransmitiu Allocate Success');
+    assert.notEqual(dec2?.errorCode, 437, 'não devolveu 437');
+  });
+
+  it('`revoke` com sessionId isola alocações de sessões diferentes', async () => {
+    const f = fixture();
+    await allocate(f);
+    assert.equal(f.server.allocationCount, 1);
+
+    // Revogar para outra sessão não afeta esta alocação
+    assert.equal(f.server.revoke(f.member.publicKey.toString('hex'), 'outra-sessao'), 0);
+    assert.equal(f.server.allocationCount, 1);
+
+    // Revogar para a sessão correta derruba
+    assert.equal(f.server.revoke(f.member.publicKey.toString('hex'), f.sessionId), 1);
+    assert.equal(f.server.allocationCount, 0);
   });
 });

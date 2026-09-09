@@ -123,9 +123,15 @@ export async function abrirPortaDeRelay(opts: PortaDeRelayOptions): Promise<Rela
   // voltar deixaria a descoberta correndo num loop que já pode esvaziar.
   const socket = dgram.createSocket({ type: 'udp4', reuseAddr: false });
   await new Promise<void>((resolve, reject) => {
-    socket.once('error', reject);
+    const onError = (err: Error) => {
+      try {
+        socket.close();
+      } catch {}
+      reject(err);
+    };
+    socket.once('error', onError);
     socket.bind(0, '0.0.0.0', () => {
-      socket.removeListener('error', reject);
+      socket.removeListener('error', onError);
       resolve();
     });
   });
@@ -133,15 +139,23 @@ export async function abrirPortaDeRelay(opts: PortaDeRelayOptions): Promise<Rela
   // unreachable` de um par que fechou não pode derrubar o processo do host.
   socket.on('error', () => {});
 
-  const limite = Date.now() + (opts.budgetMs ?? 3 * TENTATIVA_MS);
+  const tentativaMs = TENTATIVA_MS;
+  const deadline = Date.now() + (opts.budgetMs ?? Math.max(servidores.length * tentativaMs, 3 * tentativaMs));
   let externo: MediaAddr | null = null;
   let usado: MediaAddr | null = null;
-  for (const servidor of servidores) {
-    while (externo === null && Date.now() < limite) {
-      externo = await descobrirMapeamento(socket, servidor, TENTATIVA_MS);
-      if (externo !== null) usado = servidor;
+  while (externo === null && Date.now() < deadline) {
+    let tentouAlgum = false;
+    for (const servidor of servidores) {
+      if (Date.now() >= deadline) break;
+      tentouAlgum = true;
+      const timeout = Math.min(tentativaMs, Math.max(100, deadline - Date.now()));
+      externo = await descobrirMapeamento(socket, servidor, timeout);
+      if (externo !== null) {
+        usado = servidor;
+        break;
+      }
     }
-    if (externo !== null) break;
+    if (!tentouAlgum) break;
   }
   if (externo === null || usado === null) {
     socket.close();

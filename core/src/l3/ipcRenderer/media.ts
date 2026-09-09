@@ -439,7 +439,21 @@ export function localMediaDispatcher(
         // em `MEDIA_TICKET_TTL_MS` (§17.4), que é a rede de segurança da revogação.
         if (r.ok) tickets.push(r.ticket);
       }
-      if (seguranca !== null) seguranca = { ...seguranca, tickets };
+      if (seguranca !== null) {
+        const agora = Date.now();
+        const mapa = new Map<string, MediaTicket>();
+        for (const t of seguranca.tickets) {
+          if (t.expiresAt > agora) {
+            const par = [t.peerA.toString('hex'), t.peerB.toString('hex')].sort().join(':');
+            mapa.set(`${t.sessionId}:${par}`, t);
+          }
+        }
+        for (const t of tickets) {
+          const par = [t.peerA.toString('hex'), t.peerB.toString('hex')].sort().join(':');
+          mapa.set(`${t.sessionId}:${par}`, t);
+        }
+        seguranca = { ...seguranca, tickets: [...mapa.values()] };
+      }
       return { ok: true, sessionId, tickets };
     },
 
@@ -779,7 +793,21 @@ export function remoteMediaDispatcher(
           tickets.push(mediaWire.decodeTicket(r['ticket'] as Parameters<typeof mediaWire.decodeTicket>[0]));
         }
       }
-      if (seguranca !== null) seguranca = { ...seguranca, tickets };
+      if (seguranca !== null) {
+        const agora = now();
+        const mapa = new Map<string, MediaTicket>();
+        for (const t of seguranca.tickets) {
+          if (t.expiresAt > agora) {
+            const par = [t.peerA.toString('hex'), t.peerB.toString('hex')].sort().join(':');
+            mapa.set(`${t.sessionId}:${par}`, t);
+          }
+        }
+        for (const t of tickets) {
+          const par = [t.peerA.toString('hex'), t.peerB.toString('hex')].sort().join(':');
+          mapa.set(`${t.sessionId}:${par}`, t);
+        }
+        seguranca = { ...seguranca, tickets: [...mapa.values()] };
+      }
       return { ok: true, sessionId, tickets };
     },
 

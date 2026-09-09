@@ -579,7 +579,9 @@ export class VoiceHostSessions {
       !session.participants.has(args.peerKeyHex) ||
       args.memberKeyHex === args.peerKeyHex ||
       !this.#memberEligible(args.state, args.memberKeyHex, now).ok ||
-      !this.#memberEligible(args.state, args.peerKeyHex, now).ok
+      !this.#memberEligible(args.state, args.peerKeyHex, now).ok ||
+      !this.#hasVoiceSpeak(args.state, args.memberKeyHex) ||
+      !this.#hasVoiceSpeak(args.state, args.peerKeyHex)
     ) {
       return { ok: false, code: 'E_TICKET_DENIED' };
     }
@@ -605,8 +607,9 @@ export class VoiceHostSessions {
    * cada admissão projetada. Devolve os alvos emitidos (teste e métrica); o fan-out a
    * destinatários concretos é da composição.
    *
-   * Permissão removida no meio da sessão **não** derruba: §17.4 define enforcement por
-   * remoção de roster + revogação de ticket, e quem revalida `voice_speak` é a entrada.
+   * Perda de permissão no meio da sessão revoga: §17.4 define enforcement por
+   * remoção de roster + revogação de ticket, tanto por inelegibilidade quanto por
+   * perda de `voice_speak`.
    */
   sweepAgainst(state: VoiceStatePort): readonly RevokedTarget[] {
     const now = this.#clock.now();
@@ -624,7 +627,7 @@ export class VoiceHostSessions {
         continue;
       }
       for (const keyHex of [...session.participants.keys()]) {
-        if (!this.#memberEligible(state, keyHex, now).ok) {
+        if (!this.#memberEligible(state, keyHex, now).ok || !this.#hasVoiceSpeak(state, keyHex)) {
           // §17.6 — o roster novo sai AQUI, como sai no `leave`. Sem ele quem ficava na
           // chamada continuava vendo o banido na lista e com a `RTCPeerConnection` aberta:
           // a remoção acontecia só na memória do host.
