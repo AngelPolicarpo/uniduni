@@ -15,6 +15,7 @@ import { create } from "zustand";
 import { api, cliente } from "../ipc/api";
 import { conectar, pontePresente } from "../ipc/bridge";
 import { codigoDoErro, IpcCommandError } from "../ipc/frames";
+import { useIdentityStore } from "../store/identityStore";
 import type { MotivoDeResync } from "../ipc/client";
 import type { CoreStatus, IdentityDto, Presence } from "../ipc/dto";
 
@@ -157,6 +158,7 @@ export const useSessao = create<Sessao>((set, get) => ({
       const status = await api.coreStatus();
       if (status.phase === "awaiting-identity") {
         set({ estado: "sem-identidade", status, identidade: null, epoch: status.epoch });
+        useIdentityStore.getState().aplicarRemoto(null);
         return;
       }
       const identidade = await api.identity().catch((e) => {
@@ -172,6 +174,9 @@ export const useSessao = create<Sessao>((set, get) => ({
         epoch: status.epoch,
         motivo: null,
       });
+      if (identidade === null) {
+        useIdentityStore.getState().aplicarRemoto(null);
+      }
       dispararResync(origem);
     } catch (e) {
       // Sem porta o núcleo novo ainda não chegou (§15.2 passo 2): isso é a reconexão em

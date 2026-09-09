@@ -823,12 +823,12 @@ function createWindow(): void {
     path.join(__dirname, '../renderer/index.html'), // empacotado (electron-builder)
   ];
   const rendererPath = candidatos.find((c) => fs.existsSync(c));
-  if (rendererPath !== undefined) {
-    console.log(`[main] renderer: ${rendererPath}`);
-    void mainWindow.loadFile(rendererPath);
-  } else if (process.env.P2P_RENDERER_URL !== undefined) {
+  if (process.env.P2P_RENDERER_URL !== undefined) {
     console.log(`[main] renderer: ${process.env.P2P_RENDERER_URL} (P2P_RENDERER_URL)`);
     void mainWindow.loadURL(process.env.P2P_RENDERER_URL);
+  } else if (rendererPath !== undefined) {
+    console.log(`[main] renderer: ${rendererPath}`);
+    void mainWindow.loadFile(rendererPath);
   } else {
     console.error(`[main] renderer não encontrado. Procurei em:\n  ${candidatos.join('\n  ')}`);
     void mainWindow.loadURL(

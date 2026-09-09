@@ -92,7 +92,11 @@ async function comExclusao<T>(chave: string, fn: () => Promise<T>): Promise<T | 
 /** `query.identity` → o `Identity` que o mock consome. */
 export async function sincronizarIdentidade(): Promise<void> {
   const d = await api.identity().catch(() => null);
-  if (d === null) return;
+  if (d === null) {
+    useIdentityStore.getState().aplicarRemoto(null);
+    useCommunityStore.getState().aplicarRemoto({ euId: "" });
+    return;
+  }
   const eu = identidade(d);
   useIdentityStore.getState().aplicarRemoto(eu);
   useCommunityStore.getState().aplicarRemoto({ euId: eu.id });

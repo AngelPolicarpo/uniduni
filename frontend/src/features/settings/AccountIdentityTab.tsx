@@ -20,7 +20,8 @@ import { useMessageStore } from "../../store/messageStore";
 import { useVoiceStore } from "../../store/voiceStore";
 import { usePendingInviteStore } from "../../store/inviteStore";
 import { api } from "../../ipc/api";
-import { codigoDoErro, motivoDaRecusa } from "../../live/recusas";
+import { codigoDoErro } from "../../ipc/frames";
+import { motivoDaRecusa } from "../../live/recusas";
 import type { Identity, PresenceStatus } from "../../domain/types";
 
 /**
