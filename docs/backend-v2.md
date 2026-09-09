@@ -363,7 +363,10 @@ Fica normativo:
 
 O dreno é o mesmo procedimento, não um caminho paralelo: **um** ponto de entrada, alcançado
 pela janela, pelo sinal ou por `before-quit`, e idempotente porque as três coisas podem
-chegar juntas.
+chegar juntas. Quando o encerramento se origina diretamente no `before-quit` (menu de sistema,
+atalho `Cmd+Q` ou chamada programática a `app.quit()`), o main intercepta o evento com
+`event.preventDefault()` até que a drenagem assíncrona (`{e:'drained'}` ou teto de 8 s) seja
+concluída, disparando então a finalização efetiva.
 
 ### 3.4 Regras de fronteira (invioláveis)
 
@@ -409,7 +412,11 @@ Regras normativas:
    **A entrega ao renderer é fila, e a fila esvazia.** Link que chega antes de haver
    documento (abertura a frio, `second-instance` durante uma recarga) espera o
    `did-finish-load`; entregue, sai da fila. Reler a fila a cada carga transformava toda
-   recarga da janela numa reabertura dos convites já tratados.
+   recarga da janela numa reabertura dos convites já tratados. Na abertura a frio, para evitar
+   perda do evento por corrida contra a montagem assíncrona de componentes na interface
+   (efeitos de inicialização do React), o preload retém os links recebidos em fila interna
+   (`consumirDeepLinksPendentes`) e a ponte IPC do renderer mantém buffer de módulo até que
+   a escuta da aplicação seja registrada (`ouvirDeepLinks`).
 3. Deep link **nunca dispara ação**: ele só posiciona a UI numa tela de confirmação. Entrar
    numa comunidade sempre exige um clique explícito depois do preview.
 

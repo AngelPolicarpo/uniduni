@@ -962,6 +962,30 @@ function createWindow(): void {
     return { action: 'deny' };
   });
 
+  // §3.1/§3.4 — Defesa em profundidade na mesma janela: impede navegações indevidas
+  // (links sem target="_blank", scripts ou arrasto de URL) de carregarem conteúdo remoto
+  // mantendo a ponte window.electron exposta.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const urlAtual = mainWindow?.webContents.getURL();
+    if (urlAtual && url === urlAtual) return;
+    event.preventDefault();
+    if (podeAbrirExternamente(url)) {
+      void shell.openExternal(url);
+    } else {
+      console.warn(`[main] will-navigate recusado — esquema fora da allowlist: ${url.slice(0, 64)}`);
+    }
+  });
+  mainWindow.webContents.on('will-redirect', (event, url) => {
+    const urlAtual = mainWindow?.webContents.getURL();
+    if (urlAtual && url === urlAtual) return;
+    event.preventDefault();
+    if (podeAbrirExternamente(url)) {
+      void shell.openExternal(url);
+    } else {
+      console.warn(`[main] will-redirect recusado — esquema fora da allowlist: ${url.slice(0, 64)}`);
+    }
+  });
+
   // A janela morre antes do processo (draining de §3.3 dura até 8 s). Sem zerar a
   // referência, todo `mainWindow !== null` adiante virava acesso a objeto destruído.
   mainWindow.on('closed', () => {
@@ -1022,6 +1046,7 @@ app.whenReady().then(() => {
  * perguntar "tem certeza?" a um `SIGTERM` só gasta o prazo que o SO deu antes do `SIGKILL`.
  */
 let encerramentoIniciado = false;
+let drenagemConcluida = false;
 function iniciarEncerramento(motivo: string, aoTerminar?: () => void): void {
   if (encerramentoIniciado) return;
   encerramentoIniciado = true;
@@ -1041,6 +1066,7 @@ function iniciarEncerramento(motivo: string, aoTerminar?: () => void): void {
   const sairUmaVez = (): void => {
     if (!saiu) {
       saiu = true;
+      drenagemConcluida = true;
       if (aoTerminar !== undefined) {
         aoTerminar();
       } else {
@@ -1064,12 +1090,21 @@ app.on('window-all-closed', () => {
 });
 
 // §3.3 emendado — encerramento externo. O sinal é o caminho do `systemctl`/logoff; o
-// `before-quit` cobre o resto (menu Sair, `app.quit()` de outro ponto) sem segurar a saída:
-// `iniciarEncerramento` é idempotente e não faz `preventDefault`.
+// `before-quit` cobre o resto (menu Sair, `app.quit()` avulso, Cmd+Q).
+// No primeiro disparo de before-quit quando a drenagem ainda não ocorreu, o Electron
+// encerraria de forma síncrona sem preventDefault(); ao interceptar, seguramos a saída
+// até que sairUmaVez chame app.quit() com drenagemConcluida = true.
 for (const sinal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
   process.on(sinal, () => iniciarEncerramento(sinal));
 }
-app.on('before-quit', () => iniciarEncerramento('before-quit'));
+app.on('before-quit', (e) => {
+  if (drenagemConcluida) return;
+  e.preventDefault();
+  iniciarEncerramento('before-quit', () => {
+    drenagemConcluida = true;
+    app.quit();
+  });
+});
 
 /** Chamado quando o núcleo confirma que drenou (mensagem `{e:'drained'}` do utility). */
 let aoDrained: (() => void) | null = null;
@@ -1283,7 +1318,16 @@ ipcMain.handle('windowGetBounds', () => {
 });
 
 ipcMain.handle('windowSetBounds', (_e, bounds: { x: number; y: number; width: number; height: number }) => {
-  if (mainWindow !== null && !mainWindow.isDestroyed() && !mainWindow.isMaximized()) {
+  if (
+    mainWindow !== null &&
+    !mainWindow.isDestroyed() &&
+    !mainWindow.isMaximized() &&
+    bounds &&
+    Number.isFinite(bounds.x) &&
+    Number.isFinite(bounds.y) &&
+    Number.isFinite(bounds.width) &&
+    Number.isFinite(bounds.height)
+  ) {
     const minWidth = 800;
     const minHeight = 600;
     const width = Math.max(minWidth, Math.round(bounds.width));

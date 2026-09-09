@@ -20,7 +20,7 @@ const CODIGO = arg('codigo');
 app.whenReady().then(async () => {
   const win = new BrowserWindow({
     show: false,
-    webPreferences: { preload: PRELOAD, contextIsolation: true, sandbox: false },
+    webPreferences: { preload: PRELOAD, contextIsolation: true, sandbox: true },
   });
 
   await win.loadFile(INDEX);

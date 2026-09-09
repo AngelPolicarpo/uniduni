@@ -70,12 +70,22 @@ ipcRenderer.on('core-epoch', (_e, data: { epoch: number }) => {
   window.dispatchEvent(new CustomEvent('core-epoch', { detail: data }));
 });
 
+/** Buffer de retenção para abertura a frio: guarda links recebidos antes do renderer assinar. */
+const deepLinksPendentes: DeepLink[] = [];
+
 ipcRenderer.on('deeplink', (_e, data: DeepLink) => {
+  deepLinksPendentes.push(data);
   window.dispatchEvent(new CustomEvent('deeplink', { detail: data }));
 });
 
 contextBridge.exposeInMainWorld('electron', {
   getEpoch: () => epoch,
+  /** Drena e limpa a fila de deep links recebidos na abertura a frio. */
+  consumirDeepLinksPendentes: (): DeepLink[] => {
+    const pendentes = [...deepLinksPendentes];
+    deepLinksPendentes.length = 0;
+    return pendentes;
+  },
   // U-06 — o renderer mostrou o impacto de sair e a pessoa confirmou.
   confirmExit: async (): Promise<void> => {
     await ipcRenderer.invoke('confirmExit');
@@ -212,6 +222,7 @@ declare global {
       windowIsMaximized(): Promise<boolean>;
       windowGetBounds(): Promise<{ x: number; y: number; width: number; height: number } | null>;
       windowSetBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
+      consumirDeepLinksPendentes?(): DeepLink[];
       on(channel: string, listener: (...args: unknown[]) => void): void;
       off(channel: string, listener: (...args: unknown[]) => void): void;
     };

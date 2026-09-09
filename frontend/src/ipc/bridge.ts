@@ -103,6 +103,7 @@ export interface PonteElectron {
   windowIsMaximized?(): Promise<boolean>;
   windowGetBounds?(): Promise<{ x: number; y: number; width: number; height: number } | null>;
   windowSetBounds?(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
+  consumirDeepLinksPendentes?(): DeepLink[];
   on(channel: string, listener: (...args: unknown[]) => void): void;
   off(channel: string, listener: (...args: unknown[]) => void): void;
 }
@@ -255,14 +256,58 @@ export async function cancelarSaida(): Promise<void> {
   await window.electron?.cancelExit?.();
 }
 
+/**
+ * §3.5 — Deep links já parseados pelo main.
+ *
+ * Buffer de módulo para abertura a frio: links que chegarem antes de `App.tsx` montar
+ * o listener (ou antes da inicialização do React) ficam guardados aqui e são entregues
+ * assim que `ouvirDeepLinks` for registrado.
+ */
+const deepLinksGuardados: DeepLink[] = [];
+let escutaAtiva = false;
+
+if (typeof window !== "undefined") {
+  window.addEventListener("deeplink", (ev: Event) => {
+    if (!escutaAtiva) {
+      const detalhe = (ev as CustomEvent<DeepLink>).detail;
+      if (detalhe !== undefined && detalhe !== null) {
+        deepLinksGuardados.push(detalhe);
+      }
+    }
+  });
+}
+
 /** Deep links já parseados pelo main. Devolve o cancelador. */
 export function ouvirDeepLinks(handler: (link: DeepLink) => void): () => void {
+  escutaAtiva = true;
+
+  // Drena do preload se houver links retidos na partida a frio
+  if (typeof window !== "undefined" && window.electron?.consumirDeepLinksPendentes) {
+    const doPreload = window.electron.consumirDeepLinksPendentes();
+    for (const link of doPreload) {
+      deepLinksGuardados.push(link);
+    }
+  }
+
+  // Drena qualquer link retido antes da assinatura
+  while (deepLinksGuardados.length > 0) {
+    const link = deepLinksGuardados.shift()!;
+    handler(link);
+  }
+
   function aoLink(ev: Event): void {
+    if (typeof window !== "undefined" && window.electron?.consumirDeepLinksPendentes) {
+      window.electron.consumirDeepLinksPendentes();
+    }
     const detalhe = (ev as CustomEvent<DeepLink>).detail;
     if (detalhe !== undefined && detalhe !== null) handler(detalhe);
   }
+
   window.addEventListener("deeplink", aoLink);
-  return () => window.removeEventListener("deeplink", aoLink);
+  return () => {
+    escutaAtiva = false;
+    window.removeEventListener("deeplink", aoLink);
+  };
 }
 
 /**
