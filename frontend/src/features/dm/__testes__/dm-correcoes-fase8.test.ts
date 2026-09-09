@@ -1,8 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
-import { acoesDeChamada, acoesDaConversa } from "../dmRegras";
+import { describe, expect, it } from "vitest";
+import { acoesDeChamada, acoesDaConversa, type DmCallState } from "../dmRegras";
 import { useUiStore } from "../../../store/uiStore";
 import { useDmStore } from "../../../store/dmStore";
-import { useDmCallStore } from "../../../store/dmCallStore";
 
 describe("Fase 8 — Correções de Navegação e Chamadas de DM", () => {
   it("selecionar conversa ou atender deve levar mobilePane para 'content'", () => {
@@ -17,11 +16,11 @@ describe("Fase 8 — Correções de Navegação e Chamadas de DM", () => {
 
   it("quando a conversa não existe no cache, DmCallPanel restringe ações a 'desligar'/'recusar' e não permite 'atender'", () => {
     // Chamada recebida para conversa não indexada
-    const estado = "recebendo";
+    let estado: DmCallState = "recebendo";
     const conversa = undefined;
     const acoes = conversa
       ? acoesDeChamada((conversa as any).state, estado)
-      : estado === "fora"
+      : (estado as string) === "fora"
         ? []
         : ["desligar"];
 

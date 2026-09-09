@@ -473,6 +473,16 @@ export function assinarDmVoz(): void {
       return;
     }
     if (store.conversationId === null) {
+      if (useVoiceStore.getState().channelId !== null) {
+        // §15.4, §20.3 (emenda de 2026-09-09) — chamada concorrente sob a regra "voz é uma só":
+        // se uma chamada de DM for recebida com sessão de voz já em andamento, o sistema recusa
+        // a nova chamada e emite notificação informativa em toast avisando sobre a chamada descartada do par.
+        void api.dmCallLeave(ev.conversationId).catch(() => undefined);
+        useToastStore
+          .getState()
+          .showToast("Chamada de DM descartada porque você já está em uma chamada de voz", "info");
+        return;
+      }
       // Ninguém pediu esta chamada deste lado: é o outro ligando.
       corrente = { conversationId: ev.conversationId, peerKey: ev.peerKey };
       useDmCallStore
@@ -497,17 +507,26 @@ export function assinarDmVoz(): void {
     if (ev.iceServers !== undefined) malha.aplicarIceServers(ev.iceServers);
   });
 
-  // §10, 3.1 — a escolha de microfone vale DURANTE a chamada da conversa, como na
+  // §10, 3.1 — a escolha de microfone, saída e volume valem DURANTE a chamada da conversa, como na
   // comunidade: é também a recuperação do mic ausente, com a chamada de pé.
   useSettingsStore.subscribe((estado, anterior) => {
-    if (estado.microphoneId === anterior.microphoneId) return;
     if (useDmCallStore.getState().conversationId === null) return;
-    malha.trocarMicrofone(estado.microphoneId).then(
-      () => useDmCallStore.getState().microfoneFalhou(null),
-      (e) => {
-        console.log("[voz-dm] troca de microfone falhou:", (e as Error).message);
-        useDmCallStore.getState().microfoneFalhou(motivoDoErroDeMicrofone(e));
-      },
-    );
+
+    if (estado.microphoneId !== anterior.microphoneId) {
+      malha.trocarMicrofone(estado.microphoneId).then(
+        () => useDmCallStore.getState().microfoneFalhou(null),
+        (e) => {
+          console.log("[voz-dm] troca de microfone falhou:", (e as Error).message);
+          useDmCallStore.getState().microfoneFalhou(motivoDoErroDeMicrofone(e));
+        },
+      );
+    }
+
+    if (
+      estado.outputId !== anterior.outputId ||
+      estado.outputVolume !== anterior.outputVolume
+    ) {
+      if (audioDoPar !== null) aplicarSaida(audioDoPar);
+    }
   });
 }

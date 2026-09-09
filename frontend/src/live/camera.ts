@@ -82,6 +82,8 @@ export class CameraDaChamada {
   readonly #eventos: EventosDaCamera;
   #stream: MediaStream | null = null;
   #track: MediaStreamTrack | null = null;
+  #fila: Promise<unknown> = Promise.resolve();
+  #geracao = 0;
 
   constructor(
     malha: PortaDaMalhaDeCamera,
@@ -113,11 +115,24 @@ export class CameraDaChamada {
    *
    * Ligar com a câmera já ligada é troca de dispositivo: a anterior é desligada primeiro,
    * senão duas trilhas ficariam vivas e a luz da câmera antiga continuaria acesa.
+   *
+   * As operações são estritamente enfileiradas (#fila) e versionadas por geração (#geracao):
+   * se um `desligar()` ou `leave()` ocorrer enquanto `capturar()` espera pelo hardware/diálogo
+   * do SO, a trilha é interrompida imediatamente assim que concedida e descartada, sem vazar.
    */
   async ligar(deviceId: string): Promise<{ rotulo: string }> {
-    if (this.#track !== null) await this.desligar();
+    return this.#enfileirar(() => this.#ligar(deviceId));
+  }
+
+  async #ligar(deviceId: string): Promise<{ rotulo: string }> {
+    const g = ++this.#geracao;
+    if (this.#track !== null) await this.#desligar();
     log(`ligando · dispositivo ${deviceId}`);
     const stream = await this.#captura.capturar(deviceId);
+    if (g !== this.#geracao) {
+      for (const t of stream.getTracks()) t.stop();
+      throw Object.assign(new Error("captura cancelada"), { name: "CapturaCanceladaError" });
+    }
     const track = stream.getVideoTracks()[0] ?? null;
     if (track === null) {
       for (const t of stream.getTracks()) t.stop();
@@ -141,8 +156,12 @@ export class CameraDaChamada {
     try {
       await this.#malha.definirVideoLocal(track, stream);
     } catch (e) {
-      await this.desligar();
+      await this.#desligar();
       throw e;
+    }
+    if (g !== this.#geracao) {
+      await this.#desligar();
+      throw Object.assign(new Error("captura cancelada"), { name: "CapturaCanceladaError" });
     }
     log(`ligada · '${track.label}'`);
     return { rotulo: track.label };
@@ -154,6 +173,11 @@ export class CameraDaChamada {
    * malha deixaria a luz da câmera acesa para ninguém.
    */
   async desligar(): Promise<void> {
+    this.#geracao++;
+    return this.#enfileirar(() => this.#desligar());
+  }
+
+  async #desligar(): Promise<void> {
     if (this.#track === null && this.#stream === null) return;
     if (this.#track !== null) this.#track.onended = null;
     await this.#malha.removerVideoLocal().catch(() => undefined);
@@ -161,5 +185,11 @@ export class CameraDaChamada {
     this.#stream = null;
     this.#track = null;
     log("desligada");
+  }
+
+  #enfileirar<T>(op: () => Promise<T>): Promise<T> {
+    const proxima = this.#fila.then(op, op);
+    this.#fila = proxima.catch(() => undefined);
+    return proxima;
   }
 }

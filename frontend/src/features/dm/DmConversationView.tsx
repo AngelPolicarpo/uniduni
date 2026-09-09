@@ -60,6 +60,7 @@ import { useDmCallStore } from "../../store/dmCallStore";
 import { useDmStore } from "../../store/dmStore";
 import { useIdentityStore } from "../../store/identityStore";
 import { useSettingsStore } from "../../store/settingsStore";
+import { useVoiceStore } from "../../store/voiceStore";
 import type { DmConversationItem, DmMessageDto } from "../../ipc/dto";
 
 /**
@@ -109,6 +110,7 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
   const telaLigada = useDmCallStore((s) => s.telaLigada);
   const erroDeTela = useDmCallStore((s) => s.erroDeTela);
   const daConversa = chamadaId === conversa.conversationId;
+  const emVozComunitaria = useVoiceStore((s) => s.channelId !== null);
 
   const [menuAberto, setMenuAberto] = useState(false);
   const [menuTela, setMenuTela] = useState(false);
@@ -163,9 +165,10 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
   const sync = detalhe?.sync ?? conversa.sync;
   const faixa = faixaDeSincronizacao(sync);
   const composer = composerDaConversa(conversa.state, sync);
-  // §15.4 "voz é uma só" / §15: se já existe chamada noutra conversa, não oferece "chamar" aqui
+  const acoes = acoesDaConversa(conversa.state);
+  // §15.4 "voz é uma só" / §15 / emenda de 2026-09-09: se já existe chamada noutra conversa ou em voz comunitária, não oferece "chamar" aqui
   const acoesChamada =
-    chamadaId !== null && !daConversa
+    (chamadaId !== null && !daConversa) || (emVozComunitaria && !daConversa)
       ? []
       : acoesDeChamada(conversa.state, daConversa ? chamadaEstado : "fora");
   const bannerChamada = faixaDeChamada(

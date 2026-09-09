@@ -291,6 +291,20 @@ describe('§15.4 — "voz é uma só" vale numa DM', () => {
     leaveSpy.mockRestore();
     useVoiceStore.setState({ channelId: null });
   });
+
+  it("chamada de DM recebida com chamada de comunidade ativa é recusada no fio com toast (§15.4 / emenda 2026-09-09)", async () => {
+    assinarDmVoz();
+    useVoiceStore.setState({ channelId: "ch-comunidade" });
+    ouvinte("dm.callState")({ conversationId: CONVERSA, peerKey: PAR, on: true });
+
+    expect(api.dmCallLeave).toHaveBeenCalledWith(CONVERSA);
+    expect(toast.showToast).toHaveBeenCalledWith(
+      expect.stringContaining("já está em uma chamada de voz"),
+      "info",
+    );
+    expect(useDmCallStore.getState().estado).toBe("fora");
+    useVoiceStore.setState({ channelId: null });
+  });
 });
 
 describe("§9 (2.3.1) / L-12 — o mudo é efetivo e não sai da máquina", () => {

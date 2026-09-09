@@ -506,6 +506,14 @@ ou busca), a visualização da conversa exibe faixa superior com os botões "Ace
 "Bloquear" (§31.9 regra 1), garantindo que a admissão nunca ocorra por engano e que as
 ações normativas estejam disponíveis em qualquer rota de acesso à conversa.
 
+**Emenda de 2026-09-09 — ciclo de vida e teardown estrito de hardware de mídia WebRTC (§17.2, §17.4, §17.5, §10 3.1).**
+1. **Serialização e cancelamento em `CameraDaChamada` (§17.2, §17.4):** As operações de `ligar` e `desligar` câmera são serializadas por fila assíncrona interna e versionadas por número de geração (`#geracao`). Se um encerramento de chamada (`leave`), troca de canal (`join`) ou desligamento local ocorrer enquanto a captura aguarda a inicialização do dispositivo físico ou permissão do SO, a trilha de hardware concedida posteriormente é imediatamente cancelada (`track.stop()`) sem anexação à malha e sem deixar o LED de hardware aceso.
+2. **Ciclo de vida de sub-recursos na alternância de canais (`useVoiceStore.join`):** Ao transitar diretamente entre salas de voz sem desconexão prévia, estados de sessão como Modo Música (`musicaAtiva`, `musicaErro`) e fila de fala (`fila`, `motivoDaFila`) são obrigatoriamente reiniciados para evitar persistência de estado fantasma na nova sala.
+3. **Liberação obrigatória de Push-to-Talk (PTT) em perda de foco (§10 3.1):** O atalho de transmissão de voz por Push-to-Talk registra ouvinte de `window.blur` para forçar imediatamente `aplicarPTT(false)` ao perder o foco da janela (Alt+Tab, clique fora, notificação nativa), impedindo que o microfone permaneça aberto inadvertidamente.
+4. **Higienização de seleção de tela (`ShareSourceModal`):** A alternância entre abas de captura ("screen" ↔ "window") purga imediatamente fontes e seleção anterior, prevenindo o envio de `sourceId` incompatível com o tipo requisitado ao processo principal do Electron.
+5. **Re-aquisição automática de microfone padrão do SO em hot-unplug:** Ao desconectar o microfone ativo operando sob a escolha `"default"`, o evento `devicechange` tenta automaticamente re-adquirir o novo dispositivo padrão do SO quando a chamada estiver em `somente-escuta` com erro de microfone ativo.
+6. **Consistência de Roster sob Mute (§17.5 item 5):** Participantes marcados como `muted: true` no roster recebido têm obrigatoriamente `speaking: false`, impedindo renderização conflitante do anel animado de voz sobre participante silenciado.
+
 
 ---
 

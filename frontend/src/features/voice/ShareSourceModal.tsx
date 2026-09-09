@@ -118,6 +118,8 @@ export function ShareSourceModal({ onSelect, onClose }: ShareSourceModalProps) {
       const listarFontes = window.electron?.listCaptureSources;
       if (listarFontes === undefined) return;
       setCarregando(true);
+      setFontes(null);
+      setEscolhida(null);
       try {
         const r = await listarFontes({ kind: tipo });
         setFontes(r);
@@ -136,6 +138,8 @@ export function ShareSourceModal({ onSelect, onClose }: ShareSourceModalProps) {
 
   useEffect(() => {
     if (!escolhoAqui) return;
+    setFontes(null);
+    setEscolhida(null);
     void listar(kind);
   }, [kind, listar, escolhoAqui]);
 

@@ -138,6 +138,34 @@ describe("§17.2 — a câmera é da malha", () => {
 
     expect(eventos.aoEncerrarNaFonte).toHaveBeenCalled();
   });
+
+  it("desligar chamado durante captura pendente interrompe a trilha assim que resolvida e não anexa à malha", async () => {
+    let resolverCaptura: ((s: MediaStream) => void) | null = null;
+    const track = trilha();
+    const midia = stream([track]);
+    const malha: PortaDaMalhaDeCamera = {
+      definirVideoLocal: vi.fn(async () => undefined),
+      removerVideoLocal: vi.fn(async () => undefined),
+    };
+    const captura: FabricaDeCameraLocal = {
+      capturar: vi.fn(() => new Promise<MediaStream>((resolve) => { resolverCaptura = resolve; })),
+    };
+    const eventos = { aoEncerrarNaFonte: vi.fn() };
+    const camera = new CameraDaChamada(malha, captura, eventos);
+
+    const ligandoPromise = camera.ligar("default");
+    await vi.waitFor(() => expect(captura.capturar).toHaveBeenCalled());
+    const desligandoPromise = camera.desligar();
+
+    resolverCaptura!(midia);
+
+    await expect(ligandoPromise).rejects.toThrow("captura cancelada");
+    await desligandoPromise;
+
+    expect(track.stop).toHaveBeenCalled();
+    expect(malha.definirVideoLocal).not.toHaveBeenCalled();
+    expect(camera.ligada).toBe(false);
+  });
 });
 
 describe("motivoDoErroDeCamera — cada recusa pede uma ação diferente", () => {

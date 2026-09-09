@@ -1151,13 +1151,18 @@ function configurarVoz(): void {
   // só vê `voiceState` quando o estado muda — e §17.6 limita o resto.
   let vad: ReturnType<typeof setInterval> | null = null;
   let falando = false;
+  let publicado: boolean | null = null;
+  let enviandoVad = false;
   const desligarVad = () => {
     if (vad !== null) clearInterval(vad);
     vad = null;
     falando = false;
+    publicado = null;
+    enviandoVad = false;
   };
   const ligarVad = () => {
     desligarVad();
+    publicado = false;
     vad = setInterval(() => {
       // §17.6 — quem está calado não fala, e o nível do microfone não sabe disso: o mudo
       // imposto com Modo Música corta a trilha MISTURADA e deixa o microfone captando
@@ -1170,12 +1175,21 @@ function configurarVoz(): void {
       // sens 0 → threshold 0.31 (só voz alta); sens 100 → 0.01 (qualquer sussurro).
       const threshold = 0.31 - sens * 0.003;
       const agora = estaFalando(nivel, threshold, falando);
-      if (agora !== falando) {
-        falando = agora;
-        api.voiceSetSelf({ speaking: agora }).catch(() => {
-          // Reverte 'falando' em caso de erro no envio para retentar no próximo tick
-          falando = !agora;
-        });
+      falando = agora;
+      if (agora !== publicado && !enviandoVad) {
+        enviandoVad = true;
+        const envio = agora;
+        api.voiceSetSelf({ speaking: envio })
+          .then(() => {
+            publicado = envio;
+          })
+          .catch(() => {
+            // Em caso de falha de envio, mantém 'publicado' como estava para permitir
+            // retentativa ou reconciliação pelo roster no próximo tick.
+          })
+          .finally(() => {
+            enviandoVad = false;
+          });
       }
     }, 250);
   };
@@ -1400,6 +1414,11 @@ function configurarVoz(): void {
     }
     useVoiceStore.getState().aplicarRoster(dado.participants);
     malha.aplicarRoster(dado.participants);
+    const localId = useVoiceStore.getState().localId?.toLowerCase();
+    const eu = dado.participants.find((p) => p.keyHex.toLowerCase() === localId);
+    if (eu !== undefined && typeof (eu as { speaking?: boolean }).speaking === "boolean") {
+      publicado = (eu as { speaking?: boolean }).speaking!;
+    }
   });
 
   cliente.subscribe("voice.signal", (d) => {
@@ -1580,6 +1599,19 @@ function configurarVoz(): void {
             console.log("[dispositivos] microfone desconectado:", settings.microphoneId, "-> fallback para default");
             settings.setDevice("microphone", "default");
           }
+        } else {
+          // Quando o microfone já é "default" e o dispositivo anterior caiu (ex: headset desconectado),
+          // o SO mudou o default (ex: para o microfone interno). Tenta re-adquirir o novo default.
+          const chamada = useVoiceStore.getState();
+          if (chamada.channelId !== null && chamada.erroDeMicrofone !== null) {
+            console.log("[dispositivos] microfone padrão caiu; tentando re-adquirir novo default do SO");
+            malha.trocarMicrofone("default").then(
+              () => useVoiceStore.getState().microfoneCaiu(null),
+              (e) => {
+                console.log("[dispositivos] recaptura automática de microfone padrão falhou:", (e as Error).message);
+              },
+            );
+          }
         }
       } catch (e) {
         console.warn("[dispositivos] erro no devicechange:", e);
@@ -1639,6 +1671,9 @@ function configurarCamera(malha: MalhaDeVoz): void {
       try {
         await camera.ligar(cameraId);
       } catch (e) {
+        if ((e as { name?: string })?.name === "CapturaCanceladaError") {
+          return { erro: null };
+        }
         // Nunca lança para o store: uma câmera negada é desfecho previsto, e o que sobe é
         // o motivo em português (§20.1).
         console.log("[camera] não ligou:", e);

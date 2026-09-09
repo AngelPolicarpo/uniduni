@@ -728,6 +728,10 @@ export const useVoiceStore = create<VoiceState>()(
           erroDeCamera: null,
           erroDeMicrofone: null,
           erroDeDispositivo: null,
+          musicaAtiva: false,
+          musicaErro: null,
+          fila: null,
+          motivoDaFila: null,
           cameraSeq: 0,
           telaSeq: 0,
           consentRequest: null,
@@ -837,7 +841,7 @@ export const useVoiceStore = create<VoiceState>()(
               );
               return {
                 identityId: p.keyHex,
-                speaking: p.speaking ?? false,
+                speaking: p.muted ? false : (p.speaking ?? false),
                 muted: p.muted ?? false,
                 deafened: p.deafened ?? false,
                 // A câmera do PRÓPRIO nó não vem do host: `cameraOn` no roster é o eco do
@@ -1140,6 +1144,10 @@ export const useVoiceStore = create<VoiceState>()(
         void portaDeCamera
           ?.ligar()
           .then(({ erro }) => {
+            if (get().channelId === null || !get().cameraPendente) {
+              set({ cameraPendente: false, erroDeCamera: null });
+              return;
+            }
             if (erro !== null) {
               set({ cameraPendente: false, erroDeCamera: erro });
               return;
