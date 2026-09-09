@@ -139,7 +139,7 @@ mock.
 | E-8 | Gatilhos desabilitados com host offline, com tooltip (`frontend.md:791`) | `ChannelContextMenu` + `useHostStatus` | — | ops de estrutura **não enfileiram** (`backend.md:1843-1846`) | — | — | `host.wentOffline` → "+" visível e desabilitado | `E_HOST_UNAVAILABLE` na hora | **COMPLETE** |
 | E-9 | Silenciar canal (1.1.1) — preferência local de quem lê | `toggleChannelMuted` (`:177`) | `channel.setMuted` — local (`backend.md:1448`) | — | — | `local_channel_pref.muted` | — → ícone de mudo, sem destaque de não-lida | — | **COMPLETE** |
 | E-10 | Marcar como lido — zera contador **e menções** (`frontend.md:489`) | `markChannelRead` (`:178`) | `channel.markRead` → `{unreadCount:0}` (`backend.md:1449`) | — | — | `local_read_state` | `unread.changed` → divisor vai pro fim | ⚠ o retorno só declara `unreadCount`, não `pendingMentions` | **PARTIAL** (`RT-03`) |
-| E-11 | "Copiar link do canal" → `/m/:code` da 1ª não lida (`frontend.md:491`) | `lib/messageLink.ts` (base64url) | ✗ nenhum comando gera o token | — | — | — | — → toast "Link copiado" | — | **MISSING** (`RT-04`) |
+| E-11 | "Copiar link do canal" → `/m/:code` da 1ª não lida (`frontend.md:533`) | `ChannelContextMenu.tsx`, `messageLink.ts` | rota consumida pelo renderer via `encodeMessageRef` (1ª não lida) e oculta se vazio | — | — | — | — → toast "Link copiado" | — | **COMPLETE (UI)** (`RT-04`) |
 | E-12 | Canal de voz lista **participantes inline** na sidebar (1.1, `frontend.md:473`) | `Channel.voiceParticipantIds` (`types.ts:145`) | `query.structure` devolve só `live` (`backend.md:1616`) | — | `voiceRoster` é enviado **só aos participantes** (`backend.md:1681`) | efêmero, não persiste | — → avatares inline + pill "AO VIVO" | — | **MISSING** (`RT-05`) |
 ### 2.5 Mensagens (2.1, C9, B4)
 

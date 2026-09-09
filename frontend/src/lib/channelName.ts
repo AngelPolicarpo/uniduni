@@ -22,5 +22,5 @@ export function channelSlug(input: string): string {
 
 /** Como o nome digitado vai ficar de fato, já pelo tipo do canal. */
 export function channelName(type: ChannelType, input: string): string {
-  return type === "text" ? channelSlug(input) : input.trim();
+  return type === "text" ? channelSlug(input) : input.trim().normalize("NFKC");
 }

@@ -10521,3 +10521,30 @@ Seis, todas em `backend-v2.md`, mais uma correção em `frontend.md`:
 - **Nenhuma tela desta fatia tem teste de render** (`B20`). O divisor de não lidas, o botão
   de reconectar e o indicador de digitação estão cobertos pelo dado que os alimenta, não
   pelo JSX.
+
+---
+
+## 135. Fase 7 — Canal de Texto, Composer, Mensagens, Threads, Menções, Modais e Busca (Auditoria e Fechamento)
+
+> **Data:** 2026-09-09.  
+> **Escopo:** Auditoria adversária e fechamento técnico da Camada 2 (mensagens, composer, threads, menções) e modais de canais e busca rápida.  
+> **Resultado:** 11 achados calibrados e corrigidos, 6 novos testes de unidade, 697 testes no frontend (100% verde) e build de produção sem erros.
+
+### 135.1 O que foi corrigido no código
+
+1. **"Copiar link do canal" (`ChannelContextMenu.tsx`):** Oculta o item se o canal não possui mensagens (`messages.length === 0`). Se houver mensagens, aponta para a primeira mensagem não lida (ou a mais recente) codificada via `linkDeMensagem` no formato `/m/:code` válido com esquema `https://` (`frontend.md:533`, `E-11/RT-04`).
+2. **`ThreadPanel` com raiz fora da janela ou tombstonada (`ThreadPanel.tsx`, `messageStore.ts`, `sincronizacao.ts`):** `dto.root` de `query.thread` passa a ser preservado em `threadLeituras`. O painel faz fallback para `leitura?.root` quando a raiz é ejetada da janela de 50 mensagens do canal ou tombstonada, e exibe estado de carregamento enquanto hidrata em vez de fechar (`frontend.md:651-656`).
+3. **Limpeza do tópico de canal na edição (`ChannelDialogs.tsx`):** Ao apagar o tópico, a chave `topic: ""` é despachada explicitamente no payload de `api.channelUpdate`, permitindo que o fold do núcleo (`apply.ts:1068`, §8.6) zere o tópico persistido.
+4. **"Copiar link da mensagem" com protocolo seguro (`MessageActions.tsx`, `messageLink.ts`):** Unificado via `linkDeMensagem`, prefixando com `https://${INVITE_LINK_HOST}/m/${code}` em vez de domínio cru sem protocolo (`docs/backlog.md` B77).
+5. **Criação de canal somente-leitura sem cargo (`ChannelDialogs.tsx`, `channelFormModel.ts`):** Validação de cliente que bloqueia a submissão com erro explícito inline e botão desabilitado quando `readOnly` está ativo mas nenhum cargo foi selecionado em `canPostRoleIds`.
+6. **Descolamento de pill de menção após alteração de apelido (`MessageContent.tsx`):** `useMentionTokens` agora inclui tanto o apelido dinâmico quanto o nome de exibição original (`member.displayName`), preservando a renderização visual do pill nas mensagens históricas.
+7. **Teto de 32 code points e normalização Unicode NFKC (`channelFormModel.ts`, `channelName.ts`):** Formulário de canais valida `Array.from(resolved).length <= 32` no cliente e aplica `.normalize("NFKC")` universalmente em canais de voz (§8.6 e §8.7).
+8. **Aba Links do canal (`ChannelInfoPanel.tsx`):** Filtra apenas esquemas web HTTP/HTTPS (`/^https?:\/\//i`), expurgando `mailto:`, e impõe teto de exibição de até 8 links mais recentes (`docs/deltas-ux-v2.md:511`).
+9. **Atalho `Shift + clique` e sino de silenciamento (`ChannelListItem.tsx`, `ChannelHeader.tsx`):** Implementado o atalho `Shift + clique` no canal para alternar notificações (`frontend.md:536`) e adicionado o botão com ícone de sino (`Bell`/`BellOff`) no cabeçalho do canal sincronizado com `channel.muted`.
+10. **Proteção de IME na edição de mensagens (`MessageEditor.tsx`):** Adicionada ref `composing.current` e listeners `onCompositionStart` / `onCompositionEnd`, evitando que o Enter dispare envio precoce durante composição CJK/acentuação (paridade com `Composer.tsx:201`).
+11. **Desambiguação de escopo na busca rápida (`useSearchQuery.ts`):** O operador explícito `filters.channelId` (`in:canal`) desativa o `scopeChannelId` do canal ativo, evitando interseção vazia no núcleo.
+
+### 135.2 Validação
+
+- `frontend`: 51 arquivos de teste, **697** testes passando (6 novos em `channelFormValidation.test.ts`).
+- `frontend`: `npm run build` executado com sucesso (verificação de casing, `tsc -b`, bundling Vite).

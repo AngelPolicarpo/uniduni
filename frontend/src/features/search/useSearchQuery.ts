@@ -96,7 +96,8 @@ export function useSearchQuery({
           ...(filters.date ? { date: filters.date } : {}),
           ...(filters.kind ? { kind: filters.kind } : {}),
         },
-        ...(scope === "channel" && activeChannel
+        // Se o usuário especificou in:canal explicitamente, o filtro tem precedência sobre o canal ativo.
+        ...(scope === "channel" && activeChannel && !filters.channelId
           ? { scopeChannelId: activeChannel.id }
           : {}),
         // **B12 — `limitPerGroup` nunca era enviado.** Sem ele o núcleo aplicava o default

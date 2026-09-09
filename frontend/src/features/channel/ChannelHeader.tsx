@@ -1,8 +1,9 @@
-import { ChevronLeft, Hash, MessagesSquare, Pin, Search, Users, Volume2 } from "lucide-react";
+import { Bell, BellOff, ChevronLeft, Hash, MessagesSquare, Pin, Search, Users, Volume2 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { useUiStore } from "../../store/uiStore";
+import { useCommunityStore } from "../../store/communityStore";
 import type { Channel } from "../../domain/types";
 
 /**
@@ -61,6 +62,9 @@ export function ChannelHeader({ channel, onBack }: ChannelHeaderProps) {
   const toggleChannelInfoPanel = useUiStore(
     (state) => state.toggleChannelInfoPanel,
   );
+  const toggleChannelMuted = useCommunityStore(
+    (state) => state.toggleChannelMuted,
+  );
   const openSearch = useUiStore((state) => state.openSearch);
 
   return (
@@ -102,6 +106,12 @@ export function ChannelHeader({ channel, onBack }: ChannelHeaderProps) {
       )}
 
       <div className="ml-auto flex shrink-0 items-center gap-0.5">
+        <HeaderAction
+          label={channel.muted ? "Reativar notificações" : "Silenciar canal"}
+          icon={channel.muted ? BellOff : Bell}
+          onSelect={() => toggleChannelMuted(channel.id)}
+          active={channel.muted}
+        />
         <HeaderAction label="Threads" icon={MessagesSquare} />
         {/* §9, 2.1.2 — o alfinete abre o acervo do canal, no slot direito. */}
         <HeaderAction

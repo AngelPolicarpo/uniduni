@@ -35,12 +35,14 @@ export interface ChannelFormErrors {
   name?: string;
   category?: string;
   queueTurnSeconds?: string;
+  readOnly?: string;
 }
 
 /**
  * §13 — nome obrigatório, e em canal de texto ele não pode normalizar pra
  * vazio (o nome é o endereço do canal). Duplicidade é bloqueante dentro da
  * mesma comunidade, diferente do nome de comunidade, onde duplicar só avisa.
+ * §8.6 — teto de 32 code points.
  */
 export function validateChannelForm(
   value: ChannelFormValue,
@@ -48,11 +50,14 @@ export function validateChannelForm(
 ): ChannelFormErrors {
   const errors: ChannelFormErrors = {};
   const resolved = channelName(value.type, value.name);
+  const cpCount = Array.from(resolved).length;
 
   if (value.name.trim().length === 0)
     errors.name = "Digite um nome para o canal.";
   else if (resolved.length === 0)
     errors.name = "Use ao menos uma letra ou número.";
+  else if (cpCount > 32)
+    errors.name = "O nome pode ter no máximo 32 caracteres.";
   else if (takenNames.includes(resolved.toLowerCase()))
     errors.name =
       value.type === "text"
@@ -69,6 +74,10 @@ export function validateChannelForm(
     const n = value.queueTurnSeconds;
     if (!Number.isInteger(n) || n < QUEUE_TURN_MIN || n > QUEUE_TURN_MAX)
       errors.queueTurnSeconds = `O turno vai de ${QUEUE_TURN_MIN} a ${QUEUE_TURN_MAX} segundos.`;
+  }
+
+  if (value.readOnly && value.canPostRoleIds.length === 0) {
+    errors.readOnly = "Selecione ao menos um cargo com permissão para postar.";
   }
 
   return errors;

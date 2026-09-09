@@ -2,12 +2,13 @@ import type { ReactNode } from "react";
 import { Bell, BellOff, Check, Link2, Pencil, Trash2 } from "lucide-react";
 import { Menu } from "../ui/Menu";
 import type { MenuItem } from "../ui/Menu";
-import { INVITE_LINK_HOST } from "../../mocks/dataset";
 import { copiarTexto } from "../../lib/copiar";
+import { linkDeMensagem } from "../../lib/messageLink";
 import {
   useChannelCount,
   useCommunityStore,
 } from "../../store/communityStore";
+import { useChannelMessages } from "../../store/messageStore";
 import { useToastStore } from "../../store/toastStore";
 import { useUiStore } from "../../store/uiStore";
 import type { Channel } from "../../domain/types";
@@ -47,8 +48,10 @@ export function ChannelContextMenu({
   const openChannelDialog = useUiStore((state) => state.openChannelDialog);
   const showToast = useToastStore((state) => state.showToast);
   const channelCount = useChannelCount(channel.communityId);
+  const messages = useChannelMessages(channel.id);
 
   const isText = channel.type === "text";
+  const hasMessages = messages.length > 0;
   const hasUnread = channel.unreadCount > 0 || channel.pendingMentions > 0;
 
   const items: MenuItem[] = [];
@@ -76,17 +79,31 @@ export function ChannelContextMenu({
     onSelect: () => toggleChannelMuted(channel.id),
   });
 
-  if (isText)
+  // §8, 1.1.1 e docs/frontend.md:533 — "Copiar link do canal" só aparece pra
+  // canal de texto; produz um link /m/:code apontando pra primeira mensagem
+  // não lida (§4). Sem mensagem nenhuma no canal, o item some.
+  if (isText && hasMessages) {
+    const targetMessage =
+      channel.unreadCount > 0
+        ? messages[Math.max(0, messages.length - channel.unreadCount)]!
+        : messages[messages.length - 1]!;
+
     items.push({
       id: "copy-link",
       label: "Copiar link do canal",
       icon: <Link2 size={ICON} strokeWidth={2} />,
       onSelect: () => {
-        void copiarTexto(`${INVITE_LINK_HOST}/m/${channel.id}`).then((ok) =>
+        const link = linkDeMensagem({
+          communityId: channel.communityId,
+          channelId: channel.id,
+          messageId: targetMessage.id,
+        });
+        void copiarTexto(link).then((ok) =>
           showToast(ok ? "Link copiado" : "Não foi possível copiar o link", ok ? "success" : "error"),
         );
       },
     });
+  }
 
   if (canManage && hostOnline) {
     items.push({

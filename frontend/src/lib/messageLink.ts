@@ -1,3 +1,5 @@
+import { INVITE_LINK_HOST } from "../mocks/dataset";
+
 /**
  * Link de mensagem (§4, rota `/m/:code` · premissa 10).
  *
@@ -29,6 +31,11 @@ export function encodeMessageRef(ref: MessageRef): string {
   return toBase64Url(
     JSON.stringify([ref.communityId, ref.channelId, ref.messageId]),
   );
+}
+
+/** Formato copiado para a área de transferência com protocolo seguro https. */
+export function linkDeMensagem(ref: MessageRef): string {
+  return `https://${INVITE_LINK_HOST}/m/${encodeMessageRef(ref)}`;
 }
 
 export function decodeMessageRef(code: string): MessageRef | null {

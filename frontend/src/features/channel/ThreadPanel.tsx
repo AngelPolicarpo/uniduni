@@ -39,10 +39,10 @@ export function ThreadPanel({
   onClose,
 }: ThreadPanelProps) {
   const messages = useChannelMessages(channel.id);
-  const root = messages.find((message) => message.id === rootMessageId);
   const thread = useThreadForRoot(rootMessageId);
   const doCanal = useThreadReplies(channel.id, thread);
   const leitura = useThreadLeitura(thread?.id);
+  const root = messages.find((message) => message.id === rootMessageId) ?? leitura?.root;
   const hidratarThread = useMessageStore((state) => state.hidratarThread);
   // A leitura de `query.thread` NÃO passa por `compose`: ela vem direto do núcleo.
   // Sem estes dois, a resposta antiga que a pessoa acabou de apagar reaparecia
@@ -55,7 +55,18 @@ export function ThreadPanel({
     if (threadIdReal !== undefined) hidratarThread(channel.communityId, threadIdReal);
   }, [threadIdReal, channel.communityId, hidratarThread]);
 
-  if (!root) return null;
+  if (!root) {
+    if (threadIdReal !== undefined && leitura === undefined) {
+      return (
+        <SlidePanel title="Thread" onClose={onClose} width={320}>
+          <div className="flex flex-1 items-center justify-center p-8">
+            <span className="text-body text-text-tertiary">Carregando thread…</span>
+          </div>
+        </SlidePanel>
+      );
+    }
+    return null;
+  }
 
   const respostas = mesclarRespostas(doCanal, leitura?.respostas, overrides, deletedIds);
 

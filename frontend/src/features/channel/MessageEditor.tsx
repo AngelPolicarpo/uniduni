@@ -27,6 +27,7 @@ export function MessageEditor({ message, onCancel, onSave }: MessageEditorProps)
   const [base, setBase] = useState(message.content);
   const desatualizado = message.content !== base;
   const ref = useRef<HTMLTextAreaElement>(null);
+  const composing = useRef(false);
 
   useEffect(() => {
     const el = ref.current;
@@ -66,12 +67,14 @@ export function MessageEditor({ message, onCancel, onSave }: MessageEditorProps)
           event.target.style.height = "auto";
           event.target.style.height = `${event.target.scrollHeight}px`;
         }}
+        onCompositionStart={() => (composing.current = true)}
+        onCompositionEnd={() => (composing.current = false)}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
             onCancel();
           }
-          if (event.key === "Enter" && !event.shiftKey) {
+          if (event.key === "Enter" && !event.shiftKey && !composing.current) {
             event.preventDefault();
             save();
           }

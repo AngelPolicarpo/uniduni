@@ -12,7 +12,7 @@ import {
   useVoiceChannelParticipantIds,
 } from "../../store/voiceStore";
 import type { Channel } from "../../domain/types";
-import { useFindMember } from "../../store/communityStore";
+import { useCommunityStore, useFindMember } from "../../store/communityStore";
 
 export interface ChannelListItemProps {
   channel: Channel;
@@ -71,6 +71,9 @@ export function ChannelListItem({
     identityId: string;
     anchor: DOMRect;
   } | null>(null);
+  const toggleChannelMuted = useCommunityStore(
+    (state) => state.toggleChannelMuted,
+  );
   const isVoice = channel.type === "voice";
   // A ocupação vem do núcleo; a chamada em curso sobrepõe, senão a lista não
   // mostraria a identidade local depois que ela entra.
@@ -173,7 +176,19 @@ export function ChannelListItem({
 
         <button
           type="button"
-          onClick={isVoice ? onJoinVoice : onSelect}
+          onClick={(event) => {
+            // docs/frontend.md:536 — Atalho: Shift + clique no canal na lista.
+            if (event.shiftKey) {
+              event.preventDefault();
+              toggleChannelMuted(channel.id);
+              return;
+            }
+            if (isVoice) {
+              onJoinVoice?.();
+            } else {
+              onSelect?.();
+            }
+          }}
           aria-current={active ? "true" : undefined}
           className={rowClass}
         >

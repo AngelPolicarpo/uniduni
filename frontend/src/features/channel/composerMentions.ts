@@ -21,10 +21,11 @@ interface ActiveMention {
  * adivinhação).
  */
 const DEPOIS_DA_MENCAO = /[\p{L}\p{N}_]/u;
+const ANTES_DA_MENCAO = /[\s([{"'«]/;
 
 function ehMencaoEm(content: string, inicio: number, token: string): boolean {
   const antes = inicio === 0 ? "" : content[inicio - 1]!;
-  if (antes !== "" && !/\s/.test(antes)) return false;
+  if (antes !== "" && !ANTES_DA_MENCAO.test(antes)) return false;
   const depois = content[inicio + token.length];
   return depois === undefined || !DEPOIS_DA_MENCAO.test(depois);
 }
@@ -57,7 +58,7 @@ export function findMentionQuery(
   const before = value.slice(0, caret);
   const at = before.lastIndexOf("@");
   if (at === -1) return null;
-  if (at > 0 && !/\s/.test(before[at - 1])) return null;
+  if (at > 0 && !ANTES_DA_MENCAO.test(before[at - 1]!)) return null;
 
   const text = before.slice(at + 1);
   if (/[\s,.;:!?]/.test(text)) return null;
@@ -143,9 +144,9 @@ export function useComposerMentions({
     setQuery(found);
   }
 
-  function applyMention(candidate: MentionCandidate) {
+  function applyMention(candidate: MentionCandidate | undefined) {
     const el = textareaRef.current;
-    if (!el || !query) return;
+    if (!el || !query || !candidate) return;
 
     const token = mentionToken(candidate);
     const caret = el.selectionStart;

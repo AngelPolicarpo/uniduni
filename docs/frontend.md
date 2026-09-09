@@ -545,7 +545,7 @@ Breakpoints referenciados nas specs de tela abaixo (detalhados na íntegra em §
 
 **Objetivo:** encontrar mensagens/canais/membros, com dois escopos (inline no canal atual e global com filtros) no mesmo componente.
 **Layout:** overlay centralizado no topo (~600px), scrim atrás, `surface-elevated`.
-**Estrutura:** campo com placeholder "Buscar em Vale do Código" (ou "Buscar em #geral" se aberto pelo ícone de busca do canal — escopo inicial = canal atual, expansível pra comunidade inteira); linha de filtros (chips: Autor, Canal, Data, Tipo — anexo/link/fixado); resultados agrupados por tipo (Mensagens, Canais, Membros) conforme digita.
+**Estrutura:** campo com placeholder "Buscar em Vale do Código" (ou "Buscar em #geral" se aberto pelo ícone de busca do canal — escopo inicial = canal atual, expansível pra comunidade inteira); linha de filtros (chips: Autor, Canal, Data, Tipo — anexo/link/fixado; o operador explícito de canal tem precedência sobre o canal ativo, evitando restrição cruzada); resultados agrupados por tipo (Mensagens, Canais, Membros) conforme digita.
 **Conteúdo mockado:** buscar "revisar" retorna a mensagem de Bianca Souza em `#geral` (dataset §2), trecho destacado, contexto (autor, canal, "hoje 09:41").
 **Ações:** digitar, aplicar/remover filtro, clicar resultado (navega e destaca a mensagem), limpar, fechar (`Esc`).
 **Interações:** navegação por teclado entre resultados (setas + Enter); debounce ~250ms.
@@ -874,7 +874,7 @@ Só o apresentador vê isso — nunca espectadores, nem os que estão retransmit
 **Registro no log de auditoria:** criar e excluir canal ou categoria entram no log de 3.3, como já acontece com cargos ("Rafael Mendes criou o cargo Contribuidor", §2). O log é da comunidade, não só de punições.
 
 **Estados:**
-- Campos nos estados padrão de formulário (§13) · **nome duplicado** na mesma comunidade → erro inline no blur ("Já existe um canal #ajuda-design nesta comunidade") · **nome que normaliza pra vazio** (ex.: só emoji num canal de texto) → "Use ao menos uma letra ou número".
+- Campos nos estados padrão de formulário (§13) · **nome duplicado** na mesma comunidade → erro inline no blur ("Já existe um canal #ajuda-design nesta comunidade") · **nome que normaliza pra vazio** (ex.: só emoji num canal de texto) → "Use ao menos uma letra ou número" · **nome > 32 code points** → "O nome pode ter no máximo 32 caracteres" (§8.6) · **somente-leitura sem cargo** → bloqueio com erro inline ("Selecione ao menos um cargo com permissão para postar") e botão desabilitado.
 - **Criando** → botão em loading (§6). **Criado** → o canal aparece na lista, vira o canal ativo e o composer recebe foco, com o empty state de 2.1 ("Este é o início de #ajuda-design"). Sem toast: o resultado visível já é a confirmação (§12).
 - **Host offline** (ex.: Ateliê Aberto) → gatilhos ficam **visíveis e desabilitados**, com tooltip "Ateliê Aberto está offline — a estrutura de canais só muda com o host conectado". Exceção deliberada à regra de ocultar-não-desabilitar de §15: lá o motivo é permissão (a ação não é sua), aqui é estado de rede transitório (a ação é sua, o momento é que não é) — esconder faria parecer que a permissão sumiu.
 - **Canal ativo excluído** → navega pro primeiro canal de texto da comunidade, com toast "#ajuda-design foi excluído".

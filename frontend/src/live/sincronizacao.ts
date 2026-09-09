@@ -647,6 +647,7 @@ function configurarEscritaDeMensagem(): void {
           if (dto === null) return;
           const eu = useCommunityStore.getState().remote.euId;
           useMessageStore.getState().aplicarThreadRemota(threadId, {
+            root: dto.root ? adaptarMensagem(dto.root, eu) : undefined,
             respostas: dto.replies.map((m) => adaptarMensagem(m, eu)),
             total: dto.replyCount,
           });

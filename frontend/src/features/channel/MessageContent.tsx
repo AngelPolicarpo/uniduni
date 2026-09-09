@@ -11,18 +11,28 @@ import type { Message } from "../../domain/types";
 function useMentionTokens(message: Message, communityId: string): string[] {
   const findMember = useFindMember();
   return useCommunityStore(
-    useShallow((state) =>
-      message.mentions
-        .map((id) => {
-          if (id === "everyone") return "@everyone";
-          const member = findMember(communityId, id);
-          if (member)
-            return `@${selectMemberLabel(state, communityId, id)}`;
-          const role = selectRole(state, id);
-          return role ? `@${role.name}` : null;
-        })
-        .filter((token): token is string => token !== null),
-    ),
+    useShallow((state) => {
+      const tokens: string[] = [];
+      for (const id of message.mentions) {
+        if (id === "everyone") {
+          tokens.push("@everyone");
+          continue;
+        }
+        const member = findMember(communityId, id);
+        if (member) {
+          const currentLabel = selectMemberLabel(state, communityId, id);
+          tokens.push(`@${currentLabel}`);
+          if (member.displayName && member.displayName !== currentLabel) {
+            tokens.push(`@${member.displayName}`);
+          }
+        }
+        const role = selectRole(state, id);
+        if (role) {
+          tokens.push(`@${role.name}`);
+        }
+      }
+      return tokens;
+    }),
   );
 }
 

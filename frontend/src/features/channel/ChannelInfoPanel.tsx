@@ -31,7 +31,7 @@ function urlsDaMensagem(content: string): string[] {
   const achadas: string[] = [];
   const visitar = (nos: readonly No[]): void => {
     for (const no of nos) {
-      if (no.t === "link") achadas.push(no.href);
+      if (no.t === "link" && /^https?:\/\//i.test(no.href)) achadas.push(no.href);
       else if (no.t === "negrito" || no.t === "italico") visitar(no.filhos);
     }
   };
@@ -139,7 +139,8 @@ export function ChannelInfoPanel({
         found.push({ id: `${message.id}-${i}`, url, host, message });
       }
     }
-    return found.reverse();
+    // §9, 2.1.2 e docs/deltas-ux-v2.md:511 — lista até 8 links web mais recentes.
+    return found.reverse().slice(0, 8);
   }, [messages]);
 
   function jumpTo(message: Message) {

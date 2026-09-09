@@ -126,11 +126,10 @@ function CreateChannelModal({ community, categoryId }: CreateChannelModalProps) 
     if (creating) return;
 
     const found = validateChannelForm(value, takenNames);
-    if (found.name || found.category || found.queueTurnSeconds) {
+    if (found.name || found.category || found.queueTurnSeconds || found.readOnly) {
       setErrors(found);
       return;
     }
-    if (value.readOnly && value.canPostRoleIds.length === 0) return;
 
     setCreating(true);
     setRecusa(null);
@@ -230,7 +229,10 @@ function CreateChannelModal({ community, categoryId }: CreateChannelModalProps) 
               type="submit"
               size="lg"
               loading={creating}
-              disabled={value.name.trim().length === 0}
+              disabled={
+                value.name.trim().length === 0 ||
+                (value.readOnly && value.canPostRoleIds.length === 0)
+              }
             >
               Criar canal
             </Button>
@@ -321,7 +323,7 @@ function EditChannelModal({ community, channel }: EditChannelModalProps) {
   const nomeResolvido = channelName(value.type, value.name);
   const topicoNovo = value.topic.trim() === "" ? undefined : value.topic.trim();
   const mudouNome = nomeResolvido !== channel.name;
-  const mudouTopico = topicoNovo !== channel.topic;
+  const mudouTopico = (topicoNovo ?? "") !== (channel.topic ?? "");
   const mudouReadOnly = !sameRoleIds(alvoReadOnly, readOnlyIds);
   const mudouCategoria =
     value.categoryId !== channel.categoryId && value.categoryId !== NEW_CATEGORY;
@@ -354,7 +356,7 @@ function EditChannelModal({ community, channel }: EditChannelModalProps) {
     if (salvando || !sujo) return;
     const found = validateChannelForm(value, takenNames);
     setErrors(found);
-    if (found.name || found.category || found.queueTurnSeconds) return;
+    if (found.name || found.category || found.queueTurnSeconds || found.readOnly) return;
 
     setSalvando(true);
     setRecusa(null);
@@ -364,7 +366,7 @@ function EditChannelModal({ community, channel }: EditChannelModalProps) {
           communityId: community.id,
           channelId: channel.id,
           ...(mudouNome ? { name: nomeResolvido } : {}),
-          ...(mudouTopico && topicoNovo !== undefined ? { topic: topicoNovo } : {}),
+          ...(mudouTopico ? { topic: topicoNovo ?? "" } : {}),
           ...(mudouReadOnly ? { readOnlyForRoleIds: alvoReadOnly } : {}),
           ...(mudouModo ? { speechMode: speechModeNumber(value.speechMode) } : {}),
           ...(mudouTurno ? { queueTurnSeconds: value.queueTurnSeconds } : {}),
@@ -410,7 +412,11 @@ function EditChannelModal({ community, channel }: EditChannelModalProps) {
           <Button
             onClick={() => void salvar()}
             loading={salvando}
-            disabled={!sujo || semHost}
+            disabled={
+              !sujo ||
+              semHost ||
+              (value.readOnly && value.canPostRoleIds.length === 0)
+            }
             title={semHost ? OFFLINE_HINT : undefined}
           >
             Salvar alterações

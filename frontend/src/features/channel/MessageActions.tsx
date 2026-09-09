@@ -18,12 +18,11 @@ import type { MenuItem } from "../../components/ui/Menu";
 import { Modal } from "../../components/ui/Modal";
 import { EmojiPicker } from "./EmojiPicker";
 import { ModerationDialog } from "../moderation/ModerationDialog";
-import { INVITE_LINK_HOST } from "../../mocks/dataset";
 import { selectCanModerate, useCommunityStore, useFindMember, useHasPermission } from "../../store/communityStore";
 import { useMessageStore, useThreadForRoot } from "../../store/messageStore";
 import { useToastStore } from "../../store/toastStore";
 import { useUiStore } from "../../store/uiStore";
-import { encodeMessageRef } from "../../lib/messageLink";
+import { linkDeMensagem } from "../../lib/messageLink";
 import { copiarTexto } from "../../lib/copiar";
 import type { Message } from "../../domain/types";
 
@@ -99,11 +98,11 @@ export function MessageActions({
   async function handleCopyLink() {
     // §4 — o code empacota comunidade+canal+mensagem, para o link não
     // anunciar a estrutura da comunidade a quem não é membro.
-    const link = `${INVITE_LINK_HOST}/m/${encodeMessageRef({
+    const link = linkDeMensagem({
       communityId,
       channelId: message.channelId,
       messageId: message.id,
-    })}`;
+    });
     if (await copiarTexto(link)) showToast("Link copiado");
     else showToast("Não foi possível copiar o link", "error");
   }
