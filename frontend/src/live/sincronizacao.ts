@@ -20,6 +20,7 @@ import { codigoDoErro } from "../ipc/frames";
 import { numeroDaCor } from "../ipc/cores";
 import { estaFalando } from "./vad";
 import { descartarGravacao } from "./gravacao";
+import { assinarSons, notificarNaoLidasDeCanal, obterContainerDeAudio } from "./sons";
 import type {
   EvMessageAccepted,
   EvMessageFailed,
@@ -783,7 +784,23 @@ export function assinarSincronizacao(): void {
     }
   });
   cliente.subscribe("host.statusChanged", () => void sincronizarComunidades());
-  cliente.subscribe("unread.changed", () => {
+  cliente.subscribe("unread.changed", (d) => {
+    // `unread.ts` emite a MESMA topic para canal e para thread, e a de thread não traz
+    // `channelId` — nem deve avisar: a resposta em fio já contou como não-lida do canal.
+    const ev = d as {
+      communityId?: string;
+      channelId?: string;
+      unreadCount?: number;
+      pendingMentions?: number;
+    };
+    if (typeof ev.communityId === "string" && typeof ev.channelId === "string") {
+      notificarNaoLidasDeCanal({
+        communityId: ev.communityId,
+        channelId: ev.channelId,
+        unreadCount: ev.unreadCount ?? 0,
+        pendingMentions: ev.pendingMentions ?? 0,
+      });
+    }
     void sincronizarComunidades();
     recarregarAtiva();
   });
@@ -2012,18 +2029,6 @@ function configurarTela(malha: MalhaDeVoz): void {
  */
 const audios = new Map<string, HTMLAudioElement>();
 
-function obterContainerDeAudio(): HTMLElement | null {
-  if (typeof document === "undefined") return null;
-  let el = document.getElementById("p2p-audio-container");
-  if (el === null) {
-    el = document.createElement("div");
-    el.id = "p2p-audio-container";
-    el.style.display = "none";
-    document.body.appendChild(el);
-  }
-  return el;
-}
-
 function tocar(peerHex: string, stream: MediaStream): void {
   let el = audios.get(peerHex);
   if (el === undefined) {
@@ -2154,6 +2159,10 @@ async function ligarProduto(): Promise<void> {
   void sincronizarPrefsDm();
   const cid = useCommunityStore.getState().activeCommunityId;
   if (cid !== null) await abrirComunidade(cid);
+  // Os sons entram por ÚLTIMO, e é o que separa "chegou agora" de "já estava aqui": o
+  // primeiro `fold` de uma réplica recém-chegada produz um `unread.changed` por canal, e
+  // armar antes disto faria o app subir tocando a caixa de entrada inteira.
+  assinarSons();
 }
 
 let sincronizacaoLigada = false;

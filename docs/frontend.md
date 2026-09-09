@@ -63,7 +63,7 @@ Onde o `CLAUDE.md` não define algo e a decisão não justificava outra rodada d
 4. **Convites** sem expiração por padrão, mas configuráveis (expiração e limite de usos) na criação, e revogáveis a qualquer momento.
 5. **Mensagem enviada com o host offline** entra numa fila local ("pendente de envio") em vez de bloquear o composer — consistente com o modelo de réplica local do Hypercore e com apps offline-first. **A fila é durável:** sobrevive a fechar e reabrir o app, senão "será enviada quando o host voltar" é uma promessa que o produto não cumpre (§18 e §12 detalham o que a interface mostra ao reabrir com fila pendente).
 6. **Réplica local de quem não é host é parcial**: só o que sincronizou enquanto esteve online. Busca em modo cache/offline pode retornar resultado incompleto, e a interface comunica isso explicitamente.
-7. **Notificações**: badge de não-lido e mute por canal/comunidade fazem parte do v1; notificação nativa do SO fica fora (depende da premissa 1).
+7. **Notificações**: badge de não-lido e mute por canal/comunidade fazem parte do v1; notificação nativa do SO fica fora (depende da premissa 1). **Emenda de 2026-09-09 (§136):** o **retorno sonoro** entra no v1 e está especificado em §10, 3.1a — ele não depende da premissa 1 (é `<audio>` do renderer, não superfície do SO), e a notificação nativa do SO continua fora, agora por decisão de §25.4 regra 7, que recusa a permissão.
 8. Bloco de código monoespaçado faz parte do "markdown básico" do composer (coerente com o escopo "completo, estilo Discord").
 9. **Câmera é escopo, e é mesh como a voz.** `CLAUDE.md:1` chama o produto de "voz/vídeo/tela" e §2 dá `câmeraOn` ao participante, então vídeo de câmera fica dentro (§9, 2.3.2). Mas a árvore de multicast de `CLAUDE.md:12-19` é sobre **transmissão para audiência**; câmera numa chamada é poucos-para-poucos, então segue o mesmo mesh direto da voz, sem topologia em árvore. Alternativa descartada: cortar câmera do v1 — contradiria o nome do próprio produto.
 10. **Link de mensagem é endereçável; canal e comunidade não.** §4 ganha uma terceira rota só pra mensagem (`/m/:code`). A distinção que mantém o raciocínio original de §4 de pé: canal selecionado é *estado de navegação* (não vale endereçar), enquanto link de mensagem é *referência compartilhada a um artefato específico* que viaja para fora da sessão — colado noutro canal, num bloco de notas, noutro app — e precisa resolver na chegada, exatamente como o convite.
@@ -778,12 +778,83 @@ Só o apresentador vê isso — nunca espectadores, nem os que estão retransmit
 - **Minha conta** — nome de exibição (editável), avatar (regenerar cor), **seletor de presença** (Online / Ausente / Ocupado / Invisível — os quatro estados de §2 e §5.4, que até aqui tinham sistema de cor, dot e ícone especificados mas nenhum lugar onde se escolhe um; atalho equivalente no popover do próprio perfil, §8 1.4), identificador local (somente leitura, ex.: `@ana` truncado), botão "Sair desta identidade" em zona de perigo (`feedback-danger`, com confirmação — apaga a identidade local deste dispositivo; texto deixa claro que não há recuperação porque não há conta central).
 - **Dispositivos** — select de microfone, select de câmera, select de saída de áudio, sliders de volume de entrada/saída com medidor de nível ao vivo (mock: anima aleatoriamente quando "testando"), botão "Testar microfone".
 - **Aparência** — informativo nesta v1: "Tema escuro (único disponível nesta versão)" sem toggle funcional — não inventar um seletor de tema que não faz nada.
-- **Notificações** — toggle geral, e por-comunidade (lista com switch "Tudo" / "Só menções" / "Nada" por comunidade).
+- **Notificações** — toggle geral, e por-comunidade (lista com switch "Tudo" / "Só menções" / "Nada" por comunidade). Os dois governam **badge e som** (§10, 3.1a e `backend-v2.md` §15.4, emenda de 2026-09-09): não há interruptor de som separado, e a aba não desenha um.
 - **Rede** — diagnóstico somente-leitura: tipo de NAT detectado (mock: "NAT moderado — conexão direta funciona na maioria dos casos" ou, pra ilustrar o problema em aberto de CGNAT, "CGNAT detectado — você pode ter dificuldade para retransmitir compartilhamentos de tela para outros", `CLAUDE.md:45`), contagem de peers conectados agora, botão "Executar diagnóstico novamente".
 **Ações:** editar nome, trocar avatar, ajustar dispositivos/volume, alternar notificações, reexecutar diagnóstico, sair da identidade.
 **Estados:** cada campo segue os estados padrão de formulário (§6); diagnóstico de rede tem estado "executando" (skeleton ~1.5s simulado) e "concluído".
 **Navegação:** aberta pela engrenagem da barra de usuário (§8, 1.1), e também pelo "Editar perfil" do popover do próprio perfil (1.4); fecha voltando pro shell na comunidade que estava ativa antes.
 **Responsividade:** Mobile → tabs viram lista própria (tela cheia), selecionar uma navega pra tela cheia do conteúdo com botão "voltar" pras tabs.
+
+### 3.1a Retorno sonoro (emenda de 2026-09-09, §136)
+
+**Objetivo:** o produto avisa com som, e esta seção é o que ele toca, quando toca e — a metade
+que dá defeito — **quando se cala**. Até aqui a spec falava de badge e de mudo e não dizia se
+existia som; o que segue não inventa política nova, deriva cada gatilho de regra já escrita, e
+onde a derivação escolheu um lado a escolha está dita.
+
+**O catálogo é fechado. Seis sons, e a interface não inventa um sétimo:**
+
+| Som | Toca quando |
+|---|---|
+| **Entrar no canal** | esta máquina entra num canal de voz (§9, 2.3) |
+| **Sair do canal** | esta máquina sai da chamada — inclusive quando o host a encerra sem motivo a mostrar |
+| **Alguém entrou** | outra pessoa aparece no roster da chamada; numa conversa direta, o par atende (§31.15) |
+| **Alguém saiu** | outra pessoa some do roster; numa conversa direta, a chamada que **estava de pé** acaba |
+| **Notificação** | chega mensagem que não é minha, num canal ou numa conversa, e um pedido de conversa nova (§31.9) |
+| **Chamada recebida** | uma conversa direta está chamando **aqui** — e este é o único que toca **em laço** |
+
+**1. Quem liga e desliga é `settings.setNotifications`, e não há interruptor de som.** O flag
+global apaga o aviso inteiro; o nível por comunidade gradua badge e som juntos. É a decisão de
+`backend-v2.md` §15.4 (emenda de 2026-09-09), e a razão está lá: "avisa mas não faz som" e "não
+avisa" são a mesma escolha da pessoa em dois lugares. Não há slider de volume de aviso — o som
+sai pelo dispositivo de saída e no volume de saída de 3.1 (**Dispositivos**), como o áudio dos
+pares desde `B47`.
+
+**2. Canal silenciado continua avisando menção direta.** É a regra do badge de §8, 1.1.1, e o
+som segue o badge sem exceção — silenciar um canal é dizer "não me interrompa por conversa", não
+"não me chame pelo nome". Nível **"Só menções"** faz o mesmo por comunidade inteira; **"Nada"**
+cala inclusive a menção, que é o que a palavra diz.
+
+**3. O canal aberto com a janela em foco não avisa.** Quem está lendo já viu a mensagem chegar,
+e um som para o que está na tela é ruído. Sem foco, o mesmo canal avisa — a janela atrás de
+outra é a situação em que o aviso serve para alguma coisa.
+
+**4. Ensurdecer cala os avisos da chamada, e só eles.** Entrar, sair, alguém entrando e alguém
+saindo **são** a chamada, e ensurdecer é "não quero ouvir esta chamada" (§17.4, `L-12`, onde
+ensurdecer é enforcement local). A **notificação** não é a chamada e continua tocando — o badge
+também não some quando se ensurdece. A **chamada recebida** também continua: ela não é a chamada
+que se ensurdeceu, e calá-la transformaria uma preferência sobre *esta* chamada numa chamada
+perdida. Dentro de uma conversa direta ensurdecer **não existe** (§31.15: numa dupla, ensurdecer
+o único par é desligar), então lá ele não cala nada.
+
+**5. Nada anuncia sobre o outro lado o que não se sabe.** `chamando` **não toca**: deste lado
+não há atestado nenhum de que o aparelho do outro esteja tocando, e é a mesma disciplina que faz
+a faixa dizer "Chamando…" e não "tocando lá", e que impede `delivered` de virar "lido" (§31.11).
+Pela mesma razão, a chamada que **nunca conectou** não anuncia saída de ninguém: ela falhou, e
+quem diz isso é a faixa de desfecho.
+
+**6. Entrar numa sala cheia não anuncia a sala.** O primeiro roster de uma sessão é linha de
+base, nunca evento — quem já estava lá não entrou; entrei eu, e disso o som de entrada já cuidou.
+Pela mesma razão, a **reentrada automática** depois de um reinício do núcleo (`B43`) é silenciosa
+nos dois sentidos: ninguém saiu e ninguém voltou, o que houve foi uma recuperação que a pessoa
+não viu acontecer. E um roster que muda várias pessoas de uma vez toca **um** aviso de cada tipo,
+não um por pessoa.
+
+**7. O que o boot descobre é histórico, não notícia.** Os sons só passam a valer depois da
+primeira sincronização: a réplica que acabou de chegar produz não-lidas de conversas inteiras, e
+um app que sobe tocando a caixa de entrada é pior do que um app mudo. Pela mesma razão há um
+piso entre dois avisos (**1,5 s**), que faz um lote de canais chegando junto soar uma vez.
+
+**8. Conversa direta.** O aviso de mensagem segue o flag global mais o **mudo por conversa** já
+decidido em `backend-v2.md` §31.16 (emenda de 2026-09-04, B63(b)) — não há nível por conversa
+porque uma conversa não é uma comunidade. Pedido de conversa nova (`pending-in`) avisa sempre que
+o flag global permitir: ainda não é conversa, e por isso não tem mudo a consultar (§31.9 regra 4).
+
+**Onde isso mora no código:** `frontend/src/live/sons.ts`, sobre `frontend/src/assets/sons/`.
+Os `<audio>` ficam no mesmo container escondido do áudio dos pares — elemento solto é suspenso
+pelo Chromium com a janela ocluída — e o áudio sai do build como **arquivo**, nunca embutido em
+`data:`, porque a CSP de §25.4 regra 4 escrita da forma óbvia (`media-src 'self'`) recusaria o
+embutido sem erro visível.
 
 ### 3.1b Configurações da comunidade — Geral
 

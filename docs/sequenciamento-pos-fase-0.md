@@ -10548,3 +10548,122 @@ Seis, todas em `backend-v2.md`, mais uma correção em `frontend.md`:
 
 - `frontend`: 51 arquivos de teste, **697** testes passando (6 novos em `channelFormValidation.test.ts`).
 - `frontend`: `npm run build` executado com sucesso (verificação de casing, `tsc -b`, bundling Vite).
+
+## 136. Os efeitos sonoros — o produto passa a avisar com som — 2026-09-09
+
+> **Data:** 2026-09-09.
+> **Escopo:** seis arquivos de áudio entregues pelo operador, implementados como o retorno
+> sonoro do produto: entrar e sair de canal de voz, alguém entrando e saindo da chamada,
+> notificação de mensagem e chamada de conversa direta.
+> **Resultado:** `frontend/src/live/sons.ts`, 27 testes novos, 743 testes no frontend
+> (100% verde), build de produção sem erros, e **duas emendas normativas** — nada ficou em
+> aberto.
+
+### 136.1 O texto normativo, primeiro
+
+Nenhum documento descrevia retorno sonoro: `frontend.md` §0 premissa 7 punha badge e mudo por
+canal no v1 e mandava a notificação nativa do SO para fora, e `settings.setNotifications`
+(§15.4) guardava o interruptor global e o nível por comunidade sem dizer **de que** eles eram
+interruptor. O primeiro rascunho desta fatia registrou isso como lacuna (B80) e implementou a
+menor leitura coerente das regras vizinhas; **o operador decidiu escrever a norma em vez de
+guardar a pergunta**, e é o que estas duas emendas fazem. B80 saiu do backlog sem nunca ter
+sido trabalho parado.
+
+**`frontend.md` §10, 3.1a — "Retorno sonoro" (emenda de 2026-09-09).** A seção normativa nova:
+catálogo **fechado** de seis sons (a interface não inventa um sétimo) e oito regras, das quais
+cinco são de silêncio — canal aberto em foco não avisa, ensurdecer cala os avisos da chamada e
+só eles, `chamando` não toca, a primeira lista de um roster é linha de base, e o que o boot
+descobre é histórico. A premissa 7 de §0 foi emendada junto: o som entra no v1 e **não** depende
+da premissa 1 (é `<audio>` do renderer, não superfície do SO), enquanto a notificação nativa do
+SO continua fora — agora por decisão de §25.4 regra 7, que recusa a permissão, e não por
+premissa.
+
+**`backend-v2.md` §15.4 — `settings.setNotifications` governa o aviso, e som é aviso (emenda de
+2026-09-09).** A pergunta que a implementação levantou inteira: som é preferência própria, com
+comando novo, ou é a mesma preferência? Fica decidido que **é a mesma** — o flag global liga e
+desliga o aviso, badge e som são duas formas dele, e o nível por comunidade gradua os dois
+juntos. Não há `sounds.enabled`, não há `sounds.volume`, não há comando novo: "avisa mas não faz
+som" e "não avisa" são a mesma escolha da pessoa em dois lugares, e a segunda cópia é a que
+envelhece. Se o par fizer falta um dia, ele é **campo** naquela linha, nunca comando novo. O
+volume e o dispositivo são os de saída de §10 3.1, como o áudio dos pares desde B47 — um quarto
+volume seria a mesma regra escrita duas vezes. O núcleo continua sem saber que existe som:
+nenhum evento, nenhuma tabela.
+
+### 136.2 Onde os arquivos foram parar
+
+A pasta `sons/` da raiz (três subpastas, nomes soltos) virou `frontend/src/assets/sons/`, com
+os nomes dizendo **quando** o som toca — que é a única coisa que quem lê o código precisa
+saber:
+
+| Antes | Agora | Toca quando |
+|---|---|---|
+| `canal/entrarCanal.mp3` | `entrarNoCanal.mp3` | esta máquina entra num canal de voz |
+| `canal/sairCanal.mp3` | `sairDoCanal.mp3` | esta máquina sai da chamada |
+| `ligando/entrou/entrouLigacao.mp3` | `alguemEntrou.mp3` | outra pessoa aparece no roster (ou o par atende, numa DM) |
+| `ligando/entrou/saiuLigacao.mp3` | `alguemSaiu.mp3` | outra pessoa some do roster (ou a DM que estava de pé acaba) |
+| `notificacao/notificacao.mp3` | `notificacao.mp3` | chega mensagem que não é minha, num canal ou numa conversa |
+| `ligando/ringtone.mp3` | `chamadaRecebida.mp3` | uma conversa direta está chamando **aqui** — em laço |
+
+O renderer é carregado por `loadFile` a partir de `file://` (§3.1), e por isso os seis saem do
+build como **arquivo**, nunca embutidos: `vite.config.ts` desliga o `assetsInlineLimit` para
+áudio. Cinco dos seis cabem no teto de 4 KB do default e virariam `data:` dentro do JS — o que
+uma CSP com `media-src 'self'`, a forma óbvia de escrever a regra 4 de §25.4, recusaria sem
+erro visível.
+
+### 136.3 Os gatilhos, e a regra de onde cada um saiu
+
+**Voz de comunidade.** Entrar e sair vêm da transição de `channelId` em `voiceStore`; quem
+entrou e quem saiu vêm do **diff do roster**. Três guardas, e cada uma corrige um defeito que o
+diff cru teria: o **primeiro** roster de uma sessão é linha de base (entrar num canal cheio não
+anuncia a sala inteira); a reentrada de **B43** não é gente chegando (`retryJoin` esvazia o
+roster local e o host o republica — sobrar só eu com `stage: "connecting"` é o `set` do
+`retryJoin` e nada mais, enquanto ficar sozinho de verdade resolve a chamada para `connected`);
+e um roster que muda duas pessoas de uma vez toca **um** aviso de cada tipo, não um por pessoa.
+Ensurdecido não ouve nada disso — os avisos da chamada são a chamada (§9 2.3, L-12).
+
+**Notificação.** O gatilho é `unread.changed` (§15.5), e a escolha não é de conveniência: a
+recontagem de `unread.ts` já exclui as **minhas** mensagens, as apagadas e as ocultadas por ban.
+Refazer isso no renderer seria a segunda cópia da regra a envelhecer. O que o renderer
+acrescenta é o delta (a contagem que **sobe**; marcar como lido não avisa), o interruptor e o
+nível de §15.4, o canal silenciado que **continua avisando menção direta** — a regra escrita do
+badge em `frontend.md` §6 —, e o canal aberto com a janela em foco, que não avisa porque quem
+está lendo já viu chegar.
+
+Dois tetos completam: os sons só são armados **depois** da primeira sincronização (o primeiro
+`fold` de uma réplica recém-chegada produz um `unread.changed` por canal, e armar antes faria o
+app subir tocando a caixa de entrada inteira), e duas notificações separadas por menos de 1,5 s
+tocam uma vez só.
+
+**Conversa direta.** `dm.appended` com `hasIncoming` e `dm.requested` (§31.16.2, §31.9),
+filtrados pelo **mudo por conversa** que §31.16 já decidiu (emenda de 2026-09-04, B63(b)) — não
+há nível por conversa porque uma conversa não é uma comunidade, e um pedido ainda não é conversa
+para ter mudo. Na chamada, `recebendo` toca em laço e
+`chamando` **não toca** — pela mesma razão pela qual `faixaDeChamada` diz "Chamando…" e não
+"tocando no aparelho dele": deste lado não há atestado nenhum de que o outro esteja tocando.
+Atender anuncia o par; a chamada que acaba **depois** de ter conectado anuncia a saída; a que
+nunca conectou não perdeu ninguém — ela falhou, e quem diz isso é a faixa de §99.
+
+**A saída é a da voz (B47).** `outputId` e `outputVolume` de §10 3.1 valem para estes sons como
+valem para o áudio dos pares; um aviso saindo pelo alto-falante errado, com a chamada no fone, é
+o mesmo defeito que B47 corrigiu. O `<audio>` de cada som fica ancorado no mesmo container
+escondido do áudio dos pares — elemento solto é suspenso pelo Chromium quando a janela está
+ocluída —, e `obterContainerDeAudio` deixou de estar duplicado: mora em `sons.ts` e
+`sincronizacao.ts` a importa.
+
+As oito regras acima **são** o texto de `frontend.md` §10 3.1a: o que esta seção conta é como se
+chegou nelas, não uma segunda cópia delas. Onde as duas discordarem, manda a spec.
+
+### 136.4 Validação
+
+- `frontend`: 55 arquivos de teste, **743** testes passando (27 novos em `sons.test.ts`).
+- `frontend`: `npm run lint` limpo e `npm run build` sem erros; os seis mp3 saem como arquivo
+  em `dist/assets/`, nenhum embutido.
+- **Mutação, para o teste não ser decorativo:** tirar a linha de base do roster derruba 6 casos;
+  trocar o `>` do delta de não-lidas por `!==` derruba "marcar como lido não avisa"; tirar o teto
+  de 1,5 s derruba "um lote de canais toca uma vez"; trocar o `stage` do guarda da reentrada por
+  "roster vazio" derruba "ficar sozinho porque o outro saiu continua sendo uma saída".
+- **Medido no Electron real**, não deduzido: janela com a `webPreferences` do produto
+  (`sandbox: true`, `contextIsolation: true`) carregando `file://` do build. Os seis carregam,
+  decodificam e tocam — sem bloqueio de autoplay e sem bloqueio de esquema. Durações medidas:
+  `notificacao` 0,22 s, `entrarNoCanal`/`sairDoCanal` 0,23 s, `alguemEntrou`/`alguemSaiu` 0,38 s,
+  `chamadaRecebida` 8,69 s (é o que toca em laço).

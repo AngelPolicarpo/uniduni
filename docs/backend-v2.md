@@ -3888,6 +3888,30 @@ chamada é `E_VALIDATION`, não uma terceira forma.
 | `settings.setParticipantVolume` | `{communityId, identityKey, volume:0..100}` | `{}` |
 | `settings.setNotifications` | `{enabled?, communityId?, level?}` | `{}` |
 
+**Emenda de 2026-09-09 (§136) — o que `setNotifications` governa é o aviso, e som é aviso.**
+
+Esta tabela guardava o interruptor global e o nível por comunidade sem dizer **de que** eles
+são interruptor. O produto passou a ter retorno sonoro (`frontend.md` §10 3.1a) e a pergunta
+apareceu inteira: som é preferência própria, com comando novo, ou é a mesma preferência?
+
+Fica decidido: **é a mesma.** `settings.setNotifications{enabled}` liga e desliga o **aviso**,
+e o badge e o som são duas formas dele; `{communityId, level}` gradua os dois juntos. Não há
+`sounds.enabled`, não há `sounds.volume` e não há comando novo nesta tabela.
+
+1. **Por que não um interruptor próprio.** "Avisa, mas não faz som" e "não avisa" são a mesma
+   decisão da pessoa em dois lugares, e a segunda cópia é a que envelhece — é a razão pela
+   qual `channel.setMuted` já vale para badge e para som sem precisar de um par. Se algum dia
+   o par fizer falta, ele é **campo** nesta linha (`{enabled?, sound?}`), nunca comando novo:
+   a superfície de preferências já está fechada e a fila não passa por aqui (§15.4,
+   "sem host, sem fila").
+2. **O som sai pelo dispositivo de `settings.setDevice{kind:'output'}` e no volume de
+   `settings.setVolume{kind:'output'}`.** Não há quarto volume. Um aviso que toca no
+   alto-falante enquanto a chamada está no fone é exatamente o defeito que `B47` corrigiu na
+   voz, e corrigi-lo lá e repeti-lo aqui seria escrever a mesma regra duas vezes.
+3. **O núcleo continua sem saber que existe som.** Nenhum evento novo, nenhuma tabela nova:
+   quem toca é o renderer, sobre `unread.changed` (§15.5) e sobre os efêmeros que ele já
+   assina. O núcleo persiste a preferência, como sempre persistiu.
+
 #### Cargos e membros — todas ⏱
 
 **Emenda de 2026-08-22 — o que a resposta promete e quando.** `roleId` é derivado na hora

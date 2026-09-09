@@ -4,6 +4,7 @@ import { useDmCallStore } from "../store/dmCallStore";
 import { useDmStore } from "../store/dmStore";
 import { useSettingsStore } from "../store/settingsStore";
 import { useToastStore } from "../store/toastStore";
+import { notificarConversa } from "./sons";
 import type { StagedAttachmentDto } from "../ipc/dto";
 import type { MotivoResync } from "./sessao";
 
@@ -121,7 +122,12 @@ export function assinarDm(): void {
   // Um pedido novo muda a lista e pode ter atingido o teto de §31.9 regra 4 — que **tem**
   // de aparecer: não há descarte silencioso do mais antigo, então um teto invisível seria
   // um pedido perdido sem ninguém saber.
-  cliente.subscribe("dm.requested", () => void sincronizarConversas());
+  cliente.subscribe("dm.requested", () => {
+    // Um pedido é alguém falando comigo pela primeira vez: não há conversa a silenciar
+    // ainda, e por isso o `null` — só o interruptor global de §15.4 decide.
+    notificarConversa(null);
+    void sincronizarConversas();
+  });
   cliente.subscribe("dm.conversationChanged", (d) => {
     void sincronizarConversas();
     if (daAtiva(d)) void recarregarDetalhe((d as { conversationId: string }).conversationId);
@@ -141,8 +147,12 @@ export function assinarDm(): void {
    */
   cliente.subscribe("dm.appended", (d) => {
     void sincronizarConversas();
-    if (!daAtiva(d)) return;
     const ev = d as { conversationId: string; hasIncoming?: boolean };
+    // O aviso sonoro usa a MESMA guarda da remarcação, e pela mesma razão: um lote só meu
+    // não é notícia para mim. Ele fica **fora** do `daAtiva` de propósito — é justamente a
+    // conversa que não está aberta que precisa avisar (`frontend.md` §10 3.1a).
+    if (ev.hasIncoming === true) notificarConversa(ev.conversationId);
+    if (!daAtiva(d)) return;
     void carregarMensagens(ev.conversationId).then((ok) => {
       if (!ok || ev.hasIncoming !== true) return;
       if (useDmStore.getState().ativa !== ev.conversationId) return;

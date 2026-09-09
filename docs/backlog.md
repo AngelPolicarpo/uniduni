@@ -3,7 +3,19 @@
 O que está aberto, hoje. Uma linha por item: **nome e ponteiro**. A descrição mora na
 referência — repetir aqui seria a segunda cópia a envelhecer.
 
-Não normativo. Atualizado em 2026-09-08 (§135). **§135** foi a auditoria e correção do
+Não normativo. Atualizado em 2026-09-09 (§136). **§136** implementou o **retorno sonoro** do
+produto a partir dos seis arquivos entregues pelo operador: entrar e sair de canal de voz,
+alguém entrando e saindo da chamada, notificação de mensagem e a chamada de conversa direta
+tocando em laço. **Nada ficou em aberto**: o comportamento é normativo, e as duas emendas de
+2026-09-09 o escrevem — `frontend.md` §10 **3.1a** (o catálogo fechado de seis sons e as oito
+regras, inclusive as de silêncio) e `backend-v2.md` **§15.4** (`settings.setNotifications`
+governa badge **e** som; não há interruptor nem volume de aviso separados, e o som sai pelo
+dispositivo e volume de saída de 3.1, como o áudio dos pares desde B47). O v1 ganhou som e a
+premissa 7 de `frontend.md` §0 foi emendada junto; a notificação nativa do SO continua fora,
+agora por §25.4 regra 7. Medido no Electron real, com a `webPreferences` do produto sobre
+`file://`.
+
+Atualizado antes em 2026-09-08 (§135). **§135** foi a auditoria e correção do
 núcleo de Mensagens Diretas (DM — fase 4 de 12). Quatro defeitos corrigidos: (1) condição de
 corrida na gênese de DM (`#genese` atômica dentro do `#serializado` com factory lazy `(from) => ...`
 para impedir geração de `dm.hello` duplicado com `authorSeq = 1`); (2) alinhamento do código de erro
