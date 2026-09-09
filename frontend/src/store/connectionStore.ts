@@ -45,5 +45,5 @@ export function useHostStatus(community: Community | undefined): HostStatus {
   const override = useConnectionStore((state) =>
     community ? state.hostStatusOverrides[community.id] : undefined,
   );
-  return override ?? community?.connectionHealth.hostStatus ?? "online";
+  return override ?? community?.connectionHealth.hostStatus ?? "offline";
 }

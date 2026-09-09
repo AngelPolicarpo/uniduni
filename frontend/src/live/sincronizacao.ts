@@ -53,7 +53,7 @@ import { useMessageStore } from "../store/messageStore";
 import { useDownloadStore } from "../store/downloadStore";
 import { useModerationStore } from "../store/moderationStore";
 import { reenviarPreferencias, useSettingsStore } from "../store/settingsStore";
-import { assinarDm, sincronizarConversas, sincronizarPrefsDm } from "./dm";
+import { assinarDm, resyncDm, sincronizarConversas, sincronizarPrefsDm } from "./dm";
 import { assinarDmVoz, desligar as desligarDmVoz } from "./dmVoz";
 import { mensagem as adaptarMensagem, threadsDaPagina } from "./adaptadores";
 import type { Category, Channel, Community, Member, Message, Role, Thread } from "../domain/types";
@@ -132,7 +132,11 @@ function configurarEscritaDeIdentidade(): void {
  * que o rail do mock espera — nada é reordenado aqui.
  */
 export async function sincronizarComunidades(): Promise<void> {
-  const lista = await api.communities().catch(() => null);
+  let lista = await api.communities().catch(() => null);
+  if (lista === null) {
+    await new Promise((r) => setTimeout(r, 600));
+    lista = await api.communities().catch(() => null);
+  }
   if (lista === null) return;
   const store = useCommunityStore.getState();
   const communities: Record<string, Community> = { ...store.remote.communities };
@@ -224,22 +228,43 @@ export async function sincronizarComunidade(communityId: string): Promise<void> 
     if (estrutura === null && detalhe === null && cargos === null) return;
     const store = useCommunityStore.getState();
 
-    const categories: Record<string, Category> = { ...store.remote.categories };
-    const channels: Record<string, Channel> = { ...store.remote.channels };
-    for (const cat of estrutura?.categories ?? []) {
-      categories[cat.id] = categoria(communityId, cat);
-      for (const ch of cat.channels) channels[ch.id] = adaptarCanal(communityId, cat.id, ch);
+    let categories: Record<string, Category> = { ...store.remote.categories };
+    let channels: Record<string, Channel> = { ...store.remote.channels };
+    if (estrutura !== null) {
+      const catVivas = new Set(estrutura.categories.map((c) => c.id));
+      const chVivos = new Set(estrutura.categories.flatMap((c) => c.channels.map((ch) => ch.id)));
+
+      // Poda canais e categorias excluídos desta comunidade (§15.6 / H1)
+      categories = Object.fromEntries(
+        Object.entries(categories).filter(([id, cat]) => cat.communityId !== communityId || catVivas.has(id)),
+      );
+      channels = Object.fromEntries(
+        Object.entries(channels).filter(([id, ch]) => ch.communityId !== communityId || chVivos.has(id)),
+      );
+
+      for (const cat of estrutura.categories) {
+        categories[cat.id] = categoria(communityId, cat);
+        for (const ch of cat.channels) channels[ch.id] = adaptarCanal(communityId, cat.id, ch);
+      }
     }
 
-    const roles: Record<string, Role> = { ...store.remote.roles };
-    // `rank` é índice fracionário e não vira inteiro; a ordem do array (rank DESC) É a
-    // hierarquia, então a posição do mock é o ordinal invertido.
-    const lista = cargos?.roles ?? [];
-    lista.forEach((r, i) => {
-      roles[r.id] = cargo(r, lista.length - i);
-    });
-
     const anterior = store.remote.communities[communityId];
+    let roles: Record<string, Role> = { ...store.remote.roles };
+    const lista = cargos?.roles ?? [];
+    if (cargos !== null) {
+      if (anterior !== undefined) {
+        const rolesVivos = new Set(lista.map((r) => r.id));
+        for (const id of anterior.roleIds) {
+          if (!rolesVivos.has(id)) delete roles[id];
+        }
+      }
+      // `rank` é índice fracionário e não vira inteiro; a ordem do array (rank DESC) É a
+      // hierarquia, então a posição do mock é o ordinal invertido.
+      lista.forEach((r, i) => {
+        roles[r.id] = cargo(r, lista.length - i);
+      });
+    }
+
     const communities = { ...store.remote.communities };
     if (anterior !== undefined) {
       communities[communityId] = {
@@ -250,6 +275,24 @@ export async function sincronizarComunidade(communityId: string): Promise<void> 
       };
     }
     store.aplicarRemoto({ categories, channels, roles, communities });
+
+    // Se o canal ativo desta comunidade foi excluído, atualiza o activeChannelByCommunity
+    if (estrutura !== null) {
+      const canalAtivo = store.activeChannelByCommunity[communityId];
+      if (canalAtivo !== undefined && !channels[canalAtivo]) {
+        let primeiroTexto: string | undefined;
+        for (const cat of estrutura.categories) {
+          const ch = cat.channels.find((c) => channels[c.id]?.type === "text");
+          if (ch) {
+            primeiroTexto = ch.id;
+            break;
+          }
+        }
+        if (primeiroTexto) {
+          store.setActiveChannel(communityId, primeiroTexto);
+        }
+      }
+    }
   });
 }
 
@@ -455,9 +498,15 @@ async function resolverRaizesDeThreads(communityId: string, threadIds: readonly 
 /** `query.messages` → histórico do canal. */
 export async function sincronizarMensagens(communityId: string, channelId: string): Promise<void> {
   await comExclusao(`msg:${channelId}`, async () => {
-    const pagina = await api
+    let pagina = await api
       .messages({ communityId, channelId, limit: 50, direction: "before" })
       .catch(() => null);
+    if (pagina === null) {
+      await new Promise((r) => setTimeout(r, 600));
+      pagina = await api
+        .messages({ communityId, channelId, limit: 50, direction: "before" })
+        .catch(() => null);
+    }
     if (pagina === null) return;
     const eu = useCommunityStore.getState().remote.euId;
     const store = useMessageStore.getState();
@@ -869,6 +918,7 @@ export function assinarSincronizacao(): void {
       reassinarTypingDoCanalAberto();
     }
     reentrarVozSePreciso(motivo);
+    void resyncDm(motivo);
   });
 }
 

@@ -5,6 +5,7 @@ import { useDmStore } from "../store/dmStore";
 import { useSettingsStore } from "../store/settingsStore";
 import { useToastStore } from "../store/toastStore";
 import type { StagedAttachmentDto } from "../ipc/dto";
+import type { MotivoResync } from "./sessao";
 
 /**
  * A ponte entre a superfície IPC-R de §31.16 e a store de DM — U-33 / B60.
@@ -456,4 +457,41 @@ export async function carregarAnexo(
   const cheia = await api.dmMessage({ conversationId, messageId }).catch(() => null);
   const anexo = cheia?.attachment ?? null;
   useDmStore.getState().setAnexo(messageId, anexo);
+}
+
+/**
+ * §15.2 4d — reconexão pós-crash e stale em tópicos de DM.
+ *
+ * Restabelece a residência do projetor ativo no núcleo novo via `dm.activate`
+ * e reconsulta lista de conversas, preferências, detalhe e mensagens.
+ */
+export async function resyncDm(motivo: MotivoResync): Promise<void> {
+  if (motivo.tipo === "epoch") {
+    void sincronizarConversas();
+    void sincronizarPrefsDm();
+    const ativa = useDmStore.getState().ativa;
+    if (ativa !== null) {
+      await api.dmActivate(ativa).catch(() => null);
+      void recarregarDetalhe(ativa);
+      void carregarMensagens(ativa);
+    }
+    for (const timer of temporizadoresDeDigitacao.values()) {
+      window.clearTimeout(timer);
+    }
+    temporizadoresDeDigitacao.clear();
+    useDmStore.setState({ digitando: {} });
+  } else if (motivo.tipo === "stale" && motivo.topic.startsWith("dm.")) {
+    if (
+      motivo.topic === "dm.conversationChanged" ||
+      motivo.topic === "dm.requested" ||
+      motivo.topic === "dm.unreadChanged"
+    ) {
+      void sincronizarConversas();
+    } else {
+      const ativa = useDmStore.getState().ativa;
+      if (ativa !== null) {
+        void carregarMensagens(ativa);
+      }
+    }
+  }
 }

@@ -101,8 +101,12 @@ export function Modal({
   useEffect(() => () => window.clearTimeout(exitTimer.current), []);
 
   const requestClose = useCallback(() => {
+    if (closingRef.current) return;
     if (guardClose && !guardClose()) return;
     setClosing(true);
+    if (exitTimer.current !== undefined) {
+      window.clearTimeout(exitTimer.current);
+    }
     exitTimer.current = window.setTimeout(() => {
       setClosing(false);
       onClose();

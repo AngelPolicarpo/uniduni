@@ -539,6 +539,26 @@ ações normativas estejam disponíveis em qualquer rota de acesso à conversa.
 5. **Resolução de links internos contra cold-start (`MessageLinkResolver` / §4, §15.6):** Aguarda o término da fase de inicialização/conexão da sessão (`inicial`/`conectando`) e sincronização do espelho local antes de declarar um link interno `/m/:code` bloqueado ou inexistente, evitando descarte prematuro e irreversível do link durante o boot.
 6. **Robustez do cálculo de impacto de saída do host (`hostExit.ts`, `HostExitGuard` / §18.7, U-06):** Em `montarImpacto`, caso o núcleo (`api.hostExitImpact()`) relate atividade (pares online, chamadas em andamento ou operações pendentes de replicação) em comunidades que ainda não constem na lista local (por exemplo, após limpeza ou descompasso do store), o impacto é preservado com modelo de fallback, impedindo auto-confirmação silenciosa e perda de dados.
 
+**Emenda de 2026-09-09 — Transporte IPC-R, poda no espelho e consistência de UI (Fase 12 / §15.1, §15.2, §15.6, §31.16, U-02, U-33).**
+1. **Poda autoritativa de canais, categorias e cargos no espelho (`sincronizarComunidade` / §15.6, H1):**
+   - A sincronização de comunidade deixa de ser estritamente aditiva: canais e categorias excluídos de `query.structure` são podados dos mapas `store.remote.channels` e `categories`.
+   - Cargos removidos de `query.roles` são podados de `store.remote.roles`.
+   - Se o canal ativo corrente da comunidade foi excluído, `activeChannelByCommunity` faz fallback imediato para o primeiro canal de texto restante, impedindo que a área central fique presa renderizando um canal fantasma inexistente.
+2. **Superfície visual de reconexão do núcleo (`Sincronizador.tsx` / §15.2 passo 4e, §6):**
+   - Ao transicionar para `estado = "reconectando"` após aviso de queda do núcleo (`core-epoch`), o componente `Sincronizador` exibe um `StatusBanner tone="reconnecting"` full-width no topo da casca do aplicativo (*"Reconectando ao núcleo local…"*) enquanto preserva os dados em leitura, preenchendo o requisito normativo sem bloquear a interface.
+3. **Reconciliação e resync de Direct Messages pós-crash (`dm.ts`, `sincronizacao.ts` / §15.2 passo 4d, §31.16):**
+   - O módulo de DMs passa a integrar o despachante de resync (`resyncDm` registrado em `registrarResync`): após reinício de epoch, reemite `dm.activate` para reativar o projetor no novo processo do núcleo (§31.16.1), recarrega detalhes e histórico de mensagens da conversa aberta, re-sincroniza a lista de conversas e preferências, e purga temporizadores residuais de digitação. Em eventos `evStale` sobre tópicos `dm.*`, reconsulta as mensagens ativas ou conversas conforme o tópico afetado.
+4. **Detecção de descontinuidade em `evSeq` na estreia de assinatura (`client.ts` / §15.1 regra 5b):**
+   - O despachante IPC confere saltos de sequência em todos os eventos recebidos, inclusive no primeiro frame pós-subscrição (`ultimoSeq === 0`). Caso o primeiro evento chegue com `evSeq > 1` (descarte por contrapressão no núcleo antes do primeiro ack), o cliente despacha `onResync` com `dropped = evSeq - 1`, eliminando o ponto cego de entrega inicial.
+5. **Resiliência a sobrecarga de respawn com retentativa transitória (`sincronizacao.ts` / §15.2):**
+   - As queries críticas de resync (`sincronizarComunidades` e `sincronizarMensagens`) incorporam retentativa única breve (600 ms) em caso de falha por timeout, prevenindo espelho defasado quando o núcleo substituto estiver saturado de I/O durante o boot.
+6. **Política conservadora de host padrão (`connectionStore.ts` / §6, recusas.ts:48-53):**
+   - `useHostStatus` assume `"offline"` como valor padrão para comunidades não carregadas ou com telemetria indefinida, evitando abertura indevida de gates de UI dependentes de host conectado.
+7. **Higiene e proteção contra corridas (`Modal.tsx`, `client.ts`, `adaptadores.ts`):**
+   - `Modal.requestClose` inclui guarda `closingRef` e cancelamento de timers concorrentes, prevenindo execução duplicada de `onClose`.
+   - `client.waitForHello` limpa temporizadores ativos antes de sobrescrever resolvers de promessa.
+   - Remoção de parâmetro morto e spread inerte em adaptadores (`comunidade()`, `mensagem()`).
+
 ---
 
 **U-34 — A chave pública de identidade é um endereço, e a UI precisa deixar entregá-lo (§31.8, L-24)**

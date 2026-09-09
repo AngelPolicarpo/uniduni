@@ -128,6 +128,10 @@ export class IpcClient {
 
   waitForHello(timeoutMs = TIMEOUT_HOST_MS): Promise<Extract<FrameFromCore, { t: "hello" }>> {
     return new Promise((resolve, reject) => {
+      if (this.#timerHello !== null) {
+        clearTimeout(this.#timerHello);
+        this.#timerHello = null;
+      }
       this.#timerHello = setTimeout(() => {
         this.#resolverHello = null;
         this.#timerHello = null;
@@ -327,8 +331,8 @@ export class IpcClient {
           // Buraco na numeração é perda (§15.1 r. 5, emenda de 2026-09-05: o descarte
           // consome `evSeq`). Reconsultar aqui é o que fecha a metade da detecção que o
           // renderer devia — o `evStale` do núcleo só chega 3 s depois, e há perda que
-          // nunca vira `stale`.
-          const perdidos = a.ultimoSeq > 0 ? frame.evSeq - a.ultimoSeq - 1 : 0;
+          // nunca vira `stale`. O núcleo numera a partir de 1: estreia com evSeq > 1 é perda.
+          const perdidos = frame.evSeq - a.ultimoSeq - 1;
           a.ultimoSeq = frame.evSeq;
           a.handler(frame.data);
           if (perdidos > 0) this.#onResync?.({ tipo: "stale", topic: a.topic, dropped: perdidos });

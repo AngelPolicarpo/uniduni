@@ -21,6 +21,7 @@ import {
 } from "./sincronizacao";
 import { useCommunityStore } from "../store/communityStore";
 import { Button } from "../components/ui/Button";
+import { StatusBanner } from "../components/ui/StatusBanner";
 
 function Aviso({ titulo, texto, acao }: { titulo: string; texto: string; acao?: ReactNode }) {
   return (
@@ -99,5 +100,14 @@ export function Sincronizador({ children }: { children: ReactNode }) {
   if (estado === "inicial" || estado === "conectando") {
     return <Aviso titulo="Conectando ao núcleo" texto="Um instante." />;
   }
-  return <>{children}</>;
+  // §15.2 4e — no instante em que o núcleo cai, mostra o estado conn-reconnecting full-width
+  // no topo da árvore de componentes, mantendo os dados locais em leitura (§1, princípio 2; §6).
+  return (
+    <div className="flex h-full w-full flex-col">
+      {estado === "reconectando" && (
+        <StatusBanner tone="reconnecting">Reconectando ao núcleo local…</StatusBanner>
+      )}
+      <div className="min-h-0 flex-1">{children}</div>
+    </div>
+  );
 }

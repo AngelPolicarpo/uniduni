@@ -208,6 +208,19 @@ describe("assinaturas e fluxo (§15.1 r. 2, r. 3, r. 5)", () => {
     expect(motivos).toEqual([{ tipo: "stale", topic: "members.changed", dropped: 2 }]);
   });
 
+  it("buraco na estreia (evSeq > 1 no primeiro evento) é perda: pede resync", () => {
+    const { cliente, porta } = ligado();
+    const motivos: unknown[] = [];
+    cliente.onResync((m) => motivos.push(m));
+    cliente.subscribe("members.changed", () => {});
+    porta.entregar({ t: "subOk", epoch: 1, id: porta.do("sub")[0]!.id, subId: 8 });
+
+    // Primeiro evento já chega com evSeq = 3 (eventos 1 e 2 descartados pelo núcleo sob contrapressão)
+    porta.entregar({ t: "ev", epoch: 1, subId: 8, evSeq: 3, topic: "members.changed", data: {} });
+
+    expect(motivos).toEqual([{ tipo: "stale", topic: "members.changed", dropped: 2 }]);
+  });
+
   it("depois de um `evStale`, a retomada não é lida como buraco novo", () => {
     const { cliente, porta } = ligado();
     const motivos: unknown[] = [];

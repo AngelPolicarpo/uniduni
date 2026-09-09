@@ -178,7 +178,8 @@ export function comunidade(c: CommunityListItem, detalhe?: CommunityDetail, estr
     createdAt: iso(0),
     memberCount: c.memberCount,
     categoryIds: (estrutura?.categories ?? []).map((cat) => cat.id),
-    roleIds: detalhe?.myRoleIds ?? [],
+    // Os cargos da comunidade vêm de query.roles e são populados por sincronizarComunidade
+    roleIds: [],
     connectionHealth: { hostStatus: statusDoHost(c.hostStatus) },
     // §18.4 passo 5 — o que faz a comunidade aparecer no rail em modo histórico.
     ...(c.removedReason !== undefined ? { removedReason: c.removedReason } : {}),
@@ -235,7 +236,7 @@ function modoDeFala(n: number): Channel["speechMode"] {
   return n === 1 ? "queue" : n === 2 ? "admins" : "free";
 }
 
-export function mensagem(m: MessageDto, euId: string | null): Message {
+export function mensagem(m: MessageDto, _euId: string | null): Message {
   return {
     id: m.id,
     seq: m.seq,
@@ -262,8 +263,8 @@ export function mensagem(m: MessageDto, euId: string | null): Message {
     ],
     // Mensagem projetada já está no log: entregue. A fila é da outbox, e é ela que produz
     // `queued`/`sending`/`failed` — nunca esta função.
+    // m.mentionsMe está no DTO para destaques visuais se o domínio Message adotar o campo.
     deliveryState: "sent",
-    ...(euId !== null && m.mentionsMe ? {} : {}),
   };
 }
 

@@ -3629,7 +3629,8 @@ Resposta direta aos blockers B6 (contrato executável) e B9 (rastreabilidade de 
      no `hello` do passo 3 (existe núcleo do outro lado):
      c. refaz todas as assinaturas (o cliente IPC mantém a lista declarativa)
      d. refaz todas as queries ativas; com chamada de voz ativa, reexecuta o
-        `voice.join` idempotente (nova sessão, emenda B43 de 2026-09-03)
+        `voice.join` idempotente (nova sessão, emenda B43 de 2026-09-03); com conversa direta ativa,
+        reemite `dm.activate` para restabelecer a residência do projetor no núcleo (§31.16.1) e reconsulta a conversa
 5. escrita em voo perdida: nada a fazer — ela está na outbox (manifest.db, FULL) e será
    reconciliada por §11.6. Nenhuma escrita é reenviada pelo renderer.
 ```
