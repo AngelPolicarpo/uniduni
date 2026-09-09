@@ -44,16 +44,18 @@ export function DmCallPanel({ className }: { className?: string }) {
 
   // A conversa aberta já tem tudo isto no cabeçalho, e mais: mudo, câmera, tela e o palco.
   // Repetir o par de botões 8px acima seria o mesmo interruptor duas vezes na mesma coluna
-  // — o argumento que tirou mudo e ensurdecer do `VoicePanel`.
-  const naTela = destino === "dm" && ativa === conversationId;
+  const conversa = conversas.find((c) => c.conversationId === conversationId);
+  const naTela = destino === "dm" && ativa === conversationId && conversa !== undefined;
   if (naTela) return null;
 
-  const conversa = conversas.find((c) => c.conversationId === conversationId);
-  const acoes = acoesDeChamada("accepted", estado);
+  const acoes = conversa
+    ? acoesDeChamada(conversa.state, estado)
+    : (estado === "fora" ? [] : ["desligar"]);
 
   function irParaAConversa(): void {
     if (conversationId === null) return;
     abrirDm();
+    useUiStore.getState().setMobilePane("content");
     void abrirConversa(conversationId);
   }
 

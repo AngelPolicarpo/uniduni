@@ -183,3 +183,69 @@ export function DmNovaConversaModal({
     </Modal>
   );
 }
+
+export interface DmPerfilConversaModalProps {
+  open: boolean;
+  nomeAtual: string;
+  onClose: () => void;
+  onConfirm: (displayName: string) => void;
+}
+
+/**
+ * §31.16.1 / U-33 — `dm.setProfile` altera o nome exibido nesta conversa direta.
+ * Validação de 2–32 code points inline na regra de §13 e §31.7.5.
+ */
+export function DmPerfilConversaModal({
+  open,
+  nomeAtual,
+  onClose,
+  onConfirm,
+}: DmPerfilConversaModalProps) {
+  const [nome, setNome] = useState(nomeAtual);
+  const [erro, setErro] = useState<string | null>(null);
+
+  function submeter(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const limpo = nome.trim();
+    const len = Array.from(limpo).length;
+    if (len < 2 || len > 32) {
+      setErro("O nome precisa ter entre 2 e 32 caracteres.");
+      return;
+    }
+    onConfirm(limpo);
+    onClose();
+  }
+
+  function fechar() {
+    setNome(nomeAtual);
+    setErro(null);
+    onClose();
+  }
+
+  return (
+    <Modal open={open} onClose={fechar} title="Editar meu perfil nesta conversa" size="sm">
+      <form onSubmit={submeter}>
+        <TextField
+          label="Nome de exibição"
+          value={nome}
+          onChange={(v) => {
+            setNome(v);
+            setErro(null);
+          }}
+          {...(erro !== null ? { error: erro } : {})}
+          hint="Como você aparecerá apenas nesta conversa direta (2 a 32 caracteres)."
+          placeholder="Seu nome"
+          autoFocus
+          autoComplete="off"
+        />
+        <div className="mt-6 flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={fechar}>
+            Cancelar
+          </Button>
+          <Button type="submit">Salvar</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+

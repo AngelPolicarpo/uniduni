@@ -80,9 +80,10 @@ export function DmDestino({ className }: { className?: string }) {
         // Já na lista? Abre a que existe. `dm.open` é derivado (§31.2 regra 1) e seria
         // idempotente em `accepted`/`pending-out`, mas em `blocked` recusa e em
         // `pending-in` **aceita** — ver `DmNovaConversaModal`.
-        onAbrir={(peerKey, jaExiste) =>
-          void (jaExiste !== null ? abrirConversa(jaExiste) : abrirConversaCom(peerKey))
-        }
+        onAbrir={(peerKey, jaExiste) => {
+          setMobilePane("content");
+          void (jaExiste !== null ? abrirConversa(jaExiste) : abrirConversaCom(peerKey));
+        }}
       />
 
       {ativa ? (

@@ -461,6 +461,52 @@ por watermark e não sabe o que está na tela: sem remarcar ao receber, a conver
 selo sobre si mesma. O renderer remarca ao chegar lote com `hasIncoming` (§31.16.2) na conversa
 em foco — e **só** com ele: um lote só meu não tem o que dar por lido.
 
+**Emenda de 2026-09-09 — navegação mobile de DM e atendimento sem chamada órfã.** O shell
+mobile opera com alternância de colunas (`mobilePane: "channels"` e `mobilePane: "content"`,
+`frontend.md` §3). Ao selecionar uma conversa na lista de DMs (`DmList`) ou pelo modal de
+abertura de nova conversa (`DmNovaConversaModal`), o estado de navegação é obrigado a avançar
+o painel para `"content"`. Sem isso, o conteúdo da conversa permanecia oculto em telas
+móveis (`hidden tablet:flex`). Da mesma forma, ao acionar "Atender" no painel recolhido de
+chamada (`DmCallPanel`), a ação deve obrigatoriamente avançar `mobilePane: "content"` em
+conjunto com a abertura da conversa: como o painel recolhido se oculta quando a chamada
+corresponde à conversa aberta, mantê-la no painel `"channels"` orfanava o usuário da tela,
+deixando-o em chamada ativa sem controles de mudo, vídeo ou encerramento.
+
+**Emenda de 2026-09-09 — resiliência do painel de chamada fora do cache local.** Caso uma
+chamada direta seja recebida ou iniciada antes de a respectiva conversa ser carregada no
+cache local da UI (`conversa === undefined`), o painel de chamada (`DmCallPanel`) **não pode
+se ocultar** nem travar. Ele renderiza em modo de contingência, expondo unicamente a ação
+de encerramento/recusa com o identificador do par derivado da chave pública crua. Nenhuma
+chamada pode existir sem superfície de terminação acessível na UI.
+
+**Emenda de 2026-09-09 — completude da anatomia de mensagens de DM (§9 2.1).** A conversa
+direta reusa a anatomia completa de mensagens de comunidade (§9 2.1): responder, editar,
+apagar e reagir são ações obrigatórias em toda mensagem válida (não-tombstone). Responder
+vincula `replyTo` ao composer com citação prévia e ação de cancelamento; editar oferece
+edição inline exclusiva para mensagens de autoria própria; apagar grava tombstone causal;
+e reagir despacha alternância de reações com consolidação de contadores. No `DmComposer`, o
+envio é estritamente bloqueado enquanto houver anexo em processamento/upload (`anexando`),
+eliminando o envio acidental de mensagens desprovidas do anexo esperado.
+
+**Emenda de 2026-09-09 — edição de perfil por conversa e validação pré-core (§31.7.5, §13).**
+O modal de perfil por conversa (`dm.setProfile`) acessível pelo cabeçalho da DM valida
+obrigatoriamente o tamanho do nome de exibição no intervalo de 2 a 32 code points Unicode
+antes do despacho do comando. Enviar nome vazio ou fora dos limites resultaria em rejeição no
+`dmFold` do core e estado `invalid`, corrompendo a conversa em silêncio.
+
+**Emenda de 2026-09-09 — chamada concorrente sob a regra "voz é uma só" (§15.4, §20.3).**
+O botão "Chamar" no cabeçalho da DM fica suprimido se o usuário já estiver em qualquer
+chamada ativa. Se uma chamada de DM for recebida com sessão de voz já em andamento, o sistema
+recusa a nova chamada e emite notificação informativa em toast avisando sobre a chamada
+descartada do par.
+
+**Emenda de 2026-09-09 — ações de admissão em pedidos abertos diretamente (`pending-in`).**
+Se uma conversa em estado `pending-in` for acessada diretamente (via inserção de chave pública
+ou busca), a visualização da conversa exibe faixa superior com os botões "Aceitar" e
+"Bloquear" (§31.9 regra 1), garantindo que a admissão nunca ocorra por engano e que as
+ações normativas estejam disponíveis em qualquer rota de acesso à conversa.
+
+
 ---
 
 **U-34 — A chave pública de identidade é um endereço, e a UI precisa deixar entregá-lo (§31.8, L-24)**

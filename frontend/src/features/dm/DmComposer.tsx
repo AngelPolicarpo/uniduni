@@ -6,7 +6,7 @@ import { Spinner } from "../../components/ui/Spinner";
 import { cn } from "../../lib/cn";
 import { anexarArquivo, avisarDigitacao, enviarMensagem } from "../../live/dm";
 import { formatFileSize } from "../../lib/format";
-import type { StagedAttachmentDto } from "../../ipc/dto";
+import type { DmMessageDto, StagedAttachmentDto } from "../../ipc/dto";
 
 /**
  * O composer da conversa direta — e a consequência de tela da **ausência de outbox**.
@@ -27,6 +27,8 @@ export interface DmComposerProps {
   nomeDoPar: string;
   desabilitado: boolean;
   motivo?: string;
+  respondendoA?: DmMessageDto | null;
+  onCancelarResposta?: () => void;
 }
 
 export function DmComposer({
@@ -34,6 +36,8 @@ export function DmComposer({
   nomeDoPar,
   desabilitado,
   motivo,
+  respondendoA,
+  onCancelarResposta,
 }: DmComposerProps) {
   const [texto, setTexto] = useState("");
   const [ocupado, setOcupado] = useState(false);
@@ -78,15 +82,22 @@ export function DmComposer({
   async function enviar() {
     const conteudo = texto.trim();
     // §31.5 — sem conteúdo e sem anexo não há mensagem; com anexo, o texto é opcional.
-    if ((conteudo.length === 0 && anexo === null) || desabilitado || ocupado) return;
+    // Não envia durante o staging do anexo (`anexando`) para não perder o anexo a caminho.
+    if ((conteudo.length === 0 && anexo === null) || desabilitado || ocupado || anexando) return;
     setOcupado(true);
-    const ok = await enviarMensagem(conversationId, conteudo, anexo ?? undefined);
+    const ok = await enviarMensagem(
+      conversationId,
+      conteudo,
+      anexo ?? undefined,
+      respondendoA?.id,
+    );
     setOcupado(false);
     // O campo só esvazia quando a escrita aconteceu. Não há retentativa a oferecer, e
     // limpar antes perderia o texto de quem não tem para onde reenviá-lo.
     if (ok) {
       setTexto("");
       setAnexo(null);
+      onCancelarResposta?.();
       if (digitando.current) {
         digitando.current = false;
         void avisarDigitacao(conversationId, false);
@@ -106,6 +117,24 @@ export function DmComposer({
     <div className="shrink-0 px-4 pb-4">
       {desabilitado && motivo && (
         <p className="mb-1.5 text-caption text-text-tertiary">{motivo}</p>
+      )}
+      {respondendoA && (
+        <div className="mb-1.5 flex items-center justify-between gap-2 rounded-md border border-border-default bg-surface-elevated px-2.5 py-1.5 text-meta">
+          <span className="min-w-0 flex-1 truncate text-text-secondary">
+            Respondendo a <strong className="text-text-primary">{respondendoA.author.displayName}</strong>:{" "}
+            <span className="italic">
+              {respondendoA.deleted ? "Mensagem apagada" : (respondendoA.content ?? "Anexo")}
+            </span>
+          </span>
+          <Button
+            variant="icon"
+            size="sm"
+            onClick={onCancelarResposta}
+            aria-label="Cancelar resposta"
+          >
+            <X size={14} strokeWidth={2} aria-hidden="true" />
+          </Button>
+        </div>
       )}
       {/*
         O anexo já staged, antes do envio. Tirá-lo daqui **não** apaga os bytes do core —

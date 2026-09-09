@@ -223,7 +223,10 @@ export function DmList({ className }: { className?: string }) {
                 <ItemDeConversa
                   item={c}
                   ativa={c.conversationId === ativa}
-                  onSelect={() => void abrirConversa(c.conversationId)}
+                  onSelect={() => {
+                    useUiStore.getState().setMobilePane("content");
+                    void abrirConversa(c.conversationId);
+                  }}
                 />
               </li>
             ))}

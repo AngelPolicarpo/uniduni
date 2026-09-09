@@ -480,7 +480,13 @@ export function assinarDmVoz(): void {
         .recebendo({ conversationId: ev.conversationId, peerKey: ev.peerKey });
       return;
     }
-    if (store.conversationId !== ev.conversationId) return;
+    if (store.conversationId !== ev.conversationId) {
+      // §15.4 "voz é uma só", §20.3 feedback da chamada recebida enquanto ocupado.
+      useToastStore
+        .getState()
+        .showToast("Chamada recebida de outro contato enquanto você está em chamada", "warning");
+      return;
+    }
     // Eu já estava chamando e ele atendeu: agora existe serviço do outro lado, e é agora que
     // a coleta de §99.13 pode começar na fase 1.
     if (store.estado === "chamando") {

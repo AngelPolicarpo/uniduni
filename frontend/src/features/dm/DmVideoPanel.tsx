@@ -7,7 +7,9 @@ import { cameraLocal, cameraRecebida } from "../../live/cameraStreams";
 import { telaDoApresentador, telaRecebida } from "../../live/telaStreams";
 import { corDoPar, nomeComHandle, palcoDeVideo } from "./dmRegras";
 import { useDmCallStore } from "../../store/dmCallStore";
+import { useIdentityStore } from "../../store/identityStore";
 import type { DmPeerRef } from "../../ipc/dto";
+import type { AvatarColor } from "../../domain/types";
 
 /**
  * §17.2 — as duas imagens de uma chamada de dois.
@@ -37,6 +39,8 @@ export function DmVideoPanel({ peer, className }: DmVideoPanelProps) {
   const telaLigada = useDmCallStore((s) => s.telaLigada);
   const parComTela = useDmCallStore((s) => s.parComTela);
   const videoSeq = useDmCallStore((s) => s.videoSeq);
+  const meuPerfil = useIdentityStore((s) => s.identity);
+  const minhaCor = meuPerfil?.avatarColor;
 
   // Sem imagem de lado nenhum o painel não existe: uma chamada só de voz não precisa de
   // caixas pretas ocupando a conversa que a pessoa abriu para ler.
@@ -68,7 +72,7 @@ export function DmVideoPanel({ peer, className }: DmVideoPanelProps) {
       <DmVideoTile
         rotulo="Você"
         ativo={cameraLigada}
-        avatarColor={peer.avatarColor}
+        avatarColor={minhaCor ?? peer.avatarColor}
         nome="Você"
         // A própria imagem vai espelhada e MUDA: espelhar é o que faz o gesto bater com o que
         // a pessoa vê, e o áudio do próprio microfone voltando seria eco.
@@ -93,7 +97,7 @@ interface DmVideoTileProps {
   rotulo: string;
   nome: string;
   ativo: boolean;
-  avatarColor: number;
+  avatarColor: number | AvatarColor;
   espelhada?: boolean;
   /** Tela vai inteira (`contain`); câmera preenche (`cover`). */
   inteira?: boolean;
@@ -169,7 +173,11 @@ function DmVideoTile({
         />
       ) : (
         <div className="grid size-full place-items-center gap-1">
-          <Avatar name={nome} color={corDoPar(avatarColor)} size="md" />
+          <Avatar
+            name={nome}
+            color={typeof avatarColor === "number" ? corDoPar(avatarColor) : avatarColor}
+            size="md"
+          />
           <span className="flex items-center gap-1 text-meta text-text-tertiary">
             <VideoOff size={12} strokeWidth={2} aria-hidden="true" />
             Câmera desligada

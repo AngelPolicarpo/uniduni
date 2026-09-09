@@ -18,7 +18,11 @@ import { Spinner } from "../../components/ui/Spinner";
 import { StatusBanner } from "../../components/ui/StatusBanner";
 import { cn } from "../../lib/cn";
 import { MESSAGE_GROUP_WINDOW_MS } from "../../lib/format";
-import { DmBloquearModal, DmEsquecerModal } from "./DmDialogs";
+import {
+  DmBloquearModal,
+  DmEsquecerModal,
+  DmPerfilConversaModal,
+} from "./DmDialogs";
 import { DmComposer } from "./DmComposer";
 import { DmMessageRow } from "./DmMessageRow";
 import { DmPeerLabel } from "./DmPeerLabel";
@@ -36,8 +40,10 @@ import {
   primeiraNaoLida,
 } from "./dmRegras";
 import {
+  aceitarConversa,
   bloquearConversa,
   carregarMensagens,
+  definirPerfil,
   desbloquearConversa,
   esquecerConversa,
 } from "../../live/dm";
@@ -54,7 +60,7 @@ import { useDmCallStore } from "../../store/dmCallStore";
 import { useDmStore } from "../../store/dmStore";
 import { useIdentityStore } from "../../store/identityStore";
 import { useSettingsStore } from "../../store/settingsStore";
-import type { DmConversationItem } from "../../ipc/dto";
+import type { DmConversationItem, DmMessageDto } from "../../ipc/dto";
 
 /**
  * A conversa aberta — cabeçalho, faixa de estado, mensagens e composer.
@@ -108,6 +114,8 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
   const [menuTela, setMenuTela] = useState(false);
   const [bloquear, setBloquear] = useState(false);
   const [esquecer, setEsquecer] = useState(false);
+  const [editarPerfil, setEditarPerfil] = useState(false);
+  const [respondendoA, setRespondendoA] = useState<DmMessageDto | null>(null);
   // B63(b) — o mudo desta conversa, preferência local deste aparelho.
   const conversaMuda = useSettingsStore((s) => s.dmMutedByConversation[conversa.conversationId] === true);
   const alternarMudoConversa = useSettingsStore((s) => s.setDmMuted);
@@ -155,8 +163,11 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
   const sync = detalhe?.sync ?? conversa.sync;
   const faixa = faixaDeSincronizacao(sync);
   const composer = composerDaConversa(conversa.state, sync);
-  const acoes = acoesDaConversa(conversa.state);
-  const acoesChamada = acoesDeChamada(conversa.state, daConversa ? chamadaEstado : "fora");
+  // §15.4 "voz é uma só" / §15: se já existe chamada noutra conversa, não oferece "chamar" aqui
+  const acoesChamada =
+    chamadaId !== null && !daConversa
+      ? []
+      : acoesDeChamada(conversa.state, daConversa ? chamadaEstado : "fora");
   const bannerChamada = faixaDeChamada(
     daConversa ? chamadaEstado : "fora",
     daConversa ? chamadaFalha : null,
@@ -351,6 +362,20 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
                     label: "Silenciar conversa",
                     onSelect: () => alternarMudoConversa(conversa.conversationId, true),
                   },
+              ...(acoes.includes("aceitar")
+                ? [
+                    {
+                      id: "aceitar",
+                      label: "Aceitar conversa",
+                      onSelect: () => void aceitarConversa(conversa.conversationId),
+                    },
+                  ]
+                : []),
+              {
+                id: "editar-perfil",
+                label: "Editar meu perfil nesta conversa",
+                onSelect: () => setEditarPerfil(true),
+              },
               ...(acoes.includes("desbloquear")
                 ? [
                     {
@@ -448,10 +473,17 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
             anterior !== undefined &&
             anterior.author.key === m.author.key &&
             m.ts - anterior.ts < MESSAGE_GROUP_WINDOW_MS;
+          const propria = euHex !== null && m.author.key.toLowerCase() === euHex.toLowerCase();
           return (
             <Fragment key={m.id}>
               {nova && <DivisorDeNaoLidas />}
-              <DmMessageRow mensagem={m} agrupada={agrupada} agora={agora} />
+              <DmMessageRow
+                mensagem={m}
+                agrupada={agrupada}
+                agora={agora}
+                propria={propria}
+                onResponder={(alvo) => setRespondendoA(alvo)}
+              />
             </Fragment>
           );
         })}
@@ -475,11 +507,30 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
         </p>
       )}
 
+      {/* Ações de aceite quando o pedido aberto é recebido */}
+      {conversa.state === "pending-in" && (
+        <div className="flex items-center justify-between gap-2 border-t border-border-subtle bg-surface-sidebar p-3">
+          <p className="text-body text-text-secondary">
+            {conversa.peer.displayName} enviou um pedido de conversa.
+          </p>
+          <div className="flex shrink-0 gap-2">
+            <Button size="sm" onClick={() => void aceitarConversa(conversa.conversationId)}>
+              Aceitar
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setBloquear(true)}>
+              Bloquear
+            </Button>
+          </div>
+        </div>
+      )}
+
       {composer.visivel ? (
         <DmComposer
           conversationId={conversa.conversationId}
           nomeDoPar={conversa.peer.displayName}
           desabilitado={!composer.habilitado}
+          respondendoA={respondendoA}
+          onCancelarResposta={() => setRespondendoA(null)}
           {...(composer.motivo !== undefined ? { motivo: composer.motivo } : {})}
         />
       ) : (
@@ -501,6 +552,12 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
         nomeDoPar={conversa.peer.displayName}
         onClose={() => setEsquecer(false)}
         onConfirm={() => void esquecerConversa(conversa.conversationId)}
+      />
+      <DmPerfilConversaModal
+        open={editarPerfil}
+        nomeAtual={useIdentityStore.getState().identity?.displayName ?? ""}
+        onClose={() => setEditarPerfil(false)}
+        onConfirm={(novoNome) => void definirPerfil(conversa.conversationId, novoNome)}
       />
     </div>
   );
