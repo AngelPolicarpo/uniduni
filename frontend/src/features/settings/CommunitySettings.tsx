@@ -57,15 +57,17 @@ export function CommunitySettings({ community, onClose }: CommunitySettingsProps
       : []),
   ];
 
+  const activeTab = tabs.some((t) => t.id === tab) ? tab : "general";
+
   return (
     <SettingsLayout
       title={community.name}
       items={tabs}
-      activeId={tab}
+      activeId={activeTab}
       onSelect={setTab}
       onClose={onClose}
     >
-      {tab === "general" && (
+      {activeTab === "general" && (
         <>
           {canManageCommunity && (
             <CommunityIdentitySection community={community} semHost={semHost} />
@@ -79,8 +81,8 @@ export function CommunitySettings({ community, onClose }: CommunitySettingsProps
         </>
       )}
 
-      {tab === "roles" && <RolesTab community={community} />}
-      {tab === "moderation" && <ModerationTab community={community} />}
+      {activeTab === "roles" && <RolesTab community={community} />}
+      {activeTab === "moderation" && <ModerationTab community={community} semHost={semHost} />}
     </SettingsLayout>
   );
 }

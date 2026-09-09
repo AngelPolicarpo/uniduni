@@ -58,7 +58,7 @@ export function RolesTab({ community }: RolesTabProps) {
     );
   }, [community.id, selected, findMembers]);
 
-  function comRecusa(acao: () => Promise<void>) {
+  function comRecusa(acao: () => Promise<void>, aoSucesso?: () => void) {
     // A guarda mora num ref, e não no estado: `ocupado` só vale no render seguinte, então
     // dois cliques no MESMO quadro passavam os dois pela porta — o `disabled={ocupado}` do
     // botão ainda não tinha valido — e criavam dois "Novo cargo" de uma vez.
@@ -70,6 +70,7 @@ export function RolesTab({ community }: RolesTabProps) {
       try {
         await acao();
         await sincronizarComunidade(community.id);
+        aoSucesso?.();
       } catch (e) {
         setRecusa(motivoDaRecusa(codigoDoErro(e)));
       } finally {

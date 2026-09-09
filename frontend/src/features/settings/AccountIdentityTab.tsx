@@ -19,6 +19,8 @@ import { useCommunityStore } from "../../store/communityStore";
 import { useMessageStore } from "../../store/messageStore";
 import { useVoiceStore } from "../../store/voiceStore";
 import { usePendingInviteStore } from "../../store/inviteStore";
+import { api } from "../../ipc/api";
+import { codigoDoErro, motivoDaRecusa } from "../../live/recusas";
 import type { Identity, PresenceStatus } from "../../domain/types";
 
 /**
@@ -41,15 +43,28 @@ export function AccountIdentityTab({ identity }: { identity: Identity }) {
   const showToast = useToastStore((state) => state.showToast);
 
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
+  const [saindo, setSaindo] = useState(false);
   // U-34 — a chave **inteira**. `null` só enquanto a identidade não carregou.
   const chavePublica = chaveParaExibir(identity.publicKey);
 
-  function signOut() {
-    leaveVoice();
-    resetCommunities();
-    resetMessages();
-    clearPendingInvite();
-    clearIdentity();
+  async function signOut() {
+    if (saindo) return;
+    setSaindo(true);
+    try {
+      await api.identityWipe();
+      leaveVoice();
+      resetCommunities();
+      resetMessages();
+      clearPendingInvite();
+      clearIdentity();
+    } catch (e) {
+      if (codigoDoErro(e) !== "E_CANCELLED") {
+        showToast(motivoDaRecusa(codigoDoErro(e)));
+      }
+    } finally {
+      setSaindo(false);
+      setConfirmingSignOut(false);
+    }
   }
 
   return (
@@ -196,7 +211,7 @@ export function AccountIdentityTab({ identity }: { identity: Identity }) {
               >
                 Cancelar
               </Button>
-              <Button variant="danger" onClick={signOut}>
+              <Button variant="danger" onClick={signOut} disabled={saindo}>
                 Apagar identidade
               </Button>
             </div>

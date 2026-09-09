@@ -38,6 +38,7 @@ import {
 } from "../../live/sincronizacao";
 import { api } from "../../ipc/api";
 import { codigoDoErro } from "../../ipc/frames";
+import { motivoDaRecusa, OFFLINE_HINT } from "../../live/recusas";
 import { useToastStore } from "../../store/toastStore";
 import type {
   Community,
@@ -126,6 +127,7 @@ function remaining(until: number, now: number): string {
 
 export interface ModerationTabProps {
   community: Community;
+  semHost?: boolean;
 }
 
 /**
@@ -144,7 +146,7 @@ export interface ModerationTabProps {
  * em escala como problema em aberto, e a nota de honestidade do topo da lista de banidos diz
  * isso com todas as letras.
  */
-export function ModerationTab({ community }: ModerationTabProps) {
+export function ModerationTab({ community, semHost = false }: ModerationTabProps) {
   const showToast = useToastStore((state) => state.showToast);
   const [tab, setTab] = useState("log");
   const [typeFilter, setTypeFilter] = useState<ModerationActionType | "all">(
@@ -179,7 +181,7 @@ export function ModerationTab({ community }: ModerationTabProps) {
       void sincronizarMembros(community.id);
       recarregar();
     } catch (e) {
-      showToast(`Não foi possível revogar (${codigoDoErro(e)}).`);
+      showToast(`Não foi possível revogar: ${motivoDaRecusa(codigoDoErro(e))}`);
     }
   }
 
@@ -189,7 +191,7 @@ export function ModerationTab({ community }: ModerationTabProps) {
       showToast(`Timeout de ${label} removido`);
       recarregar();
     } catch (e) {
-      showToast(`Não foi possível remover (${codigoDoErro(e)}).`);
+      showToast(`Não foi possível remover: ${motivoDaRecusa(codigoDoErro(e))}`);
     }
   }
 
@@ -346,6 +348,8 @@ export function ModerationTab({ community }: ModerationTabProps) {
                         <Button
                           variant="ghost"
                           size="sm"
+                          disabled={semHost}
+                          title={semHost ? OFFLINE_HINT : undefined}
                           onClick={() => void revogar(ban.identityId, ban.label)}
                         >
                           Revogar banimento
@@ -384,6 +388,8 @@ export function ModerationTab({ community }: ModerationTabProps) {
                         <Button
                           variant="ghost"
                           size="sm"
+                          disabled={semHost}
+                          title={semHost ? OFFLINE_HINT : undefined}
                           onClick={() => void removerTimeout(timeout.identityId, timeout.label)}
                         >
                           Remover timeout

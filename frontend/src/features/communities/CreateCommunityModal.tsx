@@ -13,6 +13,7 @@ import { useUiStore } from "../../store/uiStore";
 import { mensagemDeErro, useSessao } from "../../live/sessao";
 import { numeroDaCor } from "../../ipc/cores";
 import type { AvatarColor } from "../../domain/types";
+import { codePoints } from "../../lib/texto";
 
 /** §13 — Nome: obrigatório, 2-40 · Descrição: opcional, até 120. */
 const NAME_MIN = 2;
@@ -26,7 +27,7 @@ type Phase = "editing" | "creating";
 function validate(rawName: string): string | undefined {
   const name = rawName.trim();
   if (name.length === 0) return "Digite um nome para a comunidade.";
-  if (name.length < NAME_MIN)
+  if (codePoints(name) < NAME_MIN)
     return `O nome precisa ter pelo menos ${NAME_MIN} caracteres.`;
   return undefined;
 }
@@ -134,7 +135,7 @@ export function CreateCommunityModal() {
             onBlur={() => setError(validate(name))}
             error={error}
             placeholder="Ex.: Clã Noturno"
-            maxLength={NAME_MAX}
+            limiteCp={NAME_MAX}
             counterWarningAt={NAME_WARNING_AT}
             showCounter
             autoFocus
@@ -181,7 +182,7 @@ export function CreateCommunityModal() {
             value={description}
             onChange={setDescription}
             placeholder="Do que essa comunidade trata?"
-            maxLength={DESCRIPTION_MAX}
+            limiteCp={DESCRIPTION_MAX}
             counterWarningAt={DESCRIPTION_WARNING_AT}
             showCounter
             disabled={phase !== "editing"}

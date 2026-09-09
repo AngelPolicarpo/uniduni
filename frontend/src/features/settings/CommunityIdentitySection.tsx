@@ -8,6 +8,7 @@ import { codigoDoErro } from "../../ipc/frames";
 import { sincronizarComunidade } from "../../live/sincronizacao";
 import { motivoDaRecusa, OFFLINE_HINT } from "../../live/recusas";
 import { useToastStore } from "../../store/toastStore";
+import { codePoints } from "../../lib/texto";
 import type { Community } from "../../domain/types";
 
 /**
@@ -61,11 +62,11 @@ export function CommunityIdentitySection({
         label="Nome da comunidade"
         value={draft.name}
         onChange={(name) => setRascunho({ ...draft, name })}
-        maxLength={40}
+        limiteCp={40}
         showCounter
         counterWarningAt={36}
         error={
-          draft.name.trim().length < 2
+          codePoints(draft.name.trim()) < 2
             ? "O nome precisa de pelo menos 2 caracteres"
             : undefined
         }
@@ -74,7 +75,7 @@ export function CommunityIdentitySection({
         label="Descrição"
         value={draft.description}
         onChange={(description) => setRascunho({ ...draft, description })}
-        maxLength={120}
+        limiteCp={120}
         showCounter
         rows={3}
       />
@@ -90,7 +91,7 @@ export function CommunityIdentitySection({
           size="sm"
           onClick={() => void salvarIdentidade()}
           loading={salvando}
-          disabled={!sujo || semHost || draft.name.trim().length < 2}
+          disabled={!sujo || semHost || codePoints(draft.name.trim()) < 2}
           title={semHost ? OFFLINE_HINT : undefined}
         >
           Salvar alterações

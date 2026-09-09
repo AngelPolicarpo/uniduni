@@ -9,6 +9,7 @@ import { ProfilePopover } from "./ProfilePopover";
 import { ROLE_TEXT_CLASS } from "../../lib/role";
 import { selectRole, useCommunityStore, useMemberLabel } from "../../store/communityStore";
 import { useBans } from "../../store/moderationStore";
+import { useVoiceStore } from "../../store/voiceStore";
 import type {
   Channel, Community, Member, Role } from "../../domain/types";
 
@@ -39,6 +40,7 @@ interface MemberRowProps {
   member: Member;
   role: Role | undefined;
   inVoice: boolean;
+  inCall?: boolean;
   onOpenProfile: (identityId: string, anchor: DOMRect) => void;
   /** Botão direito / long-press: o menu de contexto de membro de §6. */
   menuAberto: boolean;
@@ -50,6 +52,7 @@ function MemberRow({
   member,
   role,
   inVoice,
+  inCall,
   onOpenProfile,
   menuAberto,
   onOpenMenu,
@@ -116,6 +119,7 @@ function MemberRow({
         identityId={member.identityId}
         open={menuAberto}
         onClose={onCloseMenu}
+        inCall={inCall}
         onOpenProfile={() => onOpenProfile(member.identityId, ancoraDoMenu())}
       />
     </li>
@@ -177,6 +181,7 @@ export function MembersPanel({ community, onClose }: MembersPanelProps) {
     // dependências deste `useMemo`, isso acontecia a cada tecla digitada.
     const ordem = new Map(roles.map((role, i) => [role.id, i]));
     const porCargo = new Map<string, Member[]>();
+    const cargoBase = roles.find((r) => r.isDefault) ?? roles[roles.length - 1];
     for (const member of visible) {
       let maisAlto = -1;
       for (const roleId of member.roleIds) {
@@ -185,8 +190,15 @@ export function MembersPanel({ community, onClose }: MembersPanelProps) {
         // não com a ordem em que ESTE membro recebeu os cargos.
         if (i !== undefined && (maisAlto === -1 || i < maisAlto)) maisAlto = i;
       }
-      // Membro só com cargo desconhecido não entra em grupo nenhum, como antes.
-      if (maisAlto === -1) continue;
+      // Membro com cargo ainda não sincronizado ou com referência residual cai
+      // no cargo base da comunidade para não ser descartado silenciosamente do roster.
+      if (maisAlto === -1) {
+        if (!cargoBase) continue;
+        const lista = porCargo.get(cargoBase.id);
+        if (lista === undefined) porCargo.set(cargoBase.id, [member]);
+        else lista.push(member);
+        continue;
+      }
       const cargoId = roles[maisAlto].id;
       const lista = porCargo.get(cargoId);
       if (lista === undefined) porCargo.set(cargoId, [member]);
@@ -205,6 +217,13 @@ export function MembersPanel({ community, onClose }: MembersPanelProps) {
 
   const canais = useCommunityStore((state) => state.remote.channels);
   const voiceIds = useMemo(() => inVoiceIds(community.id, canais), [community.id, canais]);
+  const inCallParticipantIds = useVoiceStore(
+    useShallow((state) =>
+      state.communityId === community.id
+        ? new Set(state.participants.map((p) => p.identityId))
+        : new Set<string>(),
+    ),
+  );
   // §23.3 — offline é contagem agregada, e quem a produz é `query.members.offlineCount`.
   // Enquanto o sincronizador não a espelha, a seção não afirma um número: zero aqui
   // significa "não sei", e a UI já não desenha a linha nesse caso. Lacuna registrada.
@@ -249,6 +268,7 @@ export function MembersPanel({ community, onClose }: MembersPanelProps) {
                   member={member}
                   role={role}
                   inVoice={voiceIds.has(member.identityId)}
+                  inCall={inCallParticipantIds.has(member.identityId)}
                   onOpenProfile={(identityId, anchor) => {
                     setMenu(null);
                     setProfile({ identityId, anchor });
@@ -275,6 +295,7 @@ export function MembersPanel({ community, onClose }: MembersPanelProps) {
           identityId={profile.identityId}
           anchor={profile.anchor}
           onClose={() => setProfile(null)}
+          inCall={inCallParticipantIds.has(profile.identityId)}
         />
       )}
     </SlidePanel>

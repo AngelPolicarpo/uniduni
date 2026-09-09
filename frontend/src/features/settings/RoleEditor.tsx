@@ -63,7 +63,7 @@ export interface RoleEditorProps {
   /** Mensagem de recusa da última op, mostrada acima dos botões. */
   recusa: string | null;
   /** Envia a op, reconsulta e trata a recusa — vem da aba. */
-  comRecusa: (acao: () => Promise<void>) => void;
+  comRecusa: (acao: () => Promise<void>, aoSucesso?: () => void) => void;
   /** §16 Mobile: volta para a lista, que é a primeira das duas telas. */
   mobileEditing: boolean;
   /** Aba interna do editor — vive na aba de cargos porque criar um cargo
@@ -180,18 +180,25 @@ export function RoleEditor({
 
   function salvar() {
     const cor = numeroDaCor(draft.color);
-    comRecusa(async () => {
-      await api.roleUpdate({
-        communityId: community.id,
-        roleId: draft.roleId,
-        ...(draft.name !== selected.name ? { name: draft.name } : {}),
-        ...(draft.color !== selected.color && cor !== null ? { color: cor } : {}),
-        ...(draft.mentionable !== selected.mentionable ? { mentionable: draft.mentionable } : {}),
-        permissions: draft.permissions,
-      });
-      setRascunho(null);
-      showToast("Alterações salvas", "success");
-    });
+    const permissionsMudaram =
+      draft.permissions.length !== selected.permissions.length ||
+      draft.permissions.some((perm) => !salvas.has(perm));
+    comRecusa(
+      async () => {
+        await api.roleUpdate({
+          communityId: community.id,
+          roleId: draft.roleId,
+          ...(draft.name !== selected.name ? { name: draft.name } : {}),
+          ...(draft.color !== selected.color && cor !== null ? { color: cor } : {}),
+          ...(draft.mentionable !== selected.mentionable ? { mentionable: draft.mentionable } : {}),
+          ...(permissionsMudaram ? { permissions: draft.permissions } : {}),
+        });
+      },
+      () => {
+        setRascunho(null);
+        showToast("Alterações salvas", "success");
+      },
+    );
   }
 
   return (
@@ -214,7 +221,7 @@ export function RoleEditor({
       label="Nome do cargo"
       value={draft.name}
       onChange={(value) => setRascunho({ ...draft, name: value })}
-      maxLength={32}
+      limiteCp={32}
       showCounter
       error={
         draft.name.trim() === "" ? "O cargo precisa de um nome" : undefined

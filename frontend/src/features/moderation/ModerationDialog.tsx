@@ -10,6 +10,9 @@ import {
   sincronizarMembros,
   sincronizarModeracao,
 } from "../../live/sincronizacao";
+import { OFFLINE_HINT } from "../../live/recusas";
+import { useCommunityStore, selectCommunity } from "../../store/communityStore";
+import { useHostStatus } from "../../store/connectionStore";
 import { useToastStore } from "../../store/toastStore";
 
 export type ModerationKind = "kick" | "ban" | "timeout";
@@ -78,6 +81,9 @@ export function ModerationDialog({
   onApplied,
 }: ModerationDialogProps) {
   void byId;
+  const community = useCommunityStore((state) => selectCommunity(state, communityId));
+  const hostStatus = useHostStatus(community);
+  const semHost = hostStatus !== "online";
   const [reason, setReason] = useState("");
   const [duration, setDuration] = useState(TIMEOUT_OPTIONS[0].value);
   const [recusa, setRecusa] = useState<string | null>(null);
@@ -128,7 +134,7 @@ export function ModerationDialog({
       <div className="flex flex-col gap-4">
         <p className="text-body text-text-secondary">
           {kind === "ban" &&
-            `${targetLabel} não consegue mais entrar nesta comunidade com esta identidade, e as mensagens dele saem do canal.`}
+            `${targetLabel} não consegue mais entrar nesta comunidade com esta identidade, e as mensagens dele saem do canal. Revogar o banimento reexibe as mensagens.`}
           {kind === "kick" &&
             `${targetLabel} sai da comunidade agora, mas pode voltar com um convite válido.`}
           {kind === "timeout" &&
@@ -148,7 +154,7 @@ export function ModerationDialog({
           label="Motivo (opcional)"
           value={reason}
           onChange={setReason}
-          maxLength={200}
+          limiteCp={200}
           showCounter
           rows={2}
           hint="Vai para o log de auditoria como texto livre."
@@ -180,7 +186,12 @@ export function ModerationDialog({
           <Button variant="secondary" onClick={onClose}>
             Cancelar
           </Button>
-          <Button variant="danger" onClick={() => void apply()} disabled={aplicando}>
+          <Button
+            variant="danger"
+            onClick={() => void apply()}
+            disabled={aplicando || semHost}
+            title={semHost ? OFFLINE_HINT : undefined}
+          >
             {TITLE[kind]}
           </Button>
         </div>

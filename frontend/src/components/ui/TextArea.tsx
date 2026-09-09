@@ -1,6 +1,7 @@
 import type { ComponentPropsWithRef } from "react";
 import { useId } from "react";
 import { cn } from "../../lib/cn";
+import { codePoints, cortarCodePoints } from "../../lib/texto";
 
 export interface TextAreaProps
   extends Omit<ComponentPropsWithRef<"textarea">, "onChange"> {
@@ -11,6 +12,11 @@ export interface TextAreaProps
   hint?: string;
   showCounter?: boolean;
   counterWarningAt?: number;
+  /**
+   * Teto em **code points** (§8.6), para campo cujo limite é do log.
+   * Substitui o `maxLength` do DOM e a base do contador.
+   */
+  limiteCp?: number;
 }
 
 /** Textarea de formulário (§6) — mesmas regras de estado do `TextField`. */
@@ -23,6 +29,7 @@ export function TextArea({
   showCounter = false,
   counterWarningAt,
   maxLength,
+  limiteCp,
   rows = 3,
   className,
   ...rest
@@ -32,8 +39,10 @@ export function TextArea({
   const hintId = `${fieldId}-hint`;
 
   const hasError = Boolean(error);
+  const contagem = limiteCp === undefined ? value.length : codePoints(value);
+  const teto = limiteCp ?? maxLength;
   const isNearLimit =
-    counterWarningAt !== undefined && value.length > counterWarningAt;
+    counterWarningAt !== undefined && contagem > counterWarningAt;
 
   return (
     <div className={cn("flex flex-col gap-2", className)}>
@@ -45,7 +54,7 @@ export function TextArea({
           {label}
         </label>
 
-        {showCounter && maxLength !== undefined && (
+        {showCounter && teto !== undefined && (
           <span
             className={cn(
               "text-meta tabular-nums",
@@ -53,7 +62,7 @@ export function TextArea({
             )}
             aria-hidden="true"
           >
-            {value.length}/{maxLength}
+            {contagem}/{teto}
           </span>
         )}
       </div>
@@ -62,8 +71,14 @@ export function TextArea({
         id={fieldId}
         value={value}
         rows={rows}
-        maxLength={maxLength}
-        onChange={(event) => onChange(event.target.value)}
+        {...(limiteCp === undefined ? { maxLength } : {})}
+        onChange={(event) =>
+          onChange(
+            limiteCp === undefined
+              ? event.target.value
+              : cortarCodePoints(event.target.value, limiteCp),
+          )
+        }
         aria-invalid={hasError || undefined}
         aria-describedby={hasError ? errorId : hint ? hintId : undefined}
         className={cn(
