@@ -1,4 +1,4 @@
-# Implementation Dry Run — Comunidade P2P
+# Implementation Dry Run — Uniduni
 
 > Execução mental da implementação, exatamente como a especificação manda, sem inventar
 > decisão nenhuma. Cada ponto em que a execução **parou porque faltava uma decisão** está

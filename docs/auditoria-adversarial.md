@@ -1,4 +1,4 @@
-# Auditoria Adversarial de Arquitetura — Comunidade P2P
+# Auditoria Adversarial de Arquitetura — Uniduni
 
 **Documentos auditados**
 - `backend.md` — Especificação Técnica do Backend (2.986 linhas), lido integralmente.

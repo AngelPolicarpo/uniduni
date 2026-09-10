@@ -1,4 +1,4 @@
-# Auditoria adversarial de decisões tecnológicas — Comunidade P2P
+# Auditoria adversarial de decisões tecnológicas — Uniduni
 
 **Responsável:** Manus AI  
 **Data de corte da pesquisa:** 15 de agosto de 2026  

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Copy, Minus, Network, Square, X } from "lucide-react";
 
 /**
- * Titlebar customizada da Comunidade P2P.
+ * Titlebar customizada do Uniduni.
  *
  * Substitui os controles nativos do sistema operacional / Electron por uma barra
  * integrada ao design system do projeto (superfície `surface-app`, borda `border-subtle`,

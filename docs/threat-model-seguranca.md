@@ -1,4 +1,4 @@
-# Threat Model de Segurança — Comunidade P2P
+# Threat Model de Segurança — Uniduni
 
 **Documentos modelados**
 - `backend.md` — Especificação Técnica do Backend (2.986 linhas), lido integralmente.

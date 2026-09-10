@@ -1,4 +1,4 @@
-# Especificação Técnica do Backend — Comunidade P2P
+# Especificação Técnica do Backend — Uniduni
 
 > ## ⛔ DOCUMENTO SUPERADO — v1, preservado como história
 >

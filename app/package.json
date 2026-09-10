@@ -1,6 +1,6 @@
 {
   "name": "@comunidade/app",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Shell Electron do produto — main + utilityProcess + renderer (§3.1)",
   "type": "commonjs",
@@ -41,5 +41,5 @@
     "electron-builder": "26.15.3",
     "typescript": "^5.8.3"
   },
-  "author": "Comunidade P2P"
+  "author": "Uniduni"
 }

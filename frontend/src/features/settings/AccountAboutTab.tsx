@@ -30,13 +30,13 @@ export function AccountAboutTab() {
   return (
     <>
       <SettingsSection
-        title="Sobre a Comunidade P2P"
+        title="Sobre o Uniduni"
         description="Aplicativo descentralizado de voz, vídeo e mensagens em tempo real sem servidor central."
       >
         <div className="flex flex-col gap-1.5 rounded-lg border border-border-subtle bg-surface-primary p-3">
           <div className="flex items-center justify-between">
             <span className="text-body font-medium text-text-primary">
-              Comunidade P2P
+              Uniduni
             </span>
             <span className="rounded bg-surface-secondary px-2 py-0.5 text-meta font-mono text-text-secondary">
               v{appVersion || "0.0.0"}

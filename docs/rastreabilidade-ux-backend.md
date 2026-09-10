@@ -1,4 +1,4 @@
-# Matriz de Rastreabilidade UX/UI ↔ Backend — Comunidade P2P
+# Matriz de Rastreabilidade UX/UI ↔ Backend — Uniduni
 
 > Verificação de rastreabilidade entre `docs/frontend.md` (Spec de UX/UI), `docs/backend.md`
 > (Especificação Técnica do Backend), o frontend mockado já em código (`frontend/src/`, 18 407

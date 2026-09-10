@@ -1,4 +1,4 @@
-# Especificação Técnica do Backend — Comunidade P2P — **v2**
+# Especificação Técnica do Backend — Uniduni — **v2**
 
 > **Status normativo:** esta é a **única** fonte de verdade para a arquitetura e para a
 > implementação do backend. Ela **substitui integralmente** `docs/backend.md` (v1), que

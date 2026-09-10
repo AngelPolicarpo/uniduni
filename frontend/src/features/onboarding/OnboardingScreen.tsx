@@ -165,7 +165,7 @@ export function OnboardingScreen() {
             <Network size={18} strokeWidth={2} />
           </span>
           <span className="text-body-emphasis text-text-secondary">
-            Comunidade P2P
+            Uniduni
           </span>
         </div>
 

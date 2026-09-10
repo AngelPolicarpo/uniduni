@@ -1,6 +1,6 @@
 # Uniduni
 
-Comunidade P2P de voz, vídeo e tela — sem servidor central. Cada comunidade é hospedada
+Uniduni é uma comunidade P2P de voz, vídeo e tela — sem servidor central. Cada comunidade é hospedada
 pela máquina de quem a criou.
 
 ## Sumário

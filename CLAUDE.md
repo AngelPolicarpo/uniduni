@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Comunidade P2P de voz, vídeo e tela, sem servidor central. Cada comunidade é hospedada pela máquina de quem a criou.
+Uniduni é uma comunidade P2P de voz, vídeo e tela, sem servidor central. Cada comunidade é hospedada pela máquina de quem a criou.
 
 Todas as fases do v1 estão implementadas (`docs/backend-v2.md` §29, emenda de 2026-09-04). `core/` é o núcleo e a rede; `frontend/` é o renderer de produto, não um mock; `app/` é o shell Electron que junta os dois. O que continua aberto está em `docs/backlog.md`.
 

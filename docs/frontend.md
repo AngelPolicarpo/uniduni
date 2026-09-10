@@ -1,4 +1,4 @@
-# Especificação de UX/UI — Comunidade P2P (Frontend Mockado)
+# Especificação de UX/UI — Uniduni (Frontend Mockado)
 
 > ## ⚠️ CORRIGIDA POR `docs/deltas-ux-v2.md`
 >
@@ -462,7 +462,7 @@ Breakpoints referenciados nas specs de tela abaixo (detalhados na íntegra em §
 **Objetivo:** primeiro estado do shell quando `comunidades.length === 0` — orientar a única decisão possível (entrar ou criar).
 **Layout:** shell já existe (rail à esquerda só com botão "+"), conteúdo central com empty state centralizado verticalmente.
 **Componentes:** ícone de rede/nós conectados (ilustração simples, não asset realista — mock não tem pipeline de imagem), título `heading-1` "Nenhuma comunidade ainda", texto de apoio, dois botões: primário "Criar uma comunidade" (abre 0.4) e secundário "Entrar com convite" (abre 0.3).
-**Conteúdo mockado:** "Comunidades no Comunidade P2P não têm servidor central — você entra com um convite de alguém, ou cria a sua e vira o host."
+**Conteúdo mockado:** "Comunidades no Uniduni não têm servidor central — você entra com um convite de alguém, ou cria a sua e vira o host."
 **Estados:** único (sem loading — resolvido por contagem local, sem chamada de rede).
 **Navegação:** existe sempre que 0 comunidades; some assim que a primeira é criada/entrada (substituído por 1.1).
 **Responsividade:** idêntico nos 3 breakpoints.

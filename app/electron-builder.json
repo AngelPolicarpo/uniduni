@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "br.comunidade.p2p",
-  "productName": "Comunidade P2P",
-  "executableName": "comunidade-p2p",
+  "appId": "br.uniduni.app",
+  "productName": "Uniduni",
+  "executableName": "uniduni",
   "directories": {
     "output": "release"
   },
@@ -29,7 +29,7 @@
   "buildDependenciesFromSource": false,
   "protocols": [
     {
-      "name": "Comunidade P2P",
+      "name": "Uniduni",
       "schemes": ["comunidadep2p"]
     }
   ],
@@ -44,15 +44,19 @@
       { "target": "nsis", "arch": ["x64"] },
       { "target": "portable", "arch": ["x64"] }
     ],
-    "artifactName": "${productName}-${version}-windows-${arch}.${ext}"
+    "artifactName": "Uniduni-${version}-windows-${arch}.${ext}"
   },
   "nsis": {
     "oneClick": false,
-    "allowToChangeInstallationDirectory": true
+    "allowToChangeInstallationDirectory": true,
+    "artifactName": "Uniduni-${version}-windows-${arch}-instalador.${ext}"
+  },
+  "portable": {
+    "artifactName": "Uniduni-${version}-windows-${arch}-portable.${ext}"
   },
   "linux": {
     "target": ["AppImage"],
-    "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
+    "artifactName": "Uniduni-${version}-linux-${arch}.${ext}",
     "category": "Network"
   }
 }

@@ -1,4 +1,4 @@
-# Auditoria de Sistemas Distribuídos e Confiabilidade — Comunidade P2P
+# Auditoria de Sistemas Distribuídos e Confiabilidade — Uniduni
 
 > Análise do `backend.md` (2986 linhas) tratado como **sistema distribuído real**, com
 > `frontend.md`, `auditoria-adversarial.md` e `dry-run-implementacao.md` como contexto.

@@ -27,7 +27,7 @@ export function EmptyHub() {
           Nenhuma comunidade ainda
         </h1>
         <p className="mt-2 text-body text-text-secondary">
-          Comunidades no Comunidade P2P não têm servidor central — você entra
+          Comunidades no Uniduni não têm servidor central — você entra
           com um convite de alguém, ou cria a sua e vira o host.
         </p>
 

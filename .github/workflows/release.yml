@@ -1,0 +1,161 @@
+# Publica uma versão do produto nos dois alvos do v1 (§1: Windows x64 e Linux x64).
+#
+# Dispara na tag `v*` — a tag é o ato deliberado do operador, e é o único gatilho.
+# O fluxo é rascunho-primeiro, de propósito:
+#
+#   1. `rascunho` cria a Release como **draft**. Enquanto ela for draft, o
+#      `latest.yml`/`latest-linux.yml` não é alcançável por download público, então
+#      nenhum app instalado enxerga a versão nova.
+#   2. `pacote` roda os dois alvos em paralelo e cada um sobe os próprios arquivos
+#      para esse mesmo draft (`--publish always`). Os manifestos são distintos por
+#      alvo (`latest.yml` no Windows, `latest-linux.yml` no Linux), então os dois
+#      jobs não disputam o mesmo arquivo.
+#   3. `publicar` só tira o draft depois que os DOIS alvos terminaram. É isso que
+#      impede o `electron-updater` de anunciar uma versão cujo instalador ainda
+#      está subindo — ou nunca subiu, se um alvo falhou.
+#
+# O empacotamento repete build.yml linha a linha (mesma ordem, mesmo
+# `--ignore-scripts`): os addons nativos chegam prontos em `prebuilds/` e o
+# `node-gyp rebuild` implícito do npm só faria trabalho jogado fora — no Windows,
+# ainda por cima, ele falha (o runner traz VS 18, que o node-gyp 11.x não identifica).
+#
+# Limitação declarada: o `.exe` não é assinado (backlog B3, §71.3). O SmartScreen
+# alerta na primeira execução, e isso é risco aceito, não defeito desta esteira.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  rascunho:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Conferir que a tag casa a versão de app/package.json
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          versao="$(node -p "require('./app/package.json').version")"
+          if [ "$tag" != "v$versao" ]; then
+            echo "Tag $tag não casa a versão v$versao de app/package.json." >&2
+            echo "O electron-builder publica em v\$version; divergir aqui produz release órfã." >&2
+            exit 1
+          fi
+          echo "tag=$tag versão=$versao"
+
+      - name: Criar a release como rascunho
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag já existe — reaproveitando."
+            exit 0
+          fi
+          notas="docs/notas-de-versao/${tag}.md"
+          if [ -f "$notas" ]; then
+            gh release create "$tag" --draft --title "$tag" --notes-file "$notas"
+          else
+            gh release create "$tag" --draft --title "$tag" --generate-notes
+          fi
+
+  pacote:
+    needs: rascunho
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            alvo: "--win"
+          - os: ubuntu-latest
+            alvo: "--linux"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Build do frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build do core
+        working-directory: core
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+
+      - name: Dependências do app
+        working-directory: app
+        run: npm ci --ignore-scripts
+
+      - name: Build do app
+        working-directory: app
+        run: npm run build
+
+      - name: Montar renderer e core dentro do pacote
+        working-directory: app
+        run: npm run montar
+
+      - name: Empacotar e publicar no rascunho (${{ matrix.alvo }})
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --config electron-builder.json ${{ matrix.alvo }} --publish always
+
+      - name: Artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: pacote-${{ matrix.os }}
+          path: |
+            app/release/*.exe
+            app/release/*.AppImage
+            app/release/*.blockmap
+            app/release/latest*.yml
+          if-no-files-found: error
+
+  publicar:
+    needs: pacote
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Conferir que os dois alvos subiram antes de tirar o rascunho
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          arquivos="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+          echo "$arquivos"
+          faltando=""
+          for exigido in '\-instalador\.exe$' '\-portable\.exe$' '\.AppImage$' '^latest\.yml$' '^latest-linux\.yml$'; do
+            echo "$arquivos" | grep -qE "$exigido" || faltando="$faltando $exigido"
+          done
+          if [ -n "$faltando" ]; then
+            echo "Release incompleta — faltam:$faltando" >&2
+            echo "O rascunho fica como está; nenhum app instalado enxerga esta versão." >&2
+            exit 1
+          fi
+
+      - name: Publicar a release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false --latest
