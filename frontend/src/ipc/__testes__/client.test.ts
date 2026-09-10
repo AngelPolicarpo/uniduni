@@ -92,6 +92,25 @@ describe("requests (§15.1 r. 1, r. 6; §15.2)", () => {
     expect("authToken" in porta.do("req")[0]!).toBe(false);
   });
 
+  it("`data: null` chega como `null` — §15.6 tem resultado cujo tipo é `X | null`", async () => {
+    const { cliente, porta } = ligado();
+    const p = cliente.request("query.identity");
+    const id = porta.do("req")[0]!.id;
+    porta.entregar({ t: "res", epoch: 1, id, ok: true, data: null });
+    // O defeito que isto fixa: `null` virava `{}`, que é objeto e portanto verdadeiro.
+    // A rota `/` abria o shell para uma identidade inexistente e o renderer morria no
+    // `Avatar` com `displayName` `undefined` — janela preta, sem erro visível.
+    await expect(p).resolves.toBeNull();
+  });
+
+  it("`data` AUSENTE continua sendo `{}` — é o comando que não devolve nada", async () => {
+    const { cliente, porta } = ligado();
+    const p = cliente.request("channel.markRead");
+    const id = porta.do("req")[0]!.id;
+    porta.entregar({ t: "res", epoch: 1, id, ok: true });
+    await expect(p).resolves.toEqual({});
+  });
+
   it("o erro chega com `code` e `field` preservados, que é o que a UI mostra no campo", async () => {
     const { cliente, porta } = ligado();
     const p = cliente.request("identity.create", {});

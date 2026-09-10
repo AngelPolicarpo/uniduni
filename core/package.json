@@ -1,6 +1,6 @@
 {
   "name": "@comunidade/core",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Núcleo da comunidade P2P — fase 1 de backend-v2.md §29. Camadas L0..L3 de §4.",
   "type": "module",

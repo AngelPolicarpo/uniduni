@@ -1,6 +1,7 @@
 {
   "name": "@comunidade/app",
-  "version": "1.0.0",
+  "productName": "Uniduni",
+  "version": "1.0.1",
   "private": true,
   "description": "Shell Electron do produto — main + utilityProcess + renderer (§3.1)",
   "type": "commonjs",

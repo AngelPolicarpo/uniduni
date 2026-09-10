@@ -10,6 +10,7 @@ import { DeepLinkMensagem } from "./features/channel/DeepLinkMensagem";
 import { HostExitListener } from "./features/host/HostExitGuard";
 import { UpdateNotificationBanner } from "./components/shell/UpdateNotificationBanner";
 import { TitleBar } from "./components/shell/TitleBar";
+import { LimiteDeErro } from "./components/shell/LimiteDeErro";
 import { WindowResizeHandles } from "./components/shell/WindowResizeHandles";
 
 /**
@@ -59,14 +60,22 @@ function App() {
           <HostExitListener />
           <DeepLinkMensagem />
 
-          <Sincronizador>
-            <Routes>
-              <Route path="/" element={<RootRoute />} />
-              <Route path="/invite/:code" element={<InviteRoute />} />
-              <Route path="/m/:code" element={<MessageRoute />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </Sincronizador>
+          {/*
+            O limite de erro fica AQUI, e não em volta de `App`: a janela é `frameless` e
+            quem fecha e arrasta é a `TitleBar` acima. Envolvê-la trocaria a tela preta por
+            uma janela que também não fecha. `HostExitListener` e `DeepLinkMensagem` ficam
+            de fora pela mesma razão — precisam sobreviver à falha da tela.
+          */}
+          <LimiteDeErro>
+            <Sincronizador>
+              <Routes>
+                <Route path="/" element={<RootRoute />} />
+                <Route path="/invite/:code" element={<InviteRoute />} />
+                <Route path="/m/:code" element={<MessageRoute />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </Sincronizador>
+          </LimiteDeErro>
         </div>
       </div>
 

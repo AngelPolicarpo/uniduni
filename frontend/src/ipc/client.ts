@@ -302,7 +302,16 @@ export class IpcClient {
         if (p === undefined) return;
         this.#pendentes.delete(frame.id);
         clearTimeout(p.timer);
-        if (frame.ok) p.resolve(frame.data ?? {});
+        // `data` AUSENTE é o comando que não devolve nada, e `{}` é o que ele significa.
+        // `data: null` é outra coisa: §15.6 tem resultados cujo tipo é `X | null`, e
+        // `query.identity` é o caso — `null` ali quer dizer "não há identidade nesta
+        // máquina". O `??` engolia essa diferença e entregava `{}` à tela, que é objeto
+        // e portanto verdadeiro: a rota `/` abria o shell inteiro para uma identidade que
+        // não existe, `displayName` chegava `undefined` no `Avatar` e o renderer morria
+        // em `initialsFrom` — janela preta, sem erro em lugar nenhum. O núcleo já
+        // distingue os dois (`data === undefined ? {} : data`); quem os igualava era este
+        // lado do fio.
+        if (frame.ok) p.resolve(frame.data === undefined ? {} : frame.data);
         else p.reject(new IpcCommandError(frame.err));
         return;
       }
