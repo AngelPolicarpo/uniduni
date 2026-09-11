@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import {
   selectFirstTextChannelId,
   useCommunityStore,
@@ -7,6 +7,7 @@ import { usePendingInviteStore } from "../../store/inviteStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { useUiStore } from "../../store/uiStore";
 import { useVoiceStore } from "../../store/voiceStore";
+import { chaveDoAlvo, deveRecolherAGrade } from "./recolhimentoDaVoz";
 
 /**
  * Efeitos globais do shell (§8/§11/Épico 4). Ficam fora do componente porque
@@ -111,6 +112,50 @@ export function usePushToTalk() {
       window.removeEventListener("blur", blur);
     };
   }, []);
+}
+
+/**
+ * §9, 2.3.1 — a grade expandida recolhe quando a área de conteúdo passa a mostrar
+ * outra coisa.
+ *
+ * A grade é um overlay **sobre a área de conteúdo** (§4, C11): a lista de canais, o
+ * rail e a busca ficam de fora e continuam clicáveis enquanto ela está aberta. Sem
+ * este recolhimento, todos eles trocavam o que está por baixo e o resultado ficava
+ * escondido — o clique acontecia e a tela não mudava. Vale para o rail (C11 diz que
+ * ao voltar é "clicar nela reexpande a grade", isto é, trocar de comunidade deixa a
+ * grade recolhida), para o resultado de busca, para o link de mensagem de §4, para
+ * a mensagem fixada e para o canal recém-criado.
+ *
+ * A primeira execução não recolhe: ela acontece no instante em que a grade abre, e
+ * aí o alvo não mudou — foi só o efeito montando.
+ */
+export function useRecolherVozAoNavegar() {
+  const expanded = useVoiceStore((state) => state.expanded);
+  const destino = useUiStore((state) => state.destino);
+  const activeCommunityId = useCommunityStore((state) => state.activeCommunityId);
+  const activeChannelId = useCommunityStore((state) =>
+    state.activeCommunityId
+      ? (state.activeChannelByCommunity[state.activeCommunityId] ?? null)
+      : null,
+  );
+
+  const alvo = chaveDoAlvo({
+    destino,
+    communityId: activeCommunityId,
+    channelId: activeChannelId,
+  });
+  const alvoAnterior = useRef<string | null>(null);
+
+  useEffect(() => {
+    // A regra mora em `recolhimentoDaVoz.ts`, onde o teste a alcança.
+    const recolher = deveRecolherAGrade({
+      expandida: expanded,
+      anterior: alvoAnterior.current,
+      atual: alvo,
+    });
+    alvoAnterior.current = expanded ? alvo : null;
+    if (recolher) useVoiceStore.getState().setExpanded(false);
+  }, [expanded, alvo]);
 }
 
 /** `Cmd/Ctrl+K` de qualquer lugar dentro de uma comunidade ativa (§8, 1.2). */

@@ -344,7 +344,9 @@ export function MessageRow({
               <span
                 className={cn(
                   "ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1",
-                  "bg-feedback-danger text-[10px] font-medium text-text-on-accent",
+                  // `text-caption` em vez de `text-[10px] font-medium`: é o mesmo
+                  // degrau que o `Badge` usa, e 500 já vem com o token.
+                  "bg-feedback-danger text-caption tabular-nums text-text-on-accent",
                 )}
               >
                 {threadUnread}

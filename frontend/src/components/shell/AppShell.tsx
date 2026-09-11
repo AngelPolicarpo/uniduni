@@ -6,6 +6,7 @@ import {
   useActiveCommunityFallback,
   usePendingInviteOverlay,
   usePushToTalk,
+  useRecolherVozAoNavegar,
   useSearchShortcut,
 } from "./shellHooks";
 import { ChannelView } from "../../features/channel/ChannelView";
@@ -94,6 +95,7 @@ export function AppShell() {
   useActiveCommunityFallback();
   usePushToTalk();
   useSearchShortcut();
+  useRecolherVozAoNavegar();
 
   const joiningFromLinkWithoutShell =
     overlay === "join-community" &&
@@ -109,6 +111,20 @@ export function AppShell() {
     setActiveChannel(activeCommunityId, channelId);
     // §16, Mobile: escolher um canal avança para a tela de conteúdo.
     setMobilePane("content");
+    /*
+      §9, 2.3.1 é explícita: o painel recolhido existe "sempre que está conectada a
+      um canal de voz **e não está olhando a grade expandida** (por exemplo,
+      navegando um canal de texto)". Escolher um canal de texto É navegar um canal
+      de texto, então a grade recolhe e a chamada continua no painel.
+
+      Sem isto, `setExpanded(false)` tinha **um único** chamador em todo o produto —
+      o botão de recolher dentro da própria grade. Com uma transmissão aberta, clicar
+      num canal na lista trocava o canal por baixo e não mostrava nada: a lista não
+      está coberta pela grade, então o clique acontecia, e o resultado dele ficava
+      atrás de um overlay que nada mandava sair. Clicar no canal JÁ ativo não fazia
+      nem a troca — era o clique mais inerte dos dois.
+    */
+    setVoiceExpanded(false);
   }
 
   /**
@@ -199,6 +215,10 @@ export function AppShell() {
                 community={activeCommunity}
                 channel={activeChannel}
                 onBack={() => setMobilePane("channels")}
+                // A grade abre POR CIMA deste canal (§4, C11): enquanto ela está
+                // aberta, o canal não é operável — e agora diz isso ao teclado e ao
+                // leitor de tela, não só ao olho.
+                inerte={voiceExpanded}
                 className={cn(
                   mobilePane === "channels" && "hidden tablet:flex",
                 )}

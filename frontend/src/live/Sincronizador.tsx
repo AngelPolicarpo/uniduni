@@ -27,8 +27,11 @@ function Aviso({ titulo, texto, acao }: { titulo: string; texto: string; acao?: 
   return (
     <div className="flex h-full items-center justify-center bg-surface-app p-6">
       <div className="max-w-md text-center">
-        <h1 className="text-h2 text-text-primary">{titulo}</h1>
-        <p className="mt-2 text-meta text-text-secondary">{texto}</p>
+        {/* `text-h2` não era token de §5.5 — a classe não existia no CSS e o
+            título destas telas ("Sem núcleo", "O núcleo não respondeu") saía do
+            tamanho do corpo. É tela cheia: heading-1. */}
+        <h1 className="text-heading-1 text-text-primary">{titulo}</h1>
+        <p className="mt-2 text-body text-text-secondary">{texto}</p>
         {acao !== undefined && <div className="mt-5 flex justify-center">{acao}</div>}
       </div>
     </div>

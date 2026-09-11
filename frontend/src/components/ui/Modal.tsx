@@ -73,8 +73,23 @@ export function Modal({
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    else if (!open && dialog.open) dialog.close();
+    if (open && !dialog.open) {
+      dialog.showModal();
+      /*
+        `showModal()` foca o primeiro elemento focável do diálogo, e num modal cujo
+        cabeçalho vem primeiro esse elemento é sempre o "Fechar". Todo formulário do
+        produto abria com o foco no botão de desistir: quem usa teclado começava
+        pela saída, e quem usa leitor de tela ouvia "Fechar" antes do título.
+
+        Focar o próprio `<dialog>` é a alternativa recomendada quando não há um
+        campo óbvio para receber o foco: o nome acessível do diálogo é anunciado, o
+        foco segue preso ao top layer, `Esc` continua funcionando, e o primeiro
+        `Tab` entra no conteúdo na ordem em que ele está escrito. Um campo com
+        `autoFocus` (o nome, em "Criar canal") continua vencendo — `showModal`
+        respeita `autofocus`, e aí não mexemos em nada.
+      */
+      if (dialog.querySelector("[autofocus]") === null) dialog.focus();
+    } else if (!open && dialog.open) dialog.close();
   }, [open]);
 
   /**
@@ -152,7 +167,11 @@ export function Modal({
     <dialog
       ref={dialogRef}
       aria-label={title}
+      // `-1` para o `dialog.focus()` acima ter alvo; sem ele o `<dialog>` não é
+      // focável por programa e o foco continuaria caindo no "Fechar".
+      tabIndex={-1}
       className={cn(
+        "outline-none",
         "bg-surface-elevated text-text-primary",
         "backdrop:bg-surface-overlay-scrim",
         // Mobile: tela cheia, sem scrim visível, sem cantos arredondados.

@@ -139,7 +139,13 @@ export function AccountIdentityTab({ identity }: { identity: Identity }) {
           <p className="mt-4 text-caption text-text-tertiary uppercase">
             Chave pública
           </p>
-          <div className="mt-1 flex items-start gap-2">
+          {/*
+            Caixa, e não texto solto: são 64 caracteres monoespaçados que quebram no
+            meio da string, e sem moldura eles liam como saída de depuração caída no
+            meio da tela em vez de um valor que se seleciona e se entrega. O contorno
+            é o mesmo dos campos de §6, que é o que este valor é — só que de leitura.
+          */}
+          <div className="mt-2 flex items-center gap-2 rounded-md border border-border-default bg-surface-app py-2 pr-2 pl-3">
             <p className="min-w-0 flex-1 select-all font-mono text-meta break-all text-text-secondary">
               {chavePublica ?? "—"}
             </p>
@@ -164,7 +170,7 @@ export function AccountIdentityTab({ identity }: { identity: Identity }) {
               </Button>
             )}
           </div>
-          <p className="mt-1 text-meta text-text-tertiary">{TEXTO_CHAVE_PUBLICA}</p>
+          <p className="mt-2 text-meta text-text-tertiary">{TEXTO_CHAVE_PUBLICA}</p>
 
           {/*
             A frase que estava sob a chave PÚBLICA e é verdade só da privada. Colada ali,
@@ -205,7 +211,7 @@ export function AccountIdentityTab({ identity }: { identity: Identity }) {
               dispositivo. Não há conta central e não existe recuperação — você
               precisaria de um convite novo para voltar a qualquer comunidade.
             </p>
-            <div className="flex justify-end gap-2">
+            <div className="mt-2 flex justify-end gap-2">
               <Button
                 variant="secondary"
                 onClick={() => setConfirmingSignOut(false)}

@@ -17,7 +17,7 @@ export function LeaveVoiceConfirm({ guard }: { guard: LeaveVoiceGuard }) {
           Você está compartilhando sua tela. Sair também encerra o
           compartilhamento?
         </p>
-        <div className="flex justify-end gap-2">
+        <div className="mt-2 flex justify-end gap-2">
           <Button variant="secondary" onClick={guard.cancel}>
             Cancelar
           </Button>

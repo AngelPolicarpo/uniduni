@@ -113,7 +113,7 @@ function PreviewSkeleton({ onCancel }: { onCancel?: () => void }) {
       </div>
       <p className="text-meta text-text-tertiary">{RESOLVENDO_HINT}</p>
       {onCancel && (
-        <div className="mt-4 flex justify-end">
+        <div className="mt-6 flex justify-end">
           {/* §16.1 — sair da espera é sempre possível (30 s). */}
           <Button variant="secondary" size="lg" onClick={onCancel}>
             Cancelar
@@ -132,7 +132,11 @@ function AcoesFinais({
   children: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-3 tablet:flex-row tablet:justify-end">
+    // `mt-6` é o mesmo respiro que os outros formulários modais têm por `gap-6`.
+    // Sem ele a fileira de ações desta tela encostava no que vinha acima — e o
+    // overlay ficava com dois espaçamentos: 12px nos desfechos que tinham `mt-3`
+    // e zero nos quatro que usam este componente.
+    <div className="mt-6 flex flex-col gap-3 tablet:flex-row tablet:justify-end">
       {/* Nunca desabilitado: sair da espera é sempre possível (§16.1, 30 s). */}
       <Button variant="secondary" size="lg" onClick={onCancel}>
         Cancelar
@@ -441,7 +445,7 @@ function PreviewCard({
             <p className="text-body text-feedback-danger">{INVALID_MESSAGE}</p>
             <CodigoUsado code={code} />
           </div>
-          <div className="mt-3 flex justify-end gap-2">
+          <div className="mt-6 flex justify-end gap-2">
             {onBack && (
               <Button variant="secondary" size="lg" onClick={onBack}>
                 Corrigir código
@@ -479,7 +483,7 @@ function PreviewCard({
           <p className="text-body text-feedback-danger">{INVALID_MESSAGE}</p>
           <CodigoUsado code={code} />
         </div>
-        <div className="mt-3 flex justify-end">
+        <div className="mt-6 flex justify-end">
           <Button variant="secondary" size="lg" onClick={onCancel}>
             Cancelar
           </Button>
@@ -517,7 +521,7 @@ function PreviewCard({
             <p className="text-body text-text-secondary">{ENDED_MESSAGE}</p>
           </div>
         </div>
-        <div className="mt-3 flex justify-end">
+        <div className="mt-6 flex justify-end">
           <Button variant="secondary" size="lg" onClick={onCancel}>
             Cancelar
           </Button>
@@ -537,7 +541,7 @@ function PreviewCard({
             Você não pode entrar em {preview.communityName}
           </p>
         </div>
-        <div className="mt-3 flex justify-end">
+        <div className="mt-6 flex justify-end">
           <Button variant="secondary" size="lg" onClick={onCancel}>
             Cancelar
           </Button>
@@ -557,7 +561,7 @@ function PreviewCard({
           </p>
         </div>
         {/* Sem contagem e sem convidador: §12.5 vaza só nome, ícone e cor. */}
-        <div className="mt-3 flex justify-end">
+        <div className="mt-6 flex justify-end">
           <Button size="lg" onClick={() => onGoTo(community.id)}>
             Ir para a comunidade
           </Button>
@@ -585,7 +589,7 @@ function PreviewCard({
       </div>
 
       {erroDeEntrada !== null && (
-        <div className="rounded-md border border-feedback-danger bg-surface-sidebar p-4">
+        <div className="mt-4 rounded-md border border-feedback-danger bg-surface-sidebar p-4">
           <p className="text-body text-feedback-danger">
             Não foi possível entrar ({erroDeEntrada.codigo})
           </p>

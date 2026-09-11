@@ -187,7 +187,7 @@ export function RoleList({
                 title={bloqueio ?? undefined}
                 onClick={() => mover(role.id, index - 1)}
                 aria-label={`Mover ${role.name || "cargo"} para cima`}
-                className="grid size-6 place-items-center rounded-sm text-text-tertiary hover:text-text-primary disabled:opacity-30"
+                className="grid size-6 place-items-center rounded-sm text-text-tertiary hover:text-text-primary disabled:text-text-disabled"
               >
                 <ChevronUp size={16} strokeWidth={2} aria-hidden="true" />
               </button>
@@ -197,7 +197,7 @@ export function RoleList({
                 title={bloqueio ?? undefined}
                 onClick={() => mover(role.id, index + 1)}
                 aria-label={`Mover ${role.name || "cargo"} para baixo`}
-                className="grid size-6 place-items-center rounded-sm text-text-tertiary hover:text-text-primary disabled:opacity-30"
+                className="grid size-6 place-items-center rounded-sm text-text-tertiary hover:text-text-primary disabled:text-text-disabled"
               >
                 <ChevronDown size={16} strokeWidth={2} aria-hidden="true" />
               </button>

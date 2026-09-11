@@ -75,7 +75,7 @@ export function DmCallPanel({ className }: { className?: string }) {
         <button
           type="button"
           onClick={irParaAConversa}
-          className="flex min-w-0 rounded-md px-1 py-0.5 text-left hover:bg-surface-hover"
+          className="flex min-w-0 rounded-md px-1 py-0.5 text-left hover:bg-surface-primary"
         >
           <DmPeerLabel peer={conversa.peer} size="sm" />
         </button>

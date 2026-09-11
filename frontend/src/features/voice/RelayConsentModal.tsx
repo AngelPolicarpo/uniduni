@@ -71,7 +71,7 @@ export function RelayConsentModal() {
           label="Lembrar minha escolha para esta comunidade"
         />
 
-        <div className="flex justify-end gap-2">
+        <div className="mt-2 flex justify-end gap-2">
           <Button
             variant="secondary"
             onClick={() => respondConsent(false, remember)}

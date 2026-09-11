@@ -117,12 +117,17 @@ export function CommunityInvitesSection({
 
   return (
     <>
+      {/*
+        As duas frases de apoio vão juntas na `description`. Separadas — uma no
+        slot da seção, a outra como primeiro filho — elas saíam com a mesma
+        forma (12px, `tertiary`) em dois níveis diferentes de espaçamento, e o
+        topo da seção lia como três linhas soltas de tamanhos parecidos.
+        O texto de U-05 continua literal.
+      */}
       <SettingsSection
         title="Convites"
-        description="A única porta de entrada da comunidade — não existe diretório público."
+        description={`A única porta de entrada da comunidade — não existe diretório público. ${TEXTO_U05}`}
       >
-        <p className="text-meta text-text-tertiary">{TEXTO_U05}</p>
-
         {invites.length === 0 && (
           <p className="text-body text-text-tertiary">
             Nenhum convite ativo. Crie um para alguém entrar.
@@ -233,7 +238,7 @@ export function CommunityInvitesSection({
               options={USES_OPTIONS}
               onChange={setUses}
             />
-            <div className="flex justify-end gap-2">
+            <div className="mt-2 flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setCreatingInvite(false)}>
                 Cancelar
               </Button>

@@ -108,7 +108,17 @@ function CategorySection({
                   categoryId: category.id,
                 })
               }
-              aria-label={`Criar canal em ${category.name}`}
+              /*
+                O rótulo acessível acompanha o do tooltip quando o botão está
+                inativo. Com um `aria-label` fixo, quem usa leitor de tela ouvia
+                "Criar canal em Geral, indisponível" e o **porquê** ficava só no
+                balão de hover — que teclado e leitor de tela não alcançam.
+              */
+              aria-label={
+                hostOnline
+                  ? `Criar canal em ${category.name}`
+                  : `Criar canal em ${category.name} — ${communityName} está offline, a estrutura de canais ${OFFLINE_HINT}`
+              }
               className={cn(
                 "grid size-6 shrink-0 place-items-center rounded-sm",
                 "text-text-tertiary transition-colors duration-(--duration-fast) ease-out",
@@ -268,7 +278,11 @@ export function ChannelList({
               type="button"
               disabled={!hostOnline}
               onClick={() => openChannelDialog({ kind: "create-channel" })}
-              aria-label="Criar canal"
+              aria-label={
+                hostOnline
+                  ? "Criar canal"
+                  : `Criar canal — ${community.name} está offline, a estrutura de canais ${OFFLINE_HINT}`
+              }
               className={cn(
                 "grid size-8 shrink-0 place-items-center rounded-md",
                 "text-text-secondary transition-colors duration-(--duration-fast) ease-out",

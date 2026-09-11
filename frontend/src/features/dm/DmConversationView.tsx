@@ -187,14 +187,16 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
 
   return (
     <div className={cn("flex min-w-0 flex-1 flex-col bg-surface-primary", className)}>
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle px-3">
+      {/* `px-4`: é o cabeçalho equivalente ao do canal (`ChannelHeader`), e a
+          conversa ocupa a mesma área de conteúdo que ele. */}
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle px-4">
         {/* §16, Mobile: a conversa é a tela em foco, e voltar é a saída. */}
         <Button
           variant="icon"
           size="sm"
           onClick={onBack}
           aria-label="Voltar para a lista de conversas"
-          className="tablet:hidden"
+          className="-ml-2 tablet:hidden"
         >
           <ChevronLeft size={16} strokeWidth={2} aria-hidden="true" />
         </Button>

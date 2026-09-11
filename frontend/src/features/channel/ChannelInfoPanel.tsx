@@ -48,7 +48,14 @@ interface LinkEntry {
 }
 
 function EmptyState({ children }: { children: string }) {
-  return <p className="px-4 py-6 text-body text-text-tertiary">{children}</p>;
+  // Centrado, e não colado no canto superior esquerdo: aqui o vazio é a aba
+  // inteira, não uma linha dentro de um fluxo com mais coisas (que é o caso dos
+  // vazios de Configurações, e por isso aqueles seguem alinhados à esquerda).
+  return (
+    <p className="px-6 py-8 text-center text-body text-text-tertiary">
+      {children}
+    </p>
+  );
 }
 
 interface EntryHeaderProps {
@@ -152,7 +159,9 @@ export function ChannelInfoPanel({
   return (
     <SlidePanel title={channel.name} onClose={onClose} width={320}>
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="px-3 pt-2">
+        {/* `px-1` aqui + `px-3` de cada aba = rótulo em 16px, a mesma vertical do
+            título do painel. Com `px-3` no container as abas começavam em 24px. */}
+        <div className="px-1 pt-2">
           <Tabs
             orientation="horizontal"
             activeId={tab}
@@ -167,7 +176,7 @@ export function ChannelInfoPanel({
 
         {/* premissa 6 — réplica local parcial: a aba mostra só o que chegou. */}
         {hostOffline && (
-          <div className="px-3 pt-2">
+          <div className="px-4 pt-2">
             <StatusBanner tone="offline" inset>
               Mostrando só o que está salvo neste dispositivo
             </StatusBanner>

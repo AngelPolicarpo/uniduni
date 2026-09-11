@@ -38,6 +38,28 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
   ),
 };
 
+/**
+ * Desabilitado: perde a cor semântica, mas **mantém a moldura** nas variantes que
+ * já tinham uma.
+ *
+ * A regra anterior era só `border-subtle` + `bg-surface-elevated` para todo mundo,
+ * e num modal — cujo fundo é exatamente `surface-elevated` — o primário
+ * desabilitado ficava sem fundo e quase sem borda: "Criar canal" virava texto solto
+ * ao lado de um "Cancelar" secundário com contorno nítido, e a fileira inteira lia
+ * o botão neutro como o principal.
+ *
+ * `ghost` e `icon` são transparentes por definição, então continuam sem moldura:
+ * dá-la só no desabilitado faria o botão CRESCER uma caixa ao ficar inativo, e
+ * deixaria o enviar desabilitado da DM diferente do enviar desabilitado do canal.
+ */
+const DISABLED_CLASS: Record<ButtonVariant, string> = {
+  primary: "disabled:border disabled:border-border-default disabled:bg-surface-elevated disabled:hover:bg-surface-elevated",
+  secondary: "disabled:border-border-default disabled:bg-surface-elevated disabled:hover:bg-surface-elevated",
+  danger: "disabled:border disabled:border-border-default disabled:bg-surface-elevated disabled:hover:bg-surface-elevated",
+  ghost: "disabled:bg-transparent disabled:hover:bg-transparent",
+  icon: "disabled:bg-transparent disabled:hover:bg-transparent",
+};
+
 const SIZE_CLASS: Record<ButtonSize, string> = {
   sm: "h-8 px-2 gap-1 text-body-emphasis rounded-md",
   md: "h-9 px-3 gap-2 text-body-emphasis rounded-md",
@@ -89,10 +111,9 @@ export function Button({
         "whitespace-nowrap",
         "transition-colors duration-(--duration-fast) ease-out",
         "disabled:cursor-not-allowed disabled:text-text-disabled",
-        // Desabilitado perde a cor de fundo semântica em vez de só esmaecer.
-        "disabled:border-border-subtle disabled:bg-surface-elevated disabled:hover:bg-surface-elevated",
         variant === "icon" ? ICON_SIZE_CLASS[size] : SIZE_CLASS[size],
         VARIANT_CLASS[variant],
+        DISABLED_CLASS[variant],
         fullWidth && "w-full",
         className,
       )}

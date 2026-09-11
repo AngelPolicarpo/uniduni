@@ -153,7 +153,7 @@ export function ModoHistorico({ community }: ModoHistoricoProps) {
               As mensagens, os arquivos baixados e o histórico saem deste dispositivo agora,
               sem esperar o prazo. Isto não tem desfazer.
             </p>
-            <div className="flex justify-end gap-2">
+            <div className="mt-2 flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setConfirmando(false)}>
                 Cancelar
               </Button>

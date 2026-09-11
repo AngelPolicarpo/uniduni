@@ -231,8 +231,23 @@ export function MembersPanel({ community, onClose }: MembersPanelProps) {
 
   return (
     <SlidePanel title="Membros" onClose={onClose} width={280}>
-      <div className="shrink-0 px-3 pt-3">
-        <div className="flex items-center gap-2 rounded-md border border-border-default bg-surface-primary px-2">
+      {/*
+        `px-4` na caixa de busca e `px-2` na lista abaixo: é o mesmo par da lista
+        de canais (`ChannelList`), e é o que põe título do painel, campo de busca,
+        rótulo de grupo e nome de membro todos na mesma vertical de 16px. Com
+        `px-3` nos dois, cada um desses quatro caía num lugar diferente — 16, 12,
+        20 e 20.
+      */}
+      <div className="shrink-0 px-4 pt-3">
+        {/* O `input` interno leva `outline-none`; o foco tem de aparecer na caixa,
+            senão o campo não tem estado de foco nenhum (§6). */}
+        <div
+          className={cn(
+            "flex items-center gap-2 rounded-md border border-border-default bg-surface-primary px-2",
+            "transition-colors duration-(--duration-fast) ease-out",
+            "focus-within:border-accent-default",
+          )}
+        >
           <Search
             size={16}
             strokeWidth={2}
@@ -249,7 +264,7 @@ export function MembersPanel({ community, onClose }: MembersPanelProps) {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
         {groups.length === 0 && query.trim() !== "" && (
           <p className="px-2 text-body text-text-tertiary">
             Nenhum membro encontrado para "{query.trim()}"

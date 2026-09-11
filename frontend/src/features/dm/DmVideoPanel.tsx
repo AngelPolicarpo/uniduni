@@ -184,7 +184,7 @@ function DmVideoTile({
           </span>
         </div>
       )}
-      <span className="absolute bottom-1 left-1 max-w-[90%] truncate rounded bg-surface-app/80 px-1 text-meta text-text-secondary">
+      <span className="absolute bottom-1 left-1 max-w-[90%] truncate rounded-sm bg-surface-app/80 px-1 text-meta text-text-secondary">
         {rotulo}
       </span>
     </div>

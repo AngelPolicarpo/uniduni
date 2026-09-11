@@ -48,8 +48,17 @@ function ItemDeConversa({
       aria-current={ativa ? "true" : undefined}
       className={cn(
         "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left",
-        "hover:bg-surface-hover",
-        ativa && "bg-surface-active",
+        "transition-colors duration-(--duration-fast) ease-out",
+        /*
+          Era `hover:bg-surface-hover` e `bg-surface-active`: nomes que §5.1 não
+          define, então nenhuma das duas classes chegava ao CSS gerado. A lista de
+          conversas não tinha hover NEM estado selecionado — a conversa aberta era
+          indistinguível das outras. O vocabulário aqui é o do `ChannelListItem`,
+          que ocupa exatamente este slot de 240px.
+        */
+        ativa
+          ? "bg-accent-muted-bg text-text-primary"
+          : "hover:bg-surface-primary hover:text-text-primary",
         // `blocked` é histórico legível, como a comunidade encerrada de U-17.
         bloqueada && "opacity-60",
       )}
@@ -153,8 +162,12 @@ export function DmList({ className }: { className?: string }) {
         className,
       )}
     >
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle px-3">
-        <h2 className="min-w-0 flex-1 text-body-emphasis text-text-primary">Conversas</h2>
+      {/* `px-4` e `text-heading-3`, como o cabeçalho do `ChannelList`: os dois
+          ocupam o MESMO slot de 240px e trocam de lugar quando se alterna entre
+          comunidades e conversas. Com `px-3` e `text-body-emphasis` o título
+          pulava 4px para a esquerda e encolhia um degrau a cada troca. */}
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle px-4">
+        <h2 className="min-w-0 flex-1 truncate text-heading-3 text-text-primary">Conversas</h2>
         {/*
           §31.16.1 `dm.open` — a porta de entrada. Sem ela a DM só sabia RECEBER pedido, e
           o comando ficava sem chamador na tela: a mesma família do tópico declarado sem
@@ -204,7 +217,8 @@ export function DmList({ className }: { className?: string }) {
 
         {abertas.length === 0 && pedidos.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-2 py-8 text-center">
-            <p className="text-meta text-text-tertiary">Nenhuma conversa ainda.</p>
+            {/* `text-body`, como todo vazio do produto: era o único em `text-meta`. */}
+            <p className="text-body text-text-tertiary">Nenhuma conversa ainda.</p>
             {/*
               O vazio aponta a saída: com **L-24** não há busca, e sem esta indicação a
               tela deixava a pessoa sem próximo passo nenhum. Do Tablet para cima quem a

@@ -236,6 +236,12 @@ export function Composer({
         <div
           className={cn(
             "flex items-end gap-1 border border-border-default bg-surface-elevated p-1",
+            // O textarea leva `outline-none` para o anel do sistema não desenhar
+            // dentro da moldura; sem isto a superfície principal de escrita do
+            // produto ficava **sem nenhum** indicador de foco. §6 lista foco como
+            // estado obrigatório, e quem tem a borda aqui é a caixa, não o campo.
+            "transition-colors duration-(--duration-fast) ease-out",
+            "focus-within:border-accent-default",
             replyTo ? "rounded-b-md" : "rounded-md",
           )}
         >
@@ -254,11 +260,6 @@ export function Composer({
             <Paperclip size={20} strokeWidth={2} aria-hidden="true" />
             <span className="sr-only">Anexar arquivo</span>
           </button>
-
-          <ComposerFormatting
-            compact={compact}
-            onWrap={(wrap) => insertAtCaret(wrap, wrap)}
-          />
 
           <div className="relative min-w-0 flex-1">
             {/* Espelho do textarea: só os fundos das menções aparecem. */}
@@ -317,6 +318,20 @@ export function Composer({
               )}
             />
           </div>
+
+          {/*
+            Negrito/itálico/código ficam DEPOIS do texto, junto do emoji e do enviar
+            — §6 lista o composer como "textarea + toolbar (anexar, emoji,
+            formatação) + enviar" e não fixa lado. Antes eles vinham entre o clipe e
+            o textarea: quatro botões de 36px empurravam o cursor ~170px para dentro
+            da barra, e o campo de escrever começava depois de meia barra de ícones.
+            Agora só o clipe abre a fileira, e as três ações que agem sobre o texto
+            escrito ficam do mesmo lado das outras duas.
+          */}
+          <ComposerFormatting
+            compact={compact}
+            onWrap={(wrap) => insertAtCaret(wrap, wrap)}
+          />
 
           <div className="relative shrink-0">
             <button

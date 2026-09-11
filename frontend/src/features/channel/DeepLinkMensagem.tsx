@@ -100,7 +100,7 @@ export function DeepLinkMensagem() {
   if (resultado.status === "deleted") {
     return (
       <Modal open onClose={fechar} title="Esta mensagem não existe mais" size="sm">
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-6">
           <p className="text-body text-text-secondary">
             Quem escreveu apagou a mensagem para todo mundo.
           </p>
@@ -115,7 +115,7 @@ export function DeepLinkMensagem() {
   if (resultado.status === "malformed") {
     return (
       <Modal open onClose={fechar} title="Este link não é válido" size="sm">
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-6">
           <p className="text-body text-text-secondary">
             O link chegou incompleto ou alterado. Peça o link de novo a quem o enviou.
           </p>
@@ -130,7 +130,7 @@ export function DeepLinkMensagem() {
   // `not-member` — a mesma resposta para quem nunca entrou e para quem saiu (§18).
   return (
     <Modal open onClose={fechar} title="Este link não abre aqui" size="sm">
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-6">
         <p className="text-body text-text-secondary">
           Este link é de uma comunidade da qual você não faz parte. Sem um convite não
           há como entrar — não existe diretório público de comunidades.

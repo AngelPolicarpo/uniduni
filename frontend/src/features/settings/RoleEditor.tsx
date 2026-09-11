@@ -385,7 +385,7 @@ export function RoleEditor({
               }. Remover o cargo, não os membros?`
             : `O cargo ${selected.name || "sem nome"} será removido desta comunidade.`}
         </p>
-        <div className="flex justify-end gap-2">
+        <div className="mt-2 flex justify-end gap-2">
           <Button
             variant="secondary"
             onClick={() => setConfirmingDelete(false)}

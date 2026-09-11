@@ -41,8 +41,13 @@ export class LimiteDeErro extends Component<{ children: ReactNode }, Estado> {
     return (
       <div className="flex h-full items-center justify-center bg-surface-app p-6">
         <div className="max-w-md text-center">
-          <h1 className="text-h2 text-text-primary">Esta tela quebrou</h1>
-          <p className="mt-2 text-meta text-text-secondary">
+          {/* `text-heading-1`, e não o `text-h2` que estava aqui: `h2` não é
+              nome de token nenhum de §5.5, então a classe não chegava ao CSS
+              gerado e o título desta tela saía em 14px de corpo — do mesmo
+              tamanho do parágrafo abaixo dele. §5.5 dá heading-1 a "título de
+              tela cheia", que é o que esta é. */}
+          <h1 className="text-heading-1 text-text-primary">Esta tela quebrou</h1>
+          <p className="mt-2 text-body text-text-secondary">
             O erro está abaixo. Nada foi perdido: o que já estava no disco continua lá.
           </p>
           <p className="mt-3 rounded-md border border-border-default bg-surface-sidebar p-3 text-left text-meta font-mono text-text-tertiary">

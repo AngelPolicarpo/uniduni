@@ -46,11 +46,16 @@ export function SettingsLayout({
       <div
         className={cn(
           "flex w-full shrink-0 flex-col bg-surface-sidebar",
-          "tablet:w-[180px] tablet:border-r tablet:border-border-subtle",
+          // 200px e não 180: com 180 o `Tabs` sobrava 120px de texto, e
+          // "Sobre & Atualizações" — o item mais longo de 3.1 — truncava sempre.
+          "tablet:w-[200px] tablet:border-r tablet:border-border-subtle",
           mobileShowContent && "hidden tablet:flex",
         )}
       >
-        <header className="flex h-12 shrink-0 items-center justify-between gap-2 px-3">
+        {/* `px-4` casa com os 16px em que o `Tabs` abaixo assenta o texto
+            (`p-2` do container + `px-2` do item); com `px-3` o título ficava
+            4px à esquerda de toda a lista que ele encabeça. */}
+        <header className="flex h-12 shrink-0 items-center justify-between gap-2 px-4">
           <h2 className="min-w-0 truncate text-heading-3 text-text-primary">
             {title}
           </h2>
@@ -86,13 +91,15 @@ export function SettingsLayout({
           !mobileShowContent && "hidden tablet:flex",
         )}
       >
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle px-3">
+        {/* `px-6` é o mesmo do corpo abaixo: o título da aba e o conteúdo que
+            ele nomeia caem na mesma vertical, em vez de 12px contra 24px. */}
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle px-6">
           <button
             type="button"
             onClick={() => setMobileShowContent(false)}
             aria-label="Voltar para as seções"
             className={cn(
-              "grid size-8 shrink-0 place-items-center rounded-md tablet:hidden",
+              "-ml-2 grid size-8 shrink-0 place-items-center rounded-md tablet:hidden",
               "text-text-secondary hover:bg-surface-primary hover:text-text-primary",
             )}
           >
@@ -108,7 +115,7 @@ export function SettingsLayout({
             onClick={onClose}
             aria-label="Fechar configurações"
             className={cn(
-              "hidden size-8 shrink-0 place-items-center rounded-md tablet:grid",
+              "-mr-2 hidden size-8 shrink-0 place-items-center rounded-md tablet:grid",
               "text-text-secondary hover:bg-surface-primary hover:text-text-primary",
             )}
           >
@@ -133,8 +140,15 @@ export function SettingsSection({
   children: ReactNode;
 }) {
   return (
-    <section className="mb-6 last:mb-0">
-      <h4 className="text-caption text-text-tertiary uppercase">{title}</h4>
+    <section className="mb-8 last:mb-0">
+      {/*
+        §5.5 dá `text-heading-3` para "títulos de seção em painel", e é isto. Enquanto a
+        seção usava `text-caption` maiúsculo ela ficava com a MESMA forma dos rótulos de
+        campo de §6 (`TextField`, `TextArea`, `Select`) e ainda um degrau mais apagada —
+        "NOME DA COMUNIDADE" saía mais claro que "IDENTIDADE DA COMUNIDADE", que é o
+        título acima dele. A hierarquia estava invertida, não só rasa.
+      */}
+      <h4 className="text-heading-3 text-text-primary">{title}</h4>
       {description && (
         <p className="mt-1 text-meta text-text-tertiary">{description}</p>
       )}
@@ -150,10 +164,8 @@ export function DangerZone({
   children: ReactNode;
 }) {
   return (
-    <section className="mt-6 rounded-md border border-feedback-danger/40 p-4">
-      <h4 className="text-caption text-feedback-danger uppercase">
-        Zona de perigo
-      </h4>
+    <section className="mt-8 rounded-md border border-feedback-danger/40 p-4">
+      <h4 className="text-heading-3 text-feedback-danger">Zona de perigo</h4>
       <div className="mt-3 flex flex-col gap-3">{children}</div>
     </section>
   );

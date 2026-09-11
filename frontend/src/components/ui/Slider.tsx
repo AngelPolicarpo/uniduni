@@ -33,9 +33,11 @@ export function Slider({
   const percent = ((value - min) / (max - min)) * 100;
 
   return (
-    <label className={cn("flex flex-col gap-1.5", className)}>
+    <label className={cn("flex flex-col gap-2", className)}>
+      {/* Mesma linha de rótulo + valor do `TextField` com contador: `secondary`
+          no rótulo, `tertiary` fica para o texto de apoio. */}
       <span className="flex items-baseline justify-between gap-2">
-        <span className="text-caption text-text-tertiary uppercase">
+        <span className="text-caption text-text-secondary uppercase">
           {label}
         </span>
         {valueLabel && (

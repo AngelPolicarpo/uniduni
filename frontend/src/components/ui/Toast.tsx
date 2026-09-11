@@ -41,8 +41,13 @@ function ToastItem({ toast }: { toast: ToastData }) {
   }, [leaving, dismissToast, toast.id]);
 
   return (
+    /*
+      Sem `role="status"` aqui: a pilha abaixo já é `aria-live="polite"`, e região
+      viva dentro de região viva faz parte dos leitores de tela anunciarem a mesma
+      mensagem duas vezes. Quem precisa existir antes da mensagem é o contêiner —
+      um live region criado junto com o conteúdo costuma não ser anunciado.
+    */
     <div
-      role="status"
       className={cn(
         "pointer-events-auto flex w-[320px] max-w-[calc(100vw-32px)] items-start gap-3",
         "rounded-md border border-border-default bg-surface-elevated p-3 shadow-elevated",

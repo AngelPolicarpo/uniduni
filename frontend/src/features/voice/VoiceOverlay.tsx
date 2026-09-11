@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronLeft, Volume2 } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { ProfilePopover } from "../members/ProfilePopover";
@@ -84,6 +84,17 @@ export function VoiceOverlay() {
   const guard = useLeaveVoiceGuard();
   const isMobile = useIsMobile();
 
+  // Foco entra na grade ao abrir e volta ao gatilho ao recolher. Sem dependências:
+  // vale uma vez por abertura, que é a vida deste componente.
+  const raiz = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const gatilho = document.activeElement;
+    raiz.current?.focus();
+    return () => {
+      if (gatilho instanceof HTMLElement && gatilho.isConnected) gatilho.focus();
+    };
+  }, []);
+
   if (!channel || !community || !communityId || !localId) return null;
 
   const local = participants.find((p) => p.identityId === localId);
@@ -121,13 +132,33 @@ export function VoiceOverlay() {
       ));
 
   return (
-    <div className="absolute inset-0 z-30 flex flex-col bg-surface-primary">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle px-3">
+    /*
+      Região nomeada e focável.
+
+      A grade tapa a área de conteúdo e o canal de baixo fica `inert` enquanto ela
+      existe (ver `ChannelView`). Duas consequências que só o foco resolve: quem
+      abriu a grade a partir de um controle do canal perderia o foco para o
+      `<body>` no instante em que o `inert` valesse, e quem usa leitor de tela não
+      teria como saber que a área de conteúdo trocou de dono. O `ref` abaixo põe o
+      foco aqui ao abrir e o devolve ao gatilho ao recolher — o mesmo caminho que
+      o `Popover` de §6 já usa.
+    */
+    <div
+      ref={raiz}
+      tabIndex={-1}
+      role="region"
+      aria-label={`Chamada em ${channel.name}`}
+      className="absolute inset-0 z-30 flex flex-col bg-surface-primary outline-none"
+    >
+      {/* `px-4`: a grade abre POR CIMA da área de conteúdo, e o cabeçalho dela
+          substitui visualmente o do canal. Com `px-3` o conteúdo do cabeçalho
+          escorregava 4px ao expandir e voltava ao recolher. */}
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle px-4">
         <button
           type="button"
           onClick={() => setExpanded(false)}
           className={cn(
-            "grid size-8 shrink-0 place-items-center rounded-md",
+            "-ml-2 grid size-8 shrink-0 place-items-center rounded-md",
             "text-text-secondary transition-colors duration-(--duration-fast) ease-out",
             "hover:bg-surface-sidebar hover:text-text-primary",
           )}

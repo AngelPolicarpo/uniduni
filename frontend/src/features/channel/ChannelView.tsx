@@ -43,6 +43,16 @@ export interface ChannelViewProps {
   channel: Channel;
   onBack: () => void;
   className?: string;
+  /**
+   * A grade de voz (§9, 2.3) está aberta por cima deste canal.
+   *
+   * A grade é `absolute inset-0` sobre a área de conteúdo: ela esconde o canal
+   * de quem enxerga, e **só** de quem enxerga. Sem `inert`, o composer, os
+   * botões de cada mensagem e o cabeçalho continuavam no tab order e na árvore
+   * de acessibilidade — quem navega por teclado saía da grade direto para
+   * controles invisíveis, e o leitor de tela lia um canal que não está na tela.
+   */
+  inerte?: boolean;
 }
 
 /**
@@ -56,6 +66,7 @@ export function ChannelView({
   channel,
   onBack,
   className,
+  inerte = false,
 }: ChannelViewProps) {
   // §18.4 passo 5 e U-17 — comunidade em modo histórico é somente leitura INTEIRA, e não
   // por cargo: não há para quem mandar. Sem isto o composer continuava de pé numa
@@ -76,6 +87,8 @@ export function ChannelView({
 
   return (
     <section
+      inert={inerte}
+      aria-label={`Canal ${channel.name}`}
       className={cn(
         "flex min-w-0 flex-1 flex-col bg-surface-primary",
         className,

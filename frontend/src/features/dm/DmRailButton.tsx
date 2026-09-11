@@ -53,12 +53,25 @@ export function DmRailButton() {
         </button>
       </Tooltip>
 
-      {ativo && (
-        <span
-          className="absolute top-1/2 -left-2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-text-primary"
-          aria-hidden="true"
-        />
-      )}
+      {/*
+        A MESMA barra do `CommunityIcon`, e não uma parecida. Esta estava em
+        `-left-2`: o wrapper ocupa a largura do rail, então −8px caía FORA dele e
+        a barra de ativo da conversa direta nunca aparecia. E, quando aparecesse,
+        estaria errada duas vezes — `h-6` onde a gramática de §8 1.1 dá `h-8` ao
+        ativo, e `bg-text-primary`, que naquela gramática é a cor do NÃO-LIDO.
+      */}
+      <span
+        className={cn(
+          "absolute top-1/2 left-0 w-1 -translate-y-1/2 rounded-r-full",
+          "transition-all duration-(--duration-base) ease-out",
+          ativo
+            ? "h-8 bg-accent-default opacity-100"
+            : total > 0
+              ? "h-2 bg-text-primary opacity-100"
+              : "h-0 opacity-0",
+        )}
+        aria-hidden="true"
+      />
     </div>
   );
 }

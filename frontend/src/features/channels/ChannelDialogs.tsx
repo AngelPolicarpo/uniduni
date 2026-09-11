@@ -685,7 +685,7 @@ function DeleteCategoryDialog({
 
   return (
     <Modal open onClose={close} title={`Excluir ${category.name}?`} size="sm">
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-6">
         <p className="text-body text-text-secondary">
           {inside === 0
             ? "A categoria está vazia."

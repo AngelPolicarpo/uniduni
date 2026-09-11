@@ -3,6 +3,7 @@ import type { FormEvent, KeyboardEvent } from "react";
 import { Network, RefreshCw, ShieldAlert } from "lucide-react";
 import { Avatar } from "../../components/ui/Avatar";
 import { Button } from "../../components/ui/Button";
+import { Checkbox } from "../../components/ui/Checkbox";
 import { TextField } from "../../components/ui/TextField";
 import { cn } from "../../lib/cn";
 import { avatarColorFromSeed, nextAvatarColor } from "../../lib/avatar";
@@ -193,19 +194,19 @@ export function OnboardingScreen() {
               seria guardada com proteção local fraca: quem tiver acesso aos
               arquivos deste dispositivo pode ler as chaves.
             </p>
-            <label className="flex items-start gap-2 text-meta text-text-secondary">
-              <input
-                type="checkbox"
-                checked={aceite}
-                onChange={(event) => setAceite(event.target.checked)}
-                className="mt-0.5"
-              />
-              Entendo os riscos e quero criar a identidade assim mesmo.
-            </label>
+            {/* O `Checkbox` de §6, e não um `<input type="checkbox">` cru: o
+                nativo chega com a pintura do sistema — quadro claro, marca azul —
+                e era a única caixa do produto com essa cara, justamente na tela
+                em que a pessoa aceita um risco de segurança. */}
+            <Checkbox
+              checked={aceite}
+              onChange={setAceite}
+              label="Entendo os riscos e quero criar a identidade assim mesmo."
+            />
             {error !== undefined && (
               <p className="text-meta text-feedback-danger">{error}</p>
             )}
-            <div className="flex justify-end gap-2">
+            <div className="mt-2 flex justify-end gap-2">
               <Button
                 variant="secondary"
                 size="sm"

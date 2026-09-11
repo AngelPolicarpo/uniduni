@@ -121,7 +121,7 @@ export function CommunityDangerZone({
                 offline, as outras pessoas só vão ver sua saída quando ela voltar.
               </p>
             )}
-            <div className="flex justify-end gap-2">
+            <div className="mt-2 flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setConfirmingLeave(false)}>
                 Cancelar
               </Button>
@@ -149,7 +149,7 @@ export function CommunityDangerZone({
                     community.memberCount === 1 ? "pessoa perde" : "pessoas perdem"
                   } o acesso a todo o histórico assim que a comunidade for encerrada.`}
             </p>
-            <div className="flex justify-end gap-2">
+            <div className="mt-2 flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setConfirmingEnd(false)}>
                 Cancelar
               </Button>

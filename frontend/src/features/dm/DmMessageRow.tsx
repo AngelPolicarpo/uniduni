@@ -47,7 +47,7 @@ export function DmMessageRow({
   return (
     <article
       className={cn(
-        "group relative flex gap-2 px-4 hover:bg-surface-hover",
+        "group relative flex gap-2 px-4 hover:bg-surface-elevated/30",
         agrupada ? "py-0.5" : "pt-3 pb-0.5",
       )}
     >
@@ -66,7 +66,7 @@ export function DmMessageRow({
           <p className="mb-0.5 flex items-center gap-1.5 text-caption text-text-secondary">
             <Reply size={12} strokeWidth={2} aria-hidden="true" className="shrink-0 text-text-tertiary" />
             <span className="shrink-0">respondendo a</span>
-            <span className="shrink-0 font-medium text-text-primary">
+            <span className="shrink-0 text-body-emphasis text-text-primary">
               {mensagem.replyTo.author.displayName}
             </span>
             <span className="truncate text-text-tertiary italic">
@@ -104,7 +104,7 @@ export function DmMessageRow({
                 }
               }}
               rows={2}
-              className="w-full rounded border border-border-subtle bg-surface-app p-2 text-body text-text-primary focus:outline-none"
+              className="w-full rounded-sm border border-border-subtle bg-surface-app p-2 text-body text-text-primary focus:outline-none"
             />
             <div className="mt-1 flex gap-2 text-meta">
               <button
@@ -116,7 +116,7 @@ export function DmMessageRow({
                   }
                 }}
                 disabled={textoEdicao.trim() === ""}
-                className="text-accent-default hover:underline disabled:opacity-50"
+                className="text-accent-default hover:underline disabled:cursor-not-allowed disabled:text-text-disabled disabled:no-underline"
               >
                 Salvar
               </button>
@@ -194,7 +194,7 @@ export function DmMessageRow({
               onClick={() => onResponder(mensagem)}
               title="Responder"
               aria-label="Responder"
-              className="rounded p-1 text-text-tertiary hover:bg-surface-hover hover:text-text-primary"
+              className="rounded-sm p-1 text-text-tertiary hover:bg-surface-primary hover:text-text-primary"
             >
               <Reply size={14} strokeWidth={2} aria-hidden="true" />
             </button>
@@ -205,7 +205,7 @@ export function DmMessageRow({
               onClick={() => setPickerAberto((v) => !v)}
               title="Reagir"
               aria-label="Reagir"
-              className="rounded p-1 text-text-tertiary hover:bg-surface-hover hover:text-text-primary"
+              className="rounded-sm p-1 text-text-tertiary hover:bg-surface-primary hover:text-text-primary"
             >
               <SmilePlus size={14} strokeWidth={2} aria-hidden="true" />
             </button>
@@ -230,7 +230,7 @@ export function DmMessageRow({
                 }}
                 title="Editar"
                 aria-label="Editar"
-                className="rounded p-1 text-text-tertiary hover:bg-surface-hover hover:text-text-primary"
+                className="rounded-sm p-1 text-text-tertiary hover:bg-surface-primary hover:text-text-primary"
               >
                 <Pencil size={14} strokeWidth={2} aria-hidden="true" />
               </button>
@@ -239,7 +239,7 @@ export function DmMessageRow({
                 onClick={() => void apagarMensagem(mensagem.conversationId, mensagem.id)}
                 title="Apagar"
                 aria-label="Apagar"
-                className="rounded p-1 text-text-tertiary hover:bg-surface-hover hover:text-feedback-danger"
+                className="rounded-sm p-1 text-text-tertiary hover:bg-surface-primary hover:text-feedback-danger"
               >
                 <Trash2 size={14} strokeWidth={2} aria-hidden="true" />
               </button>

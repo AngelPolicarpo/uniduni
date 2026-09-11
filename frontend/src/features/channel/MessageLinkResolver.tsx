@@ -99,7 +99,7 @@ export function MessageLinkResolver() {
       title="Este link não abre aqui"
       size="sm"
     >
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-6">
         <p className="text-body text-text-secondary">
           Este link é de uma comunidade da qual você não faz parte. Sem um
           convite não há como entrar — não existe diretório público de

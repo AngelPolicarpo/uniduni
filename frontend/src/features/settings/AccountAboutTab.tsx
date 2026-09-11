@@ -35,10 +35,13 @@ export function AccountAboutTab() {
       >
         <div className="flex flex-col gap-1.5 rounded-lg border border-border-subtle bg-surface-primary p-3">
           <div className="flex items-center justify-between">
-            <span className="text-body font-medium text-text-primary">
+            <span className="text-body-emphasis text-text-primary">
               Uniduni
             </span>
-            <span className="rounded bg-surface-secondary px-2 py-0.5 text-meta font-mono text-text-secondary">
+            {/* `surface-secondary` não é token de §5.1 — o chip vinha sem fundo
+                nenhum. `surface-app` é a superfície recuada dos campos, que é o
+                que um valor de leitura como este é. */}
+            <span className="rounded-sm bg-surface-app px-2 py-0.5 text-meta font-mono text-text-secondary">
               v{appVersion || "0.0.0"}
             </span>
           </div>
@@ -85,7 +88,7 @@ export function AccountAboutTab() {
             <div className="flex items-start gap-2.5">
               <Sparkles size={20} className="mt-0.5 shrink-0 text-conn-reconnecting" />
               <div className="min-w-0 flex-1">
-                <p className="text-body font-medium text-text-primary">
+                <p className="text-body-emphasis text-text-primary">
                   Nova versão {status.version} disponível!
                 </p>
                 {status.releaseDate && (
@@ -94,7 +97,7 @@ export function AccountAboutTab() {
                   </p>
                 )}
                 {status.releaseNotes && (
-                  <div className="mt-2 max-h-32 overflow-y-auto rounded border border-border-subtle bg-surface-sidebar p-2 text-meta text-text-secondary whitespace-pre-wrap">
+                  <div className="mt-2 max-h-32 overflow-y-auto rounded-sm border border-border-subtle bg-surface-sidebar p-2 text-meta text-text-secondary whitespace-pre-wrap">
                     {status.releaseNotes}
                   </div>
                 )}
@@ -117,7 +120,7 @@ export function AccountAboutTab() {
         {status.status === "downloading" && (
           <div className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-surface-primary p-4">
             <div className="flex items-center justify-between text-body">
-              <span className="font-medium text-text-primary">
+              <span className="text-body-emphasis text-text-primary">
                 Baixando atualização...
               </span>
               <span className="font-mono text-text-secondary">
@@ -125,9 +128,12 @@ export function AccountAboutTab() {
               </span>
             </div>
 
-            <div className="h-2 w-full overflow-hidden rounded-full bg-surface-secondary">
+            {/* Trilho de progresso: `border-default`, o mesmo do `AttachmentCard`.
+                `surface-secondary` não existe, e sem trilho a barra de download
+                não mostrava quanto FALTA — só a parte já preenchida. */}
+            <div className="h-2 w-full overflow-hidden rounded-full bg-border-default">
               <div
-                className="h-full bg-conn-reconnecting transition-all duration-300"
+                className="h-full bg-conn-reconnecting transition-all duration-(--duration-base) ease-out"
                 style={{ width: `${status.percent}%` }}
               />
             </div>
@@ -149,7 +155,7 @@ export function AccountAboutTab() {
             <div className="flex items-start gap-2.5">
               <ArrowUpCircle size={20} className="mt-0.5 shrink-0 text-conn-ok" />
               <div className="min-w-0 flex-1">
-                <p className="text-body font-medium text-text-primary">
+                <p className="text-body-emphasis text-text-primary">
                   Atualização v{status.version} pronta para ser aplicada!
                 </p>
                 <p className="text-meta text-text-secondary">
@@ -176,7 +182,7 @@ export function AccountAboutTab() {
             <div className="flex items-start gap-2.5 rounded-lg border border-conn-failed/40 bg-conn-failed/10 p-3">
               <AlertCircle size={18} className="mt-0.5 shrink-0 text-conn-failed" />
               <div className="min-w-0 flex-1">
-                <p className="text-body font-medium text-conn-failed">
+                <p className="text-body-emphasis text-conn-failed">
                   Falha na atualização
                 </p>
                 <p className="text-meta text-text-secondary break-words">

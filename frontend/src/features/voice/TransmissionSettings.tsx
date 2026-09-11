@@ -91,7 +91,7 @@ const FPS_MAX = 120;
 /** Rótulo de seção — o "MODO DE TRANSMISSÃO" da referência. */
 function Secao({ children }: { children: React.ReactNode }) {
   return (
-    <p className="px-3 pt-2 pb-1 text-meta font-semibold tracking-wide text-text-tertiary uppercase">
+    <p className="px-3 pt-2 pb-1 text-caption text-text-tertiary uppercase">
       {children}
     </p>
   );

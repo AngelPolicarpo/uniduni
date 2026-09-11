@@ -51,7 +51,7 @@ export function UpdateNotificationBanner() {
           <button
             type="button"
             onClick={() => void aplicarAtualizacao()}
-            className="flex items-center gap-1.5 rounded bg-conn-ok/20 px-2.5 py-1 font-medium text-text-primary hover:bg-conn-ok/30 focus:outline-none"
+            className="flex items-center gap-1.5 rounded-sm bg-conn-ok/20 px-2.5 py-1 text-body-emphasis text-text-primary hover:bg-conn-ok/30"
           >
             <RefreshCw size={12} />
             Reiniciar agora
@@ -62,7 +62,7 @@ export function UpdateNotificationBanner() {
               type="button"
               onClick={() => void baixarAtualizacao()}
               disabled={baixando}
-              className="flex items-center gap-1.5 rounded bg-conn-reconnecting/20 px-2.5 py-1 font-medium text-text-primary hover:bg-conn-reconnecting/30 focus:outline-none disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-sm bg-conn-reconnecting/20 px-2.5 py-1 text-body-emphasis text-text-primary hover:bg-conn-reconnecting/30 disabled:cursor-not-allowed disabled:text-text-disabled"
             >
               <Download size={12} />
               {baixando ? "Baixando..." : "Baixar"}
@@ -70,7 +70,7 @@ export function UpdateNotificationBanner() {
             <button
               type="button"
               onClick={() => openAccountSettings()}
-              className="rounded px-2 py-1 text-text-secondary hover:bg-surface-elevated hover:text-text-primary focus:outline-none"
+              className="rounded-sm px-2 py-1 text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
             >
               Detalhes
             </button>
@@ -81,7 +81,7 @@ export function UpdateNotificationBanner() {
           type="button"
           onClick={() => setDispensadoParaVersao(status.version)}
           aria-label="Dispensar aviso de atualização"
-          className="rounded p-1 text-text-tertiary hover:bg-surface-elevated hover:text-text-primary focus:outline-none"
+          className="rounded-sm p-1 text-text-tertiary hover:bg-surface-elevated hover:text-text-primary"
         >
           <X size={14} />
         </button>

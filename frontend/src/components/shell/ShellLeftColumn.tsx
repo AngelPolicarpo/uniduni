@@ -91,8 +91,16 @@ export function ShellLeftColumn({
 
       {/* §16: no Mobile a barra acompanha a lista de canais — com o
           conteúdo em foco, a coluna da esquerda é só o rail de 72px, que
-          não comporta nome nem controles. */}
-      <UserBar className={cn(recolhida && "hidden tablet:flex")} />
+          não comporta nome nem controles.
+
+          No Hub vazio (0.2) não há lista nenhuma, e a coluna é `w-auto`: era a
+          largura intrínseca desta barra (~250px) que definia a coluna inteira, e
+          o rail de 72px de §5.6 aparecia com 178px de vazio ao lado. Recolhida,
+          ela ocupa a largura do rail que encabeça. */}
+      <UserBar
+        compacta={!temLista}
+        className={cn(recolhida && "hidden tablet:flex")}
+      />
     </div>
   );
 }

@@ -50,6 +50,17 @@ function Control({ label, icon, onClick, pressed, inert = false }: ControlProps)
 
 export interface UserBarProps {
   className?: string;
+  /**
+   * Hub vazio (0.2): não há lista de canais nem de conversas para a barra
+   * atravessar, então ela se recolhe à largura do rail e empilha o que mostrava
+   * em fileira.
+   *
+   * Sem isto a barra era o elemento mais largo da coluna da esquerda e, como a
+   * coluna é `w-auto`, era ela quem decidia a largura: o rail de 72px de §5.6
+   * aparecia com 250px, com 178px de superfície vazia ao lado dos ícones, até
+   * a pessoa entrar na primeira comunidade.
+   */
+  compacta?: boolean;
 }
 
 /**
@@ -66,7 +77,7 @@ export interface UserBarProps {
  * não dizia nome nem presença, e duas portas para a mesma tela na mesma
  * coluna seriam ruído.
  */
-export function UserBar({ className }: UserBarProps) {
+export function UserBar({ className, compacta = false }: UserBarProps) {
   const identity = useIdentityStore((state) => state.identity);
   const openAccountSettings = useUiStore((state) => state.openAccountSettings);
   const activeCommunityId = useCommunityStore(
@@ -98,8 +109,10 @@ export function UserBar({ className }: UserBarProps) {
   return (
     <div
       className={cn(
-        "flex h-14 shrink-0 items-center gap-1 px-2",
-        "border-t border-border-subtle bg-surface-app",
+        "flex shrink-0 gap-1 border-t border-border-subtle bg-surface-app",
+        compacta
+          ? "w-18 flex-col items-center px-2 py-2"
+          : "h-14 items-center px-2",
         className,
       )}
     >
@@ -115,9 +128,10 @@ export function UserBar({ className }: UserBarProps) {
         }
         aria-haspopup="dialog"
         className={cn(
-          "flex min-w-0 flex-1 items-center gap-2 rounded-md p-1 text-left",
+          "flex items-center rounded-md p-1 text-left",
           "transition-colors duration-(--duration-fast) ease-out",
           "hover:bg-surface-primary",
+          compacta ? "shrink-0" : "min-w-0 flex-1 gap-2",
         )}
       >
         <Avatar
@@ -127,7 +141,9 @@ export function UserBar({ className }: UserBarProps) {
           presence={identity.presence}
           presenceRingClass="border-surface-app"
         />
-        <span className="flex min-w-0 flex-col">
+        {/* No rail recolhido o nome não cabe em 72px — quem o diz é o tooltip
+            do avatar e o popover que este botão abre. */}
+        <span className={cn("flex min-w-0 flex-col", compacta && "sr-only")}>
           <span className="truncate text-body-emphasis text-text-primary">
             {identity.displayName}
           </span>
