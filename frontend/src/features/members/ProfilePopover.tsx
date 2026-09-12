@@ -1,6 +1,7 @@
 import { useShallow } from "zustand/react/shallow";
 import { cn } from "../../lib/cn";
 import { Avatar } from "../../components/ui/Avatar";
+import { Button } from "../../components/ui/Button";
 import { Popover } from "../../components/ui/Popover";
 import { ROLE_TEXT_CLASS } from "../../lib/role";
 import { AVATAR_BG_CLASS, PRESENCE_LABEL } from "../../lib/avatar";
@@ -69,6 +70,8 @@ export function ProfilePopover({
   );
 
   const isSelf = useVoiceStore((state) => state.localId === identityId);
+  const alternarFixado = useVoiceStore((state) => state.alternarFixado);
+  const fixado = useVoiceStore((state) => state.fixadoId === identityId);
   const localMemberId = useLocalMemberId(communityId);
   const label = useMemberLabel(communityId, identityId);
 
@@ -174,6 +177,28 @@ export function ProfilePopover({
             escrever={escrever}
             onClose={onClose}
           />
+        )}
+
+        {/*
+          §9, 2.3.2 — o caminho de teclado para "fixar como principal". O gesto que a
+          spec nomeia é o clique duplo no tile, e §19.4 exige o equivalente alcançável:
+          clique duplo é só ponteiro. Aqui também é onde a ação fica **descobrível** —
+          um gesto sem superfície nenhuma é um gesto que ninguém encontra.
+        */}
+        {inCall && (
+          <div className="flex flex-col gap-3 border-t border-border-subtle pt-4">
+            <Button
+              variant="secondary"
+              size="sm"
+              fullWidth
+              onClick={() => {
+                alternarFixado(identityId);
+                onClose();
+              }}
+            >
+              {fixado ? "Desafixar" : "Fixar como principal"}
+            </Button>
+          </div>
         )}
 
         <ProfileModerationActions

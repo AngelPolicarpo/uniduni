@@ -11,6 +11,7 @@ import { useLeaveVoiceGuard } from "./leaveGuard";
 import { VoiceCallBanners } from "./VoiceCallBanners";
 import { VoiceControlBar } from "./VoiceControlBar";
 import { VoiceTile, VoiceTileSkeleton } from "./VoiceTile";
+import { comporPalco } from "./palcoDaChamada";
 import { useIsMobile } from "../../lib/useMediaQuery";
 import {
   selectCanTransmitIn,
@@ -42,6 +43,7 @@ export function VoiceOverlay() {
   const stage = useVoiceStore((state) => state.stage);
   const participants = useVoiceStore((state) => state.participants);
   const shares = useVoiceStore((state) => state.shares);
+  const fixadoId = useVoiceStore((state) => state.fixadoId);
   const setExpanded = useVoiceStore((state) => state.setExpanded);
   const startShare = useVoiceStore((state) => state.startShare);
   // §16.4 (emenda de 2026-08-28) — a fila de karaokê e suas ações.
@@ -114,17 +116,29 @@ export function VoiceOverlay() {
   /** Mobile: lista vertical compacta; acima de 4, carrossel horizontal. */
   const carousel = isMobile && participants.length > 4;
 
+  // §9, 2.3.2 — uma câmera ligada já põe a grade inteira em 16:9.
+  const algumaCamera = participants.some((p) => p.cameraOn);
+
+  const palco = comporPalco({
+    participantes: participants,
+    transmissoes: shares.length,
+    fixadoId,
+  });
+  const fixado = participants.find((p) => p.identityId === palco.fixadoId);
+  const naGrade = participants.filter((p) => p.identityId !== palco.fixadoId);
+
   const tiles = connecting
-    ? participants.map((participant) => (
+    ? naGrade.map((participant) => (
         <VoiceTileSkeleton key={participant.identityId} compact={isMobile} />
       ))
-    : participants.map((participant) => (
+    : naGrade.map((participant) => (
         <VoiceTile
           key={participant.identityId}
           communityId={communityId}
           participant={participant}
           isLocal={participant.identityId === localId}
-          compact={isMobile || shares.length > 0}
+          compact={isMobile || palco.temPalco}
+          widescreen={algumaCamera}
           onOpenProfile={(identityId, anchor) =>
             setProfile({ identityId, anchor })
           }
@@ -200,11 +214,11 @@ export function VoiceOverlay() {
           O teto de duas colunas é deliberado: cada palco tem controles próprios e uma
           terceira coluna os espremeria abaixo do alvo de toque. Com 3+ a grade rola.
         */}
-        {shares.length > 0 && (
+        {palco.temPalco && (
           <div
             className={cn(
               "flex min-h-0 flex-1 gap-2",
-              shares.length === 1
+              palco.itensNoPalco === 1
                 ? "flex-col"
                 : "flex-col overflow-y-auto tablet:grid tablet:auto-rows-fr tablet:grid-cols-2 tablet:overflow-y-auto",
             )}
@@ -217,12 +231,32 @@ export function VoiceOverlay() {
                 isPresenter={s.presenterId === localId}
               />
             ))}
+
+            {/*
+              §9, 2.3.2 — o tile fixado divide a área grande com as transmissões, em vez
+              de disputar um lugar nela: o contêiner acima já sabe fazer "um ocupa tudo,
+              dois ou mais viram grade", e fixar é só mais um item.
+            */}
+            {fixado && (
+              <ul className="flex min-h-0 flex-1 flex-col">
+                <VoiceTile
+                  key={fixado.identityId}
+                  communityId={communityId}
+                  participant={fixado}
+                  isLocal={fixado.identityId === localId}
+                  destaque
+                  onOpenProfile={(identityId, anchor) =>
+                    setProfile({ identityId, anchor })
+                  }
+                />
+              </ul>
+            )}
           </div>
         )}
 
         <ul
           className={cn(
-            shares.length > 0
+            palco.temPalco
               ? // Tira de miniaturas ao lado do compartilhamento (§9, 2.4).
                 "flex shrink-0 gap-2 overflow-x-auto"
               : carousel

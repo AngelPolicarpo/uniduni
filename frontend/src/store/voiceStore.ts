@@ -253,6 +253,17 @@ interface VoiceState {
   /** Grade expandida (2.3) vs. só a barra persistente (2.3.1). */
   expanded: boolean;
   /**
+   * §9, 2.3.2 — "fixar um tile como principal (clique duplo — desfaz com outro
+   * clique duplo)". Quem está fixado sai da grade e ocupa a área grande, junto das
+   * transmissões de §17.5 se houver alguma; o resto vira a tira de miniaturas que
+   * §9 2.4 já descreve. `null` é a grade normal.
+   *
+   * É estado da chamada, não preferência: morre com ela, como a música e a fila.
+   */
+  fixadoId: string | null;
+  /** Fixa, ou desfixa se já for o fixado (§9, 2.3.2). */
+  alternarFixado: (identityId: string) => void;
+  /**
    * §17.5 — as transmissões vivas do canal, na ordem em que começaram. **Lista desde
    * 2026-08-26**: `E_ALREADY_SHARING` por canal era `RT-06`, uma contradição entre
    * documentos resolvida a favor do que já estava escrito, e não uma restrição de
@@ -580,6 +591,8 @@ const IDLE = {
   motivoDaFalha: null as string | null,
   participants: [] as VoiceParticipant[],
   expanded: false,
+  // §9, 2.3.2 — o tile fixado como principal. Da chamada: morre com ela.
+  fixadoId: null as string | null,
   shares: [] as ActiveShare[],
   shareSessionId: null,
   capturaDaTela: CAPTURA_LIVRE,
@@ -826,7 +839,15 @@ export const useVoiceStore = create<VoiceState>()(
           const euHex = local?.toLowerCase() ?? null;
           const sozinho =
             participantes.length === 1 && participantes[0]?.keyHex.toLowerCase() === euHex;
+          // §9, 2.3.2 — quem estava fixado saiu da chamada: o destaque volta para a
+          // grade, senão a área grande ficaria reservada a alguém que não está mais lá.
+          const fixadoContinua =
+            state.fixadoId !== null &&
+            participantes.some(
+              (p) => p.keyHex.toLowerCase() === state.fixadoId?.toLowerCase(),
+            );
           return {
+            fixadoId: fixadoContinua ? state.fixadoId : null,
             stage:
               sozinho && (state.stage === "connecting" || state.stage === "failed")
                 ? ("connected" as VoiceStage)
@@ -1197,6 +1218,18 @@ export const useVoiceStore = create<VoiceState>()(
         })),
 
       setExpanded: (expanded) => set({ expanded }),
+
+      /**
+       * §9, 2.3.2 — fixar/desfixar o tile principal.
+       *
+       * Fixar também EXPANDE a grade: o efeito de fixar é ocupar a área grande, e
+       * pedir isso com a chamada recolhida não teria onde acontecer.
+       */
+      alternarFixado: (identityId) =>
+        set((state) => ({
+          fixadoId: state.fixadoId === identityId ? null : identityId,
+          expanded: state.fixadoId === identityId ? state.expanded : true,
+        })),
 
       setVolume: (identityId, volume) => {
         set((state) => ({

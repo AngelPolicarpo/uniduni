@@ -16,6 +16,17 @@ export interface VoiceTileProps {
   isLocal: boolean;
   /** Mobile e tira de miniaturas: linha compacta em vez de card (§9, 2.3). */
   compact?: boolean;
+  /**
+   * §9, 2.3.2 — este é o tile fixado como principal: ocupa a área grande em vez de
+   * uma célula da grade, e por isso é a altura disponível que o dimensiona, não a
+   * proporção do card.
+   */
+  destaque?: boolean;
+  /**
+   * §9, 2.3.2 — há câmera ligada nesta chamada, então a grade inteira vai a 16:9.
+   * É decisão da grade e não do tile: ver o comentário na classe abaixo.
+   */
+  widescreen?: boolean;
   onOpenProfile: (identityId: string, anchor: DOMRect) => void;
 }
 
@@ -32,6 +43,8 @@ export function VoiceTile({
   participant,
   isLocal,
   compact = false,
+  destaque = false,
+  widescreen = false,
   onOpenProfile,
 }: VoiceTileProps) {
   const findMember = useFindMember();
@@ -49,6 +62,8 @@ export function VoiceTile({
   const videoRef = useRef<HTMLVideoElement>(null);
   // O aviso de que há `MediaStream` novo fora do React — ver `cameraSeq` no store.
   const cameraSeq = useVoiceStore((state) => state.cameraSeq);
+  const alternarFixado = useVoiceStore((state) => state.alternarFixado);
+  const fixado = useVoiceStore((state) => state.fixadoId === participant.identityId);
 
   /**
    * §17.2 — a imagem é real: `<video>` ligado ao `MediaStream` que a malha entregou. O
@@ -161,7 +176,7 @@ export function VoiceTile({
   );
 
   return (
-    <li>
+    <li className={cn(destaque && "flex min-h-0 flex-1")}>
       <button
         type="button"
         onClick={(event) =>
@@ -170,15 +185,39 @@ export function VoiceTile({
             event.currentTarget.getBoundingClientRect(),
           )
         }
+        /*
+          §9, 2.3.2 — "fixar um tile como principal (clique duplo — desfaz com outro
+          clique duplo)". É o que dá ao espectador o controle sobre o que ocupa a área
+          grande: sem isto, com alguém transmitindo a tela, TODA câmera da chamada virava
+          uma miniatura de 40px e não havia como aumentar nenhuma.
+        */
+        onDoubleClick={() => alternarFixado(participant.identityId)}
         aria-label={`${name}${isLocal ? " (você)" : ""}`}
+        aria-pressed={fixado}
+        title={
+          fixado
+            ? "Clique duplo para desafixar"
+            : "Clique duplo para fixar como principal"
+        }
         className={cn(
           "group relative flex w-full items-center overflow-hidden rounded-md border",
           "transition-colors duration-(--duration-fast) ease-out",
           "bg-surface-sidebar hover:border-border-strong",
           failed ? "border-conn-failed/40" : "border-border-default",
+          fixado && !compact && "border-accent-default",
           compact
             ? "h-14 shrink-0 gap-3 px-3"
-            : "aspect-[4/3] flex-col justify-center gap-2 p-3",
+            : destaque
+              // Fixado: quem manda no tamanho é a área, não a proporção do card.
+              ? "h-full flex-col justify-center gap-2 p-3"
+              // §9, 2.3.2 — "Proporção 16:9" para o tile com câmera. A proporção é da
+              // GRADE, não do tile: mistura de 16:9 com 4:3 na mesma fileira deixa as
+              // células de alturas diferentes, com buraco embaixo das mais baixas. Basta
+              // uma câmera ligada para a grade inteira virar 16:9 — o tile sem câmera só
+              // ganha mais respiro em volta do avatar, que é o que ele já é.
+              : widescreen
+                ? "aspect-video flex-col justify-center gap-2 p-3"
+                : "aspect-[4/3] flex-col justify-center gap-2 p-3",
         )}
       >
         {/*
