@@ -328,7 +328,14 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
             size="sm"
             onClick={() => void desligar()}
             aria-label="Desligar"
-            className="shrink-0"
+            /*
+              Desligar é a ação destrutiva desta fileira, e era a única do produto sem a
+              cor que diz isso: o `DmCallPanel` a pinta de `danger`, e na comunidade o
+              `VoicePanel`, o `VoiceControlBar` e o `VoiceCallBar` também. Aqui ela saía
+              igualzinha a "câmera" e "compartilhar a tela" — três ícones cinzas de 32px
+              lado a lado, um deles encerrando a chamada.
+            */
+            className="shrink-0 text-feedback-danger hover:bg-feedback-danger/15 hover:text-feedback-danger"
           >
             <PhoneOff size={16} strokeWidth={2} aria-hidden="true" />
           </Button>
