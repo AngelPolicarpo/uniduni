@@ -21,13 +21,30 @@ function trilhaFalsa(nome: string, kind = "audio"): MediaStreamTrack {
   return { kind, enabled: true, label: nome, stop: vi.fn() } as unknown as MediaStreamTrack;
 }
 
-/** `AudioContext` de mentira: nós com `connect` encadeável e destino com trilha própria. */
+/**
+ * `AudioContext` de mentira: nós com `connect` encadeável e destino com trilha própria.
+ *
+ * **O destino tem ZERO saídas, e isso é o ponto.** `MediaStreamAudioDestinationNode` é um
+ * nó de destino: `numberOfOutputs` é 0 e conectar a partir dele lança `IndexSizeError` no
+ * Chromium. O duplo anterior tinha um `connect` que aceitava qualquer nó, e foi ele que
+ * deixou o `destino.connect(analisador)` de `criarMixador` passar verde aqui enquanto o
+ * Modo Música falhava em **toda** máquina real — a exceção subia até o `.catch(() => false)`
+ * de `definirMusica` e virava "não foi possível misturar a música com a sua voz".
+ */
 function contextoFalso() {
-  const node = () => {
+  const node = (saidas: number) => {
     const n = {
       gain: { value: 1 },
       fftSize: 512,
+      numberOfOutputs: saidas,
       connect(destino: unknown) {
+        if (saidas === 0) {
+          const e = new Error(
+            "Failed to execute 'connect' on 'AudioNode': output index (0) exceeds number of outputs (0).",
+          );
+          e.name = "IndexSizeError";
+          throw e;
+        }
         return destino;
       },
       disconnect: vi.fn(),
@@ -37,10 +54,10 @@ function contextoFalso() {
     return n;
   };
   return {
-    createMediaStreamDestination: vi.fn(node),
-    createGain: vi.fn(node),
-    createMediaStreamSource: vi.fn(node),
-    createAnalyser: vi.fn(node),
+    createMediaStreamDestination: vi.fn(() => node(0)),
+    createGain: vi.fn(() => node(1)),
+    createMediaStreamSource: vi.fn(() => node(1)),
+    createAnalyser: vi.fn(() => node(1)),
     // O misturador retoma o contexto ao montar (grafo suspenso é silêncio, §17.5).
     resume: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
@@ -161,6 +178,21 @@ describe("criarMixador — o grafo mic + sistema numa trilha única", () => {
     const mixador = criarMixador({ getAudioTracks: () => [trilhaFalsa("mic")] } as unknown as MediaStream, () => ctx);
     expect(mixador).not.toBeNull();
     expect(ctx.resume).toHaveBeenCalled();
+  });
+
+  /*
+   * §17.5 item 4 — o grafo monta contra um destino de ZERO saídas.
+   *
+   * Verificado por mutação: voltar o analisador a ser alimentado por `destino.connect(...)`
+   * derruba este caso com `IndexSizeError` — que é exatamente o que acontecia na máquina do
+   * usuário, e o que a tela chamava de "não foi possível misturar a música com a sua voz
+   * nesta chamada".
+   */
+  it("o analisador é alimentado pela SOMA, não pelo destino — destino não tem saída", () => {
+    const ctx = contextoFalso();
+    const mic = { getAudioTracks: () => [trilhaFalsa("mic")] } as unknown as MediaStream;
+    expect(() => criarMixador(mic, () => ctx)).not.toThrow();
+    expect(ctx.createAnalyser).toHaveBeenCalled();
   });
 
   it("sem AudioContext no ambiente devolve null — música indisponível, nunca crash", () => {

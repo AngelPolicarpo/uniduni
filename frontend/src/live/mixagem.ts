@@ -66,10 +66,25 @@ export function criarMixador(
   let fonteSistema: MediaStreamAudioSourceNode | null = null;
   const ganhoSistema = ctx.createGain();
 
-  // O analisador lê a SAÍDA, não uma entrada: é o que o ouvinte ouve de fato.
+  /*
+   * O analisador lê o que está SAINDO — mas o ponto de escuta é a SOMA que alimenta o
+   * destino, e não o nó de destino.
+   *
+   * `MediaStreamAudioDestinationNode` é um nó de destino: `numberOfOutputs` é **zero**, e
+   * `destino.connect(...)` lança `IndexSizeError: output index (0) exceeds number of
+   * outputs (0)`. Era o que esta linha fazia, e a exceção subia por `criarMixador` →
+   * `ativarMusica` → o `.catch(() => false)` de `definirMusica`: o Modo Música falhava com
+   * "não foi possível misturar a música com a sua voz nesta chamada" em **toda** máquina
+   * real, desde que o modo existe. Passava nos testes porque o `AudioContext` de mentira
+   * tinha um `connect` que aceitava qualquer coisa.
+   *
+   * Ouvir as duas pernas pós-ganho é a MESMA soma que chega ao destino — a diferença é só
+   * que aqui o grafo pode ser percorrido no sentido em que a WebAudio o define.
+   */
   const analisador = ctx.createAnalyser();
   analisador.fftSize = 512;
-  destino.connect(analisador);
+  ganhoMic.connect(analisador);
+  ganhoSistema.connect(analisador);
   const buffer = new Uint8Array(analisador.fftSize);
 
   const trilha = destino.stream.getAudioTracks()[0] ?? null;

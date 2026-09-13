@@ -1386,8 +1386,15 @@ function configurarVoz(): void {
         return { erro: "sem-som" };
       }
       // `ativarMusica` diz se misturou de verdade: sucesso falso acenderia o ícone
-      // sobre uma transmissão que não existe.
-      const misturou = await malha.ativarMusica(stream).catch(() => false);
+      // sobre uma transmissão que não existe. **A exceção é NOMEADA no log** — o
+      // `.catch(() => false)` mudo colapsava "sem microfone na chamada" e "o grafo de
+      // WebAudio lançou" na mesma frase de tela, e foi por isso que o `IndexSizeError` de
+      // `criarMixador` (§17.5 item 4) sobreviveu a um teste no Windows sem
+      // deixar rastro do que tinha falhado.
+      const misturou = await malha.ativarMusica(stream).catch((e: unknown) => {
+        console.log("[musica] ativarMusica LANÇOU ·", e instanceof Error ? `${e.name}: ${e.message}` : String(e));
+        return false;
+      });
       if (!misturou) {
         console.log("[musica] o som chegou e a mixagem NÃO montou (sem microfone na chamada, ou sem AudioContext)");
         for (const t of stream.getTracks()) t.stop();
