@@ -10,6 +10,7 @@ import {
   useSearchShortcut,
 } from "./shellHooks";
 import { ChannelView } from "../../features/channel/ChannelView";
+import { DmChamadaRecebida } from "../../features/dm/DmChamadaRecebida";
 import { DmDestino } from "../../features/dm/DmDestino";
 import { DmList } from "../../features/dm/DmList";
 import {
@@ -243,6 +244,13 @@ export function AppShell() {
       )}
 
       <ShellOverlays community={activeCommunity} />
+
+      {/*
+        U-33 (emenda de 2026-09-13) — a chamada de DM que chega, por cima de qualquer destino
+        e breakpoint. Não é um `overlay` do `uiStore`: aquele slot é único, e uma chamada
+        tocando não pode apagar o modal que a pessoa estava preenchendo.
+      */}
+      <DmChamadaRecebida />
 
       {/*
         §16: no Mobile a barra de chamada é a única coisa que sobrevive à

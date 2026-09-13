@@ -506,6 +506,35 @@ ou busca), a visualização da conversa exibe faixa superior com os botões "Ace
 "Bloquear" (§31.9 regra 1), garantindo que a admissão nunca ocorra por engano e que as
 ações normativas estejam disponíveis em qualquer rota de acesso à conversa.
 
+**Emenda de 2026-09-13 — a chamada recebida ganha cartão próprio.** Até aqui a chamada que
+chega tinha o toque em laço de `frontend.md` §10 3.1a e duas superfícies pequenas: uma linha no
+painel acima da barra de usuário (emenda de 2026-09-05) e o botão "Atender" no cabeçalho da
+conversa. Nenhuma dizia **quem** com o peso do momento, e a primeira some no Mobile com o
+conteúdo em foco (§16) — o aparelho tocava sem nada na tela para atender. Fica decidido:
+
+| | |
+|---|---|
+| **O quê** | Um cartão flutuante (`DmChamadaRecebida`) enquanto a chamada estiver em `recebendo`, em **qualquer** destino e breakpoint: avatar G do par com anel e halo em `accent`, "Chamada recebida" em `text-caption`, o nome em `text-heading-2`, o `handle` embaixo (L-5) e dois botões de 44px — **Recusar** (destrutivo) e **Atender** (primário). Topo da janela, centrado, 340px no Tablet/Desktop e largura total menos 16px de cada lado no Mobile. |
+| **Uma superfície, não três** | Em `recebendo` o painel acima da barra de usuário **não aparece** e o cabeçalho da conversa não repete "Atender" nem a faixa "Chamada recebida" — o argumento que tirou mudo e ensurdecer do painel da comunidade (§9, 2.3.1). O painel volta em `chamando` e `na-chamada`, como antes. |
+| **Não modal, salvo quando precisa** | O cartão não escurece a tela e não tira o foco de quem está escrevendo. A exceção é medida: com um modal de §6 aberto, o `<dialog>` modal torna inerte tudo o que não é ele, inclusive o que estiver acima no top layer (Chrome 151). Nesse caso o cartão sobe como modal por cima, com fundo transparente e foco no próprio cartão — nunca num botão, para um Enter que vinha do formulário não recusar a chamada. `Esc` não recusa. |
+| **Contingência** | Sem a conversa no espelho (emenda de 2026-09-09), o cartão mostra "Conversa direta" com o telefone no lugar do avatar e só **Recusar**: não há para onde levar a chamada, e nenhuma chamada fica sem superfície de terminação. |
+| **Motion** | Entrada `call-in` (180ms, desce 8px, `ease-out`) e halo `call-ring` em loop de ~1.2s (§5.9). O halo é decorativo: com `prefers-reduced-motion` ele some, e o anel estático e o texto continuam dizendo o estado. |
+| **O que não muda** | O catálogo de sons de 3.1a, a regra de não afirmar nada sobre o outro lado ("Chamada recebida" é fato local), "atender leva para a conversa" (emenda de 2026-09-05) e o avanço de `mobilePane` (emenda de 2026-09-09). |
+
+**Emenda de 2026-09-13 — o nome do contato, deste aparelho.** Quem conversa com alguém
+precisa poder chamá-lo pelo nome que conhece — "Mãe" em vez do nome que a pessoa escolheu.
+Não é o apelido de `frontend.md` §8 1.4 (premissa 11: auto-atribuído, viaja no log) nem o
+`dm.setProfile` de "Perfil é por conversa" acima (o **meu** nome, que o par vê). É o nome que
+**eu** dou ao par, e a diferença decide o desenho:
+
+| | |
+|---|---|
+| **Natureza** | Preferência local deste aparelho, na mesma store e com a mesma disciplina do mudo por conversa de B63(b): não replica, não avisa ninguém, **nenhum comando, evento ou tabela nova** — o núcleo não o conhece. A chave é o `conversationId`, que já inclui a identidade local (§31.2): uma identidade nova nesta máquina não herda os nomes da anterior. Esquecer a conversa apaga o nome com ela (L-25). |
+| **Onde se edita** | "Renomear contato" no menu "⋯" do cabeçalho da conversa ("Mudar o nome do contato" quando já há um). Existe em `accepted`, `pending-out` e `blocked`; **não** em `pending-in` — pedido ainda não é contato (§31.9 regra 1). |
+| **O formulário** | Modal de 440px. Antes do campo, **quem** está sendo renomeado: avatar, o nome que a pessoa usa e o `handle`. Campo "Nome do contato" com a regra de §13 do apelido de 1.4 — opcional, até 32 code points, contador, espaços colapsados, e **vazio remove** em vez de errar. Hint: "Só você vê este nome, e só neste aparelho. A pessoa não é avisada." "Usar o nome da pessoa" desfaz, e só aparece quando há o que desfazer (§15). |
+| **Onde aparece** | Em todo lugar que nomeia o par: lista de conversas e pedidos, cabeçalho, autor e citação das mensagens **dele**, "digitando…", faixas, composer, confirmações de bloquear e esquecer, tiles de vídeo, painel da chamada e o cartão de chamada recebida. As **minhas** mensagens nunca passam por ele. |
+| **L-5 continua valendo** | O `handle` segue ao lado do nome, sempre, e o nome que a pessoa escolheu fica a um passar de cursor ("Nome que a pessoa usa: …"). Renomear é dar nome, não esconder quem a pessoa diz ser — e o nome que eu mesmo dei é o único que o par não consegue forjar. |
+
 **Emenda de 2026-09-09 — ciclo de vida e teardown estrito de hardware de mídia WebRTC (§17.2, §17.4, §17.5, §10 3.1).**
 1. **Serialização e cancelamento em `CameraDaChamada` (§17.2, §17.4):** As operações de `ligar` e `desligar` câmera são serializadas por fila assíncrona interna e versionadas por número de geração (`#geracao`). Se um encerramento de chamada (`leave`), troca de canal (`join`) ou desligamento local ocorrer enquanto a captura aguarda a inicialização do dispositivo físico ou permissão do SO, a trilha de hardware concedida posteriormente é imediatamente cancelada (`track.stop()`) sem anexação à malha e sem deixar o LED de hardware aceso.
 2. **Ciclo de vida de sub-recursos na alternância de canais (`useVoiceStore.join`):** Ao transitar diretamente entre salas de voz sem desconexão prévia, estados de sessão como Modo Música (`musicaAtiva`, `musicaErro`) e fila de fala (`fila`, `motivoDaFila`) são obrigatoriamente reiniciados para evitar persistência de estado fantasma na nova sala.

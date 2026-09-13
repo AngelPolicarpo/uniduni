@@ -1248,6 +1248,7 @@ Validação inline, em tempo real onde é barato (contadores de caractere) e no 
 | Criar/editar canal (3.4) | Nome: obrigatório, 1-32 caracteres · em canal de texto vira slug ao vivo (`a-z0-9-`) e não pode normalizar pra vazio · duplicidade checada no blur, **bloqueante** dentro da mesma comunidade (diferente do nome de comunidade, onde duplicar só avisa — aqui o nome é o endereço do canal) · Tópico: opcional, até 120 caracteres, só em canal de texto · Categoria: obrigatória · Somente-leitura: desligado por padrão; ligado, exige ao menos um cargo com "pode postar" |
 | Criar/renomear categoria (3.4) | Nome: obrigatório, 1-32 caracteres, duplicidade só avisa (categoria é rótulo visual, não endereço) |
 | Apelido nesta comunidade (1.4) | Opcional, 1-32 caracteres; campo inline, salva no `Enter`, "Usar meu nome" limpa. Vazio ou só espaços = remover apelido, não erro — é o jeito natural de desfazer |
+| Nome do contato (conversa direta — `deltas-ux-v2.md` U-33, emenda de 2026-09-13) | Opcional, 1-32 code points, local deste aparelho; modal com botão explícito, "Usar o nome da pessoa" limpa. Vazio ou só espaços = remover, não erro — a mesma regra do apelido |
 | Banir/expulsar/timeout (D12) | Motivo: opcional, até 200 caracteres, vai pro log de auditoria como texto livre |
 | Editar mensagem | Mesmas regras da criação; não pode ficar vazia (esvaziar = usar "Deletar", não editar pra vazio) |
 
@@ -1309,6 +1310,7 @@ Painéis (membros, busca, thread, configurações) e modais abrem **por cima** d
 | Indicador "digitando…" | Pontos animados em loop |
 | Botão em loading | Spinner substitui o label sem mudar a largura do botão (evita pulo de layout) |
 | Copiar link/código | Ícone de copiar vira check por ~1.5s antes de reverter |
+| Chamada recebida (conversa direta) | Cartão desce do topo com fade, `duration-base`; halo em volta do avatar se expande e some em loop de ~1.2s enquanto toca. Com movimento reduzido fica só o anel estático (`deltas-ux-v2.md` U-33, emenda de 2026-09-13) |
 
 ## 18. Edge cases
 

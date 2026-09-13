@@ -27,6 +27,11 @@ export interface DmMessageRowProps {
   agrupada: boolean;
   agora: number;
   propria?: boolean;
+  /**
+   * Como nomear um autor. O padrão é o nome que ele escolheu; a conversa passa o nome do
+   * contato (emenda de 2026-09-13), que vale só para o par.
+   */
+  nomeDe?: (autor: DmMessageDto["author"]) => string;
   onResponder?: (mensagem: DmMessageDto) => void;
 }
 
@@ -35,6 +40,7 @@ export function DmMessageRow({
   agrupada,
   agora,
   propria = false,
+  nomeDe = (autor) => autor.displayName,
   onResponder,
 }: DmMessageRowProps) {
   const [editando, setEditando] = useState(false);
@@ -54,7 +60,7 @@ export function DmMessageRow({
       <div className="w-8 shrink-0">
         {!agrupada && (
           <Avatar
-            name={mensagem.author.displayName}
+            name={nomeDe(mensagem.author)}
             color={corDoPar(mensagem.author.avatarColor)}
             size="md"
           />
@@ -67,7 +73,7 @@ export function DmMessageRow({
             <Reply size={12} strokeWidth={2} aria-hidden="true" className="shrink-0 text-text-tertiary" />
             <span className="shrink-0">respondendo a</span>
             <span className="shrink-0 text-body-emphasis text-text-primary">
-              {mensagem.replyTo.author.displayName}
+              {nomeDe(mensagem.replyTo.author)}
             </span>
             <span className="truncate text-text-tertiary italic">
               {mensagem.replyTo.deleted ? "Mensagem apagada" : (mensagem.replyTo.excerpt ?? "")}
@@ -78,7 +84,7 @@ export function DmMessageRow({
         {!agrupada && (
           <p className="flex items-baseline gap-1.5">
             <span className="text-body-emphasis text-text-primary">
-              {mensagem.author.displayName}
+              {nomeDe(mensagem.author)}
             </span>
             <span className="text-caption text-text-tertiary">{mensagem.author.handle}</span>
             <span className="text-caption text-text-tertiary tabular-nums">

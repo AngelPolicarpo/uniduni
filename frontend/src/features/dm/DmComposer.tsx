@@ -25,6 +25,8 @@ import type { DmMessageDto, StagedAttachmentDto } from "../../ipc/dto";
 export interface DmComposerProps {
   conversationId: string;
   nomeDoPar: string;
+  /** Como nomear o autor da mensagem respondida — o nome do contato vale só para o par. */
+  nomeDe?: (autor: DmMessageDto["author"]) => string;
   desabilitado: boolean;
   motivo?: string;
   respondendoA?: DmMessageDto | null;
@@ -34,6 +36,7 @@ export interface DmComposerProps {
 export function DmComposer({
   conversationId,
   nomeDoPar,
+  nomeDe = (autor) => autor.displayName,
   desabilitado,
   motivo,
   respondendoA,
@@ -121,7 +124,7 @@ export function DmComposer({
       {respondendoA && (
         <div className="mb-1.5 flex items-center justify-between gap-2 rounded-md border border-border-default bg-surface-elevated px-2.5 py-1.5 text-meta">
           <span className="min-w-0 flex-1 truncate text-text-secondary">
-            Respondendo a <strong className="text-text-primary">{respondendoA.author.displayName}</strong>:{" "}
+            Respondendo a <strong className="text-text-primary">{nomeDe(respondendoA.author)}</strong>:{" "}
             <span className="italic">
               {respondendoA.deleted ? "Mensagem apagada" : (respondendoA.content ?? "Anexo")}
             </span>

@@ -7,6 +7,8 @@ import { StatusBanner } from "../../components/ui/StatusBanner";
 import { cn } from "../../lib/cn";
 import { formatClock } from "../../lib/format";
 import { DmPeerLabel } from "./DmPeerLabel";
+import { nomeDoContato } from "./dmRegras";
+import { useNomeLocalDoContato } from "./useNomeDoContato";
 import { DmBloquearModal, DmEsquecerModal } from "./DmDialogs";
 import {
   aceitarConversa,
@@ -64,7 +66,7 @@ function ItemDeConversa({
       )}
     >
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <DmPeerLabel peer={item.peer} />
+        <DmPeerLabel peer={item.peer} conversationId={item.conversationId} />
         {/*
           U-33 — "a linha de conversa mostra avatar, nome de exibição e o `handle` …, **o
           trecho da última mensagem**, a hora e o contador de não-lidas". O trecho é o que
@@ -103,10 +105,11 @@ function ItemDeConversa({
 function Pedido({ item }: { item: DmConversationItem }) {
   const [bloquear, setBloquear] = useState(false);
   const [esquecer, setEsquecer] = useState(false);
+  const nome = nomeDoContato(item.peer, useNomeLocalDoContato(item.conversationId));
 
   return (
     <li className="rounded-md bg-surface-elevated p-2">
-      <DmPeerLabel peer={item.peer} layout="stacked" />
+      <DmPeerLabel peer={item.peer} conversationId={item.conversationId} layout="stacked" />
       {item.pendingRecords !== undefined && (
         <p className="mt-1 text-caption text-text-tertiary tabular-nums">
           {item.pendingRecords} {item.pendingRecords === 1 ? "registro" : "registros"} recebidos
@@ -128,13 +131,13 @@ function Pedido({ item }: { item: DmConversationItem }) {
 
       <DmBloquearModal
         open={bloquear}
-        nomeDoPar={item.peer.displayName}
+        nomeDoPar={nome}
         onClose={() => setBloquear(false)}
         onConfirm={() => void bloquearConversa(item.conversationId)}
       />
       <DmEsquecerModal
         open={esquecer}
-        nomeDoPar={item.peer.displayName}
+        nomeDoPar={nome}
         onClose={() => setEsquecer(false)}
         onConfirm={() => void esquecerConversa(item.conversationId)}
       />

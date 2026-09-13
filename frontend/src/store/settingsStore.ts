@@ -120,6 +120,13 @@ interface SettingsState {
    * (`DmRailButton`) é quem a consulta. Esquecer a conversa limpa a entrada.
    */
   dmMutedByConversation: Record<string, true>;
+  /**
+   * U-33 (emenda de 2026-09-13) — o nome que eu dei a cada contato de conversa direta.
+   * Mesma natureza do mudo acima: local deste aparelho, não replica e não avisa o par.
+   * A chave é o `conversationId`, e não a chave do par, porque ele já inclui a minha
+   * identidade (§31.2): uma identidade nova nesta máquina não herda os nomes da anterior.
+   */
+  dmNomeDoContato: Record<string, string>;
 
   natType: NatType;
   diagnosticRunning: boolean;
@@ -145,6 +152,8 @@ interface SettingsState {
   ) => void;
   /** B63(b) — silencia (`true`) ou reativa (apaga a entrada) uma conversa direta. */
   setDmMuted: (conversationId: string, muted: boolean) => void;
+  /** U-33 — dá (`string`) ou tira (`null`) o nome local de um contato. */
+  setDmNomeDoContato: (conversationId: string, nome: string | null) => void;
   runDiagnostic: () => void;
   /** Afinador de §19.1 — o CGNAT de `CLAUDE.md:45` não acontece sozinho. */
   devSetNatType: (type: NatType) => void;
@@ -165,6 +174,7 @@ export const useSettingsStore = create<SettingsState>()(
       notificationsEnabled: true,
       notificationByCommunity: {},
       dmMutedByConversation: {},
+      dmNomeDoContato: {},
 
       natType: "moderate",
       diagnosticRunning: false,
@@ -244,6 +254,19 @@ export const useSettingsStore = create<SettingsState>()(
           return {
             dmMutedByConversation: { ...state.dmMutedByConversation, [conversationId]: true },
           };
+        });
+      },
+
+      setDmNomeDoContato: (conversationId, nome) => {
+        // Sem porta, pela mesma razão do mudo: o núcleo não conhece o nome que eu dou ao
+        // par, e mandá-lo para lá o transformaria em algo que um dia poderia viajar.
+        set((state) => {
+          if (nome === null) {
+            if (state.dmNomeDoContato[conversationId] === undefined) return state;
+            const { [conversationId]: _fora, ...resto } = state.dmNomeDoContato;
+            return { dmNomeDoContato: resto };
+          }
+          return { dmNomeDoContato: { ...state.dmNomeDoContato, [conversationId]: nome } };
         });
       },
 

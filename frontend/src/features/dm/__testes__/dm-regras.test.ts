@@ -24,11 +24,16 @@ import {
   faixaDeChamada,
   faixaDeMicrofone,
   faixaDeSincronizacao,
+  LIMITE_NOME_DO_CONTATO,
   lerChaveDeIdentidade,
+  lerNomeDoContato,
   marcasDaMensagem,
   mesclarMensagens,
   nomeComHandle,
+  nomeDoAutor,
+  nomeDoContato,
   palcoDeVideo,
+  podeRenomearContato,
   primeiraNaoLida,
   rotuloDeEntrega,
   rotuloDoPainelDeChamada,
@@ -584,5 +589,43 @@ describe("U-33 — o painel de chamada que sobrevive à navegação", () => {
       const t = rotuloDoPainelDeChamada(e) ?? "";
       expect(t).not.toMatch(/offline|tocando|bloque/i);
     }
+  });
+});
+
+describe("U-33 (emenda de 2026-09-13) — o nome do contato, deste aparelho", () => {
+  const par = { key: "AA11", displayName: "Maria Silva", handle: "@k3f9-2mqa" };
+
+  it("sem nome dado, vale o nome que a pessoa escolheu", () => {
+    expect(nomeDoContato(par, undefined)).toBe("Maria Silva");
+    expect(nomeDoContato(par, null)).toBe("Maria Silva");
+    expect(nomeDoContato(par, "Mãe")).toBe("Mãe");
+  });
+
+  it("renomear o contato não renomeia a mim: o nome local vale só para o autor que é o par", () => {
+    const eu = { key: "bb22", displayName: "Ana" };
+    expect(nomeDoAutor(eu, par.key, "Mãe")).toBe("Ana");
+    // A chave vem em hex de caixas diferentes conforme a fonte — a comparação não pode depender.
+    expect(nomeDoAutor({ key: "aa11", displayName: "Maria Silva" }, par.key, "Mãe")).toBe("Mãe");
+  });
+
+  it("§13 — vazio ou só espaços remove o nome, não é erro", () => {
+    expect(lerNomeDoContato("")).toEqual({ ok: true, nome: null });
+    expect(lerNomeDoContato("   ")).toEqual({ ok: true, nome: null });
+  });
+
+  it("normaliza espaços e conta em code points, não em UTF-16", () => {
+    expect(lerNomeDoContato("  Maria   do  Carmo ")).toEqual({ ok: true, nome: "Maria do Carmo" });
+    // 32 emojis: 64 unidades UTF-16 e 32 code points — cabe.
+    expect(lerNomeDoContato("😀".repeat(LIMITE_NOME_DO_CONTATO)).ok).toBe(true);
+    const longo = lerNomeDoContato("a".repeat(LIMITE_NOME_DO_CONTATO + 1));
+    expect(longo.ok).toBe(false);
+  });
+
+  it("§31.9 regra 1 — pedido não aceito não é contato, e não se renomeia", () => {
+    expect(podeRenomearContato("pending-in")).toBe(false);
+    expect(podeRenomearContato("left")).toBe(false);
+    expect(podeRenomearContato("accepted")).toBe(true);
+    expect(podeRenomearContato("pending-out")).toBe(true);
+    expect(podeRenomearContato("blocked")).toBe(true);
   });
 });

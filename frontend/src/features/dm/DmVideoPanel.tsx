@@ -31,10 +31,13 @@ import type { AvatarColor } from "../../domain/types";
  */
 export interface DmVideoPanelProps {
   peer: DmPeerRef;
+  /** O nome exibido do par — o do contato, quando eu dei um (emenda de 2026-09-13). */
+  nomeDoPar?: string;
   className?: string;
 }
 
-export function DmVideoPanel({ peer, className }: DmVideoPanelProps) {
+export function DmVideoPanel({ peer, nomeDoPar, className }: DmVideoPanelProps) {
+  const nome = nomeDoPar ?? peer.displayName;
   const cameraLigada = useDmCallStore((s) => s.cameraLigada);
   const parComCamera = useDmCallStore((s) => s.parComCamera);
   const telaLigada = useDmCallStore((s) => s.telaLigada);
@@ -63,7 +66,7 @@ export function DmVideoPanel({ peer, className }: DmVideoPanelProps) {
   const palco = palcoDeVideo({ telaLigada, parComTela });
 
   const rotuloDaTela =
-    palco.tela === "par" ? `Tela de ${peer.displayName}` : "Sua tela";
+    palco.tela === "par" ? `Tela de ${nome}` : "Sua tela";
 
   return (
     <div
@@ -95,7 +98,7 @@ export function DmVideoPanel({ peer, className }: DmVideoPanelProps) {
             tipo="tela"
             ativo
             avatarColor={peer.avatarColor}
-            nome={peer.displayName}
+            nome={nome}
             obterStream={palco.tela === "par" ? () => telaRecebida(peer.key) : telaDoApresentador}
             seq={videoSeq}
             comSom={palco.comSom}
@@ -140,10 +143,10 @@ export function DmVideoPanel({ peer, className }: DmVideoPanelProps) {
           tamanho={palco.tela !== null ? "miniatura" : "proporcao"}
         />
         <DmVideoTile
-          rotulo={nomeComHandle(peer)}
+          rotulo={nomeComHandle({ displayName: nome, handle: peer.handle })}
           ativo={parComCamera}
           avatarColor={peer.avatarColor}
-          nome={peer.displayName}
+          nome={nome}
           obterStream={() => cameraRecebida(peer.key)}
           seq={videoSeq}
           tamanho={palco.tela !== null ? "miniatura" : "proporcao"}
@@ -157,7 +160,7 @@ export function DmVideoPanel({ peer, className }: DmVideoPanelProps) {
             tipo="tela"
             ativo
             avatarColor={peer.avatarColor}
-            nome={peer.displayName}
+            nome={nome}
             obterStream={palco.tela === "par" ? () => telaRecebida(peer.key) : telaDoApresentador}
             seq={videoSeq}
             comSom={palco.comSom}

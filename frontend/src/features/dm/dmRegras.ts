@@ -324,6 +324,70 @@ export function nomeComHandle(peer: { displayName: string; handle: string }): st
   return `${peer.displayName} ${peer.handle}`;
 }
 
+/* ─── O nome do contato — deste aparelho (U-33, emenda de 2026-09-13) ────── */
+
+/** O teto do nome do contato, em code points — o mesmo do apelido de 1.4 (§13). */
+export const LIMITE_NOME_DO_CONTATO = 32;
+
+/**
+ * O nome que **esta máquina** mostra para o par: o que eu dei a ele, ou, sem isso, o que
+ * ele escolheu no próprio `dm.profile`.
+ *
+ * O nome do contato não é o apelido de 1.4 nem o `dm.setProfile` de U-33: os dois são
+ * escritos por quem é nomeado e viajam no log. Este é escrito por quem **lê**, não sai do
+ * aparelho e não avisa ninguém — a mesma natureza do mudo por conversa (B63(b)). Por isso
+ * ele não abre exceção à mitigação (a) de **L-5**: o `handle` continua ao lado, e o nome
+ * que eu mesmo dei é o único que o par não consegue forjar.
+ */
+export function nomeDoContato(
+  peer: { displayName: string },
+  nomeLocal: string | null | undefined,
+): string {
+  return nomeLocal ?? peer.displayName;
+}
+
+/**
+ * O autor de uma mensagem. O nome local vale **só para o par**: numa conversa de dois as
+ * minhas mensagens também passam por aqui, e renomear o contato não pode me renomear.
+ */
+export function nomeDoAutor(
+  autor: { key: string; displayName: string },
+  peerKey: string,
+  nomeLocal: string | null | undefined,
+): string {
+  return autor.key.toLowerCase() === peerKey.toLowerCase()
+    ? nomeDoContato(autor, nomeLocal)
+    : autor.displayName;
+}
+
+export type LeituraDoNomeDoContato =
+  | { readonly ok: true; readonly nome: string | null }
+  | { readonly ok: false; readonly erro: string };
+
+/**
+ * O campo "Nome do contato", na regra de §13 para o apelido de 1.4: opcional, até 32
+ * caracteres, e **vazio ou só espaços remove** — é o jeito natural de desfazer, não um
+ * erro. Não há mínimo de 2 como em §31.7.5 porque nada aqui vai para o `dmFold`: um nome
+ * de uma letra não invalida conversa nenhuma.
+ */
+export function lerNomeDoContato(texto: string): LeituraDoNomeDoContato {
+  const limpo = texto.trim().replace(/\s+/g, " ");
+  if (limpo === "") return { ok: true, nome: null };
+  if (Array.from(limpo).length > LIMITE_NOME_DO_CONTATO) {
+    return { ok: false, erro: `O nome pode ter até ${LIMITE_NOME_DO_CONTATO} caracteres.` };
+  }
+  return { ok: true, nome: limpo };
+}
+
+/**
+ * Onde renomear existe. `pending-in` fica de fora pela razão de §31.9 regra 1: pedido
+ * ainda não é conversa, e dar nome a quem eu nem aceitei é tratar o pedido como contato.
+ * `left` não está na tela.
+ */
+export function podeRenomearContato(state: DmConvState): boolean {
+  return state === "accepted" || state === "pending-out" || state === "blocked";
+}
+
 /**
  * A cor do avatar do par. §31.16.3 dá `avatarColor` como **número** — o par o escolhe e o
  * escreve no `dm.profile` —, e a paleta é a de §5.4, curada para contraste. O módulo é o

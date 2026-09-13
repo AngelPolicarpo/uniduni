@@ -1,11 +1,11 @@
-import { Phone, PhoneOff } from "lucide-react";
+import { PhoneOff } from "lucide-react";
 
 import { Button } from "../../components/ui/Button";
 import { cn } from "../../lib/cn";
 import { DmPeerLabel } from "./DmPeerLabel";
 import { acoesDeChamada, rotuloDoPainelDeChamada } from "./dmRegras";
 import { abrirConversa } from "../../live/dm";
-import { chamar, desligar } from "../../live/dmVoz";
+import { desligar } from "../../live/dmVoz";
 import { useDmCallStore } from "../../store/dmCallStore";
 import { useDmStore } from "../../store/dmStore";
 import { useUiStore } from "../../store/uiStore";
@@ -25,7 +25,8 @@ import { useUiStore } from "../../store/uiStore";
  * Câmera e tela também não estão aqui — elas produzem imagem, e a imagem mora no
  * `DmVideoPanel`, dentro da conversa. É por isso que atender **leva** para a conversa: uma
  * chamada atendida sem as suas imagens e sem o seu mudo seria a metade que a pessoa não
- * pediu.
+ * pediu. Atender em si mora no cartão de chamada recebida (emenda de 2026-09-13), e este
+ * painel só existe de `chamando` em diante.
  *
  * Não coexiste com o `VoicePanel`: §15.4 diz "voz é uma só", e a store guarda uma conversa.
  */
@@ -38,6 +39,11 @@ export function DmCallPanel({ className }: { className?: string }) {
   const abrirDm = useUiStore((s) => s.abrirDm);
 
   if (conversationId === null) return null;
+
+  // Emenda de 2026-09-13 — a chamada que CHEGA tem o cartão próprio (`DmChamadaRecebida`),
+  // em qualquer tela e breakpoint. Repetir "Atender/Recusar" aqui, 300px abaixo dele, seria
+  // o mesmo par de botões duas vezes; este painel volta quando a chamada existe de fato.
+  if (estado === "recebendo") return null;
 
   const rotulo = rotuloDoPainelDeChamada(estado);
   if (rotulo === null) return null;
@@ -65,9 +71,7 @@ export function DmCallPanel({ className }: { className?: string }) {
         "flex shrink-0 flex-col gap-1.5 border-t border-border-subtle bg-surface-sidebar px-2 py-2",
         className,
       )}
-      // §20.3 — a chamada que chega é notícia, e ela precisa ser anunciada a quem não
-      // está olhando para esta coluna.
-      role={estado === "recebendo" ? "alert" : "status"}
+      role="status"
     >
       <p className="px-1 text-caption text-text-tertiary">{rotulo}</p>
 
@@ -77,7 +81,7 @@ export function DmCallPanel({ className }: { className?: string }) {
           onClick={irParaAConversa}
           className="flex min-w-0 rounded-md px-1 py-0.5 text-left hover:bg-surface-primary"
         >
-          <DmPeerLabel peer={conversa.peer} size="sm" />
+          <DmPeerLabel peer={conversa.peer} conversationId={conversa.conversationId} size="sm" />
         </button>
       ) : (
         // A conversa saiu da lista (esquecida noutro caminho) e a chamada ficou: o painel
@@ -86,19 +90,6 @@ export function DmCallPanel({ className }: { className?: string }) {
       )}
 
       <div className="flex gap-1.5">
-        {acoes.includes("atender") && (
-          <Button
-            size="sm"
-            className="min-w-0 flex-1"
-            onClick={() => {
-              irParaAConversa();
-              void chamar(conversationId);
-            }}
-          >
-            <Phone size={16} strokeWidth={2} aria-hidden="true" />
-            Atender
-          </Button>
-        )}
         {acoes.includes("desligar") && (
           <Button
             variant="danger"
@@ -107,7 +98,7 @@ export function DmCallPanel({ className }: { className?: string }) {
             onClick={() => void desligar()}
           >
             <PhoneOff size={16} strokeWidth={2} aria-hidden="true" />
-            {estado === "recebendo" ? "Recusar" : "Desligar"}
+            Desligar
           </Button>
         )}
       </div>

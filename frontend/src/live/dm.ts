@@ -311,6 +311,9 @@ export async function esquecerConversa(conversationId: string): Promise<void> {
     useDmStore.getState().limpar(conversationId);
     // B63(b) — o mudo morre com a conversa: sem isto o mapa cresceria com histórico.
     useSettingsStore.getState().setDmMuted(conversationId, false);
+    // O nome que eu dei ao contato também: esquecer é apagar desta máquina (L-25), e um
+    // nome que sobrevivesse voltaria sozinho se a pessoa escrevesse de novo.
+    useSettingsStore.getState().setDmNomeDoContato(conversationId, null);
     useDmStore.getState().setPendentesNoTeto(false);
     await sincronizarConversas();
   } catch (erro) {

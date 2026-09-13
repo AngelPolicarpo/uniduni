@@ -21,12 +21,14 @@ import { MESSAGE_GROUP_WINDOW_MS } from "../../lib/format";
 import {
   DmBloquearModal,
   DmEsquecerModal,
+  DmNomeDoContatoModal,
   DmPerfilConversaModal,
 } from "./DmDialogs";
 import { DmComposer } from "./DmComposer";
 import { DmMessageRow } from "./DmMessageRow";
 import { DmPeerLabel } from "./DmPeerLabel";
 import { DmVideoPanel } from "./DmVideoPanel";
+import { useNomeLocalDoContato } from "./useNomeDoContato";
 import {
   acoesDaConversa,
   acoesDeChamada,
@@ -37,6 +39,9 @@ import {
   faixaDeMicrofone,
   faixaDeTela,
   faixaDeSincronizacao,
+  nomeDoAutor,
+  nomeDoContato,
+  podeRenomearContato,
   primeiraNaoLida,
 } from "./dmRegras";
 import {
@@ -110,6 +115,9 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
   const telaLigada = useDmCallStore((s) => s.telaLigada);
   const erroDeTela = useDmCallStore((s) => s.erroDeTela);
   const daConversa = chamadaId === conversa.conversationId;
+  // Emenda de 2026-09-13 — a chamada que chega tem cartão próprio, por cima de tudo. Aqui,
+  // nesse estado, o cabeçalho não repete "Atender" nem a faixa "Chamada recebida".
+  const recebendoAqui = daConversa && chamadaEstado === "recebendo";
   const emVozComunitaria = useVoiceStore((s) => s.channelId !== null);
 
   const [menuAberto, setMenuAberto] = useState(false);
@@ -117,6 +125,13 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
   const [bloquear, setBloquear] = useState(false);
   const [esquecer, setEsquecer] = useState(false);
   const [editarPerfil, setEditarPerfil] = useState(false);
+  const [renomear, setRenomear] = useState(false);
+  // U-33 (emenda de 2026-09-13) — o nome que EU dei a este contato, deste aparelho. Toda
+  // frase desta tela que nomeia o par passa por ele; as minhas mensagens, não.
+  const nomeLocal = useNomeLocalDoContato(conversa.conversationId);
+  const nome = nomeDoContato(conversa.peer, nomeLocal);
+  const nomeDe = (autor: { key: string; displayName: string }) =>
+    nomeDoAutor(autor, conversa.peer.key, nomeLocal);
   const [respondendoA, setRespondendoA] = useState<DmMessageDto | null>(null);
   // B63(b) — o mudo desta conversa, preferência local deste aparelho.
   const conversaMuda = useSettingsStore((s) => s.dmMutedByConversation[conversa.conversationId] === true);
@@ -168,13 +183,12 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
   const acoes = acoesDaConversa(conversa.state);
   // §15.4 "voz é uma só" / §15 / emenda de 2026-09-09: se já existe chamada noutra conversa ou em voz comunitária, não oferece "chamar" aqui
   const acoesChamada =
-    (chamadaId !== null && !daConversa) || (emVozComunitaria && !daConversa)
+    (chamadaId !== null && !daConversa) || (emVozComunitaria && !daConversa) || recebendoAqui
       ? []
       : acoesDeChamada(conversa.state, daConversa ? chamadaEstado : "fora");
-  const bannerChamada = faixaDeChamada(
-    daConversa ? chamadaEstado : "fora",
-    daConversa ? chamadaFalha : null,
-  );
+  const bannerChamada = recebendoAqui
+    ? null
+    : faixaDeChamada(daConversa ? chamadaEstado : "fora", daConversa ? chamadaFalha : null);
   const acoesVideo = acoesDeVideo(
     conversa.state,
     daConversa ? chamadaEstado : "fora",
@@ -201,7 +215,11 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
           <ChevronLeft size={16} strokeWidth={2} aria-hidden="true" />
         </Button>
 
-        <DmPeerLabel peer={conversa.peer} className="min-w-0 flex-1" />
+        <DmPeerLabel
+          peer={conversa.peer}
+          conversationId={conversa.conversationId}
+          className="min-w-0 flex-1"
+        />
 
         {/*
           §31.15 — chamar, atender, desligar e a câmera de §17.2. §15: item aparece só quando
@@ -383,6 +401,15 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
                     },
                   ]
                 : []),
+              ...(podeRenomearContato(conversa.state)
+                ? [
+                    {
+                      id: "renomear-contato",
+                      label: nomeLocal !== undefined ? "Mudar o nome do contato" : "Renomear contato",
+                      onSelect: () => setRenomear(true),
+                    },
+                  ]
+                : []),
               {
                 id: "editar-perfil",
                 label: "Editar meu perfil nesta conversa",
@@ -436,7 +463,7 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
       {bannerTela && <StatusBanner tone={bannerTela.tone}>{bannerTela.texto}</StatusBanner>}
 
       {/* §17.2/§31.15 — as imagens da chamada. Nunca mais que duas câmeras e uma tela. */}
-      {daConversa && <DmVideoPanel peer={conversa.peer} />}
+      {daConversa && <DmVideoPanel peer={conversa.peer} nomeDoPar={nome} />}
 
       {/*
         §31.4 — `kind` ou versão desconhecidos nesta conversa. As listas de §31.16.2 saem
@@ -494,6 +521,7 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
                 agrupada={agrupada}
                 agora={agora}
                 propria={propria}
+                nomeDe={nomeDe}
                 onResponder={(alvo) => setRespondendoA(alvo)}
               />
             </Fragment>
@@ -503,7 +531,7 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
 
       {digitando && (
         <p className="px-4 pb-1 text-caption text-text-tertiary" role="status">
-          {conversa.peer.displayName} está digitando…
+          {nome} está digitando…
         </p>
       )}
 
@@ -514,7 +542,7 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
       */}
       {conversa.state === "pending-out" && (
         <p className="px-4 pb-2 text-caption text-text-tertiary">
-          {conversa.peer.displayName} ainda não aceitou esta conversa. Até lá, nada aparece
+          {nome} ainda não aceitou esta conversa. Até lá, nada aparece
           como entregue.
         </p>
       )}
@@ -523,7 +551,7 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
       {conversa.state === "pending-in" && (
         <div className="flex items-center justify-between gap-2 border-t border-border-subtle bg-surface-sidebar p-3">
           <p className="text-body text-text-secondary">
-            {conversa.peer.displayName} enviou um pedido de conversa.
+            {nome} enviou um pedido de conversa.
           </p>
           <div className="flex shrink-0 gap-2">
             <Button size="sm" onClick={() => void aceitarConversa(conversa.conversationId)}>
@@ -539,7 +567,8 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
       {composer.visivel ? (
         <DmComposer
           conversationId={conversa.conversationId}
-          nomeDoPar={conversa.peer.displayName}
+          nomeDoPar={nome}
+          nomeDe={nomeDe}
           desabilitado={!composer.habilitado}
           respondendoA={respondendoA}
           onCancelarResposta={() => setRespondendoA(null)}
@@ -555,13 +584,13 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
 
       <DmBloquearModal
         open={bloquear}
-        nomeDoPar={conversa.peer.displayName}
+        nomeDoPar={nome}
         onClose={() => setBloquear(false)}
         onConfirm={() => void bloquearConversa(conversa.conversationId)}
       />
       <DmEsquecerModal
         open={esquecer}
-        nomeDoPar={conversa.peer.displayName}
+        nomeDoPar={nome}
         onClose={() => setEsquecer(false)}
         onConfirm={() => void esquecerConversa(conversa.conversationId)}
       />
@@ -570,6 +599,12 @@ export function DmConversationView({ conversa, onBack, className }: DmConversati
         nomeAtual={useIdentityStore.getState().identity?.displayName ?? ""}
         onClose={() => setEditarPerfil(false)}
         onConfirm={(novoNome) => void definirPerfil(conversa.conversationId, novoNome)}
+      />
+      <DmNomeDoContatoModal
+        open={renomear}
+        conversationId={conversa.conversationId}
+        peer={conversa.peer}
+        onClose={() => setRenomear(false)}
       />
     </div>
   );

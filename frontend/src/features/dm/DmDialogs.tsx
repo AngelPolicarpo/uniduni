@@ -1,18 +1,24 @@
 import { useState } from "react";
 
+import { Avatar } from "../../components/ui/Avatar";
 import { Button } from "../../components/ui/Button";
 import { Modal } from "../../components/ui/Modal";
 import { TextField } from "../../components/ui/TextField";
 import { useDmStore } from "../../store/dmStore";
 import { useIdentityStore } from "../../store/identityStore";
+import { useSettingsStore } from "../../store/settingsStore";
 import {
+  LIMITE_NOME_DO_CONTATO,
   TEXTO_BLOQUEAR_CONVERSA,
   TEXTO_ENTREGA_QUANDO_ONLINE,
   TEXTO_ESQUECER_CONVERSA,
   TEXTO_NOVA_CONVERSA,
   TEXTO_POLITICA_RESTRITA,
+  corDoPar,
   lerChaveDeIdentidade,
+  lerNomeDoContato,
 } from "./dmRegras";
+import type { DmPeerRef } from "../../ipc/dto";
 
 /**
  * As duas confirmações que §31.24 torna **obrigatórias**, e cujos textos são normativos
@@ -249,3 +255,110 @@ export function DmPerfilConversaModal({
   );
 }
 
+
+export interface DmNomeDoContatoModalProps {
+  open: boolean;
+  conversationId: string;
+  peer: DmPeerRef;
+  onClose: () => void;
+}
+
+/**
+ * U-33 (emenda de 2026-09-13) — **renomear o contato**, deste aparelho.
+ *
+ * É o contrário do modal acima: aquele escreve o MEU nome no log da conversa, e o par o vê;
+ * este guarda o nome que eu dou ao par e não sai daqui (`settingsStore`, ao lado do mudo por
+ * conversa). Por isso ele mostra, antes do campo, **quem** está sendo renomeado — o nome que
+ * a pessoa escolheu e o `handle` (L-5) —, e diz no hint que ninguém é avisado.
+ *
+ * As regras do campo são as do apelido de 1.4 (§13): opcional, até 32 caracteres, e vazio
+ * remove. "Usar o nome da pessoa" é o mesmo desfazer do "Usar meu nome" de lá, com a
+ * palavra certa para quem está do lado de cá.
+ */
+export function DmNomeDoContatoModal({
+  open,
+  conversationId,
+  peer,
+  onClose,
+}: DmNomeDoContatoModalProps) {
+  const nomeLocal = useSettingsStore((s) => s.dmNomeDoContato[conversationId]);
+  const definirNome = useSettingsStore((s) => s.setDmNomeDoContato);
+  const [texto, setTexto] = useState(nomeLocal ?? "");
+  const [erro, setErro] = useState<string | null>(null);
+
+  function fechar() {
+    setTexto(nomeLocal ?? "");
+    setErro(null);
+    onClose();
+  }
+
+  function submeter(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const r = lerNomeDoContato(texto);
+    if (!r.ok) {
+      setErro(r.erro);
+      return;
+    }
+    definirNome(conversationId, r.nome);
+    setTexto(r.nome ?? "");
+    setErro(null);
+    onClose();
+  }
+
+  function usarNomeDaPessoa() {
+    definirNome(conversationId, null);
+    setTexto("");
+    setErro(null);
+    onClose();
+  }
+
+  return (
+    <Modal open={open} onClose={fechar} title="Renomear contato" size="md">
+      <form onSubmit={submeter}>
+        <div className="flex items-center gap-3 rounded-md border border-border-default bg-surface-primary p-3">
+          <Avatar name={peer.displayName} color={corDoPar(peer.avatarColor)} size="md" />
+          <div className="min-w-0">
+            <p className="truncate text-body-emphasis text-text-primary">{peer.displayName}</p>
+            <p className="truncate text-meta text-text-tertiary">
+              Nome que a pessoa usa · {peer.handle}
+            </p>
+          </div>
+        </div>
+
+        <TextField
+          className="mt-5"
+          label="Nome do contato"
+          value={texto}
+          onChange={(v) => {
+            setTexto(v);
+            setErro(null);
+          }}
+          {...(erro !== null ? { error: erro } : {})}
+          hint="Só você vê este nome, e só neste aparelho. A pessoa não é avisada."
+          placeholder={peer.displayName}
+          limiteCp={LIMITE_NOME_DO_CONTATO}
+          showCounter
+          counterWarningAt={LIMITE_NOME_DO_CONTATO - 4}
+          autoFocus
+          autoComplete="off"
+          spellCheck={false}
+        />
+
+        <div className="mt-6 flex items-center gap-2">
+          {/* Esconder, nunca desabilitar (§15): sem nome dado, não há o que desfazer. */}
+          {nomeLocal !== undefined && (
+            <Button type="button" variant="ghost" onClick={usarNomeDaPessoa}>
+              Usar o nome da pessoa
+            </Button>
+          )}
+          <div className="ml-auto flex gap-2">
+            <Button type="button" variant="ghost" onClick={fechar}>
+              Cancelar
+            </Button>
+            <Button type="submit">Salvar</Button>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}

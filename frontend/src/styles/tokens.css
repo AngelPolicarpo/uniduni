@@ -132,6 +132,12 @@
   /* §17 — painel lateral desliza da direita em `duration-base`. */
   --animate-panel-in: panel-in 180ms ease-out;
 
+  /* U-33 (emenda de 2026-09-13) — o cartão de chamada recebida desce do topo, onde mora,
+     e o halo do avatar se expande em loop de ~1.2s (§5.9). O halo é decorativo: com
+     movimento reduzido ele some e o anel estático ao lado continua dizendo "chamando". */
+  --animate-call-in: call-in 180ms ease-out;
+  --animate-call-ring: call-ring 1.2s ease-out infinite;
+
   /* ─── §16 Breakpoints ─────────────────────────────────────────── */
   /* Mobile é o estado base (<640px); estes dois são os degraus acima. */
   --breakpoint-tablet: 640px;
@@ -218,6 +224,28 @@
   }
   100% {
     transform: scale(1);
+  }
+}
+
+@keyframes call-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes call-ring {
+  from {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.35);
   }
 }
 
