@@ -21,6 +21,12 @@
 #
 # Limitação declarada: o `.exe` não é assinado (backlog B3, §71.3). O SmartScreen
 # alerta na primeira execução, e isso é risco aceito, não defeito desta esteira.
+#
+# O runner Linux é `ubuntu-24.04` fixo, não `ubuntu-latest`: o rótulo móvel troca de
+# imagem sozinho (Ubuntu 26 a partir de 2026-10-19), e a imagem que empacota o
+# AppImage é decisão do operador, não do GitHub. O piso de glibc 2.31 não depende
+# dela — os addons chegam prontos em `prebuilds/` —, mas trocar de imagem é mudança
+# para se fazer num commit, com build.yml junto.
 name: release
 
 on:
@@ -41,7 +47,7 @@ defaults:
 
 jobs:
   rascunho:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
@@ -80,7 +86,7 @@ jobs:
         include:
           - os: windows-latest
             alvo: "--win"
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             alvo: "--linux"
     runs-on: ${{ matrix.os }}
     steps:
@@ -122,7 +128,7 @@ jobs:
         run: npx electron-builder --config electron-builder.json ${{ matrix.alvo }} --publish always
 
       - name: Artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: pacote-${{ matrix.os }}
           path: |
@@ -134,7 +140,7 @@ jobs:
 
   publicar:
     needs: pacote
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 

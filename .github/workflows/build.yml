@@ -25,7 +25,7 @@ jobs:
         include:
           - os: windows-latest
             alvo: "--win"
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             alvo: "--linux"
     runs-on: ${{ matrix.os }}
     steps:
@@ -64,7 +64,7 @@ jobs:
         run: npx electron-builder --config electron-builder.json ${{ matrix.alvo }} --publish never
 
       - name: Artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: pacote-${{ matrix.os }}
           path: |
